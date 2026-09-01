@@ -98,7 +98,7 @@ export function createIdentitySessionBroker({
     return null;
   }
 
-  return Object.freeze({
+  const broker = {
     async login({ body, requestOrigin, correlationId }) {
       if (String(requestOrigin || '') !== origin) fail('PermissionDenied', 'login origin is not allowed', 403);
       const input = credentials(body);
@@ -211,6 +211,88 @@ export function createIdentitySessionBroker({
         ]),
         body: Object.freeze({ assurance: 'aal2', sessionId: activated.sessionId }),
       });
+    },
+
+    async beginTotpEnrollment({ request, body, correlationId }) {
+      if (!store?.getTotpEnrollmentCredentials || !authClient?.beginTotpEnrollment) {
+        fail('AuthorityUnavailable', 'TOTP enrollment authority is unavailable', 503);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+          || Object.keys(body).some((key) => key !== 'friendlyName')) {
+        fail('ValidationFailed', 'TOTP enrollment body is invalid', 400);
+      }
+      const friendlyName = String(body.friendlyName || '').trim();
+      if (friendlyName.length < 1 || friendlyName.length > 64 || /[\r\n\u0000-\u001f\u007f]/u.test(friendlyName)) {
+        fail('ValidationFailed', 'TOTP friendly name is invalid', 400);
+      }
+      await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const current = await store.getTotpEnrollmentCredentials({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+      });
+      if (!current?.sessionId || !current?.subjectId || !current?.accessTokenCiphertext) {
+        fail('AuthorityUnavailable', 'TOTP enrollment authority returned an invalid record', 503);
+      }
+      return authClient.beginTotpEnrollment({
+        accessToken: credentialCipher.decrypt(current.accessTokenCiphertext),
+        expectedSubjectId: current.subjectId,
+        friendlyName,
+      });
+    },
+
+    async verifyTotpEnrollment({ request, body, correlationId }) {
+      if (!store?.getTotpEnrollmentCredentials || !store?.completeTotpEnrollment
+          || !authClient?.verifyTotpEnrollment) {
+        fail('AuthorityUnavailable', 'TOTP enrollment authority is unavailable', 503);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+          || Object.keys(body).some((key) => !['factorId', 'code'].includes(key))) {
+        fail('ValidationFailed', 'TOTP enrollment verification body is invalid', 400);
+      }
+      const factorId = String(body.factorId || '');
+      const code = String(body.code || '');
+      if (factorId.length < 1 || factorId.length > 256
+          || /[\r\n\u0000-\u001f\u007f]/u.test(factorId) || !/^\d{6}$/u.test(code)) {
+        fail('ValidationFailed', 'TOTP factor and current 6-digit authentication code are required', 400);
+      }
+      await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const current = await store.getTotpEnrollmentCredentials({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+      });
+      if (!current?.sessionId || !current?.subjectId || !current?.accessTokenCiphertext) {
+        fail('AuthorityUnavailable', 'TOTP enrollment authority returned an invalid record', 503);
+      }
+      const completed = await authClient.verifyTotpEnrollment({
+        accessToken: credentialCipher.decrypt(current.accessTokenCiphertext),
+        factorId,
+        code,
+        expectedSubjectId: current.subjectId,
+      });
+      let activated;
+      try {
+        activated = await store.completeTotpEnrollment({
+          sessionId: current.sessionId,
+          subjectId: current.subjectId,
+          expectedAccessCiphertextDigest: digest(current.accessTokenCiphertext),
+          accessTokenCiphertext: credentialCipher.encrypt(completed.accessToken),
+          refreshTokenCiphertext: credentialCipher.encrypt(completed.refreshToken),
+          authSessionRef: completed.authSessionRef,
+          accessTokenExpiresAt: completed.accessTokenExpiresAt,
+          correlationId,
+        });
+      } catch (error) {
+        await authClient.logout(completed.accessToken);
+        throw error;
+      }
+      if (!activated?.sessionId || activated.sessionId !== current.sessionId
+          || activated.subjectId !== current.subjectId || activated.state !== 'active' || activated.aal !== 'aal2') {
+        await authClient.logout(completed.accessToken);
+        fail('AuthorityUnavailable', 'Console TOTP enrollment authority returned an invalid record', 503);
+      }
+      return Object.freeze({ assurance: 'aal2', sessionId: activated.sessionId });
     },
 
     async touchActivity(request) {
@@ -352,5 +434,6 @@ export function createIdentitySessionBroker({
       if (refreshDue(session)) fail('AuthorityUnavailable', 'session credential rotation is still settling', 503);
       return session;
     },
-  });
+  };
+  return Object.freeze(broker);
 }

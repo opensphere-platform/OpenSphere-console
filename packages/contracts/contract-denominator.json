@@ -9,6 +9,8 @@
   "operations": [
     "loginSession",
     "completeSessionMfa",
+    "beginSessionTotpEnrollment",
+    "verifySessionTotpEnrollment",
     "touchSessionActivity",
     "listOwnedSessions",
     "revokeAllOwnedSessions",
@@ -53,6 +55,10 @@
     "session-login-response.schema.json",
     "session-mfa-request.schema.json",
     "session-mfa-response.schema.json",
+    "session-totp-enrollment-request.schema.json",
+    "session-totp-enrollment-response.schema.json",
+    "session-totp-verification-request.schema.json",
+    "session-totp-verification-response.schema.json",
     "session-touch-request.schema.json",
     "session-touch-response.schema.json",
     "session-inventory-response.schema.json"

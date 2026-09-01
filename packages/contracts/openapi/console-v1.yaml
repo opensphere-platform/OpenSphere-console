@@ -82,6 +82,72 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/session/totp/enrollment:
+    post:
+      operationId: beginSessionTotpEnrollment
+      tags: [Session]
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuth
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: repeat-replaces-unverified-factor
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/session-totp-enrollment-request.schema.json"
+      responses:
+        "201":
+          description: Supabase Auth issued one subject-bound unverified TOTP factor and setup material
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/session-totp-enrollment-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/session/totp/verification:
+    post:
+      operationId: verifySessionTotpEnrollment
+      tags: [Session]
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuth
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: not-applicable-single-session-cas
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/session-totp-verification-request.schema.json"
+      responses:
+        "200":
+          description: Supabase verified the same subject's pending factor and the same browser session advanced to aal2
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/session-totp-verification-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/identity/session/touch:
     post:
       operationId: touchSessionActivity

@@ -55,6 +55,19 @@ const ACTIVATE_MFA_SQL = [
   ') AS session_record',
 ].join(' ');
 
+const GET_TOTP_ENROLLMENT_CREDENTIALS_SQL = [
+  'SELECT console_identity.get_browser_session_totp_enrollment_credentials(',
+  '$1::bytea, $2::bytea',
+  ') AS session_record',
+].join(' ');
+
+const COMPLETE_TOTP_ENROLLMENT_SQL = [
+  'SELECT console_identity.complete_browser_session_totp_enrollment(',
+  '$1::uuid, $2::uuid, $3::bytea, $4::text, $5::text,',
+  '$6::text, $7::timestamptz, $8::text',
+  ') AS session_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -266,6 +279,40 @@ export function createPostgresOperationStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.session_record;
         if (!record) throw new Error('activate_browser_session_mfa returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getTotpEnrollmentCredentials(input) {
+      try {
+        const result = await query(GET_TOTP_ENROLLMENT_CREDENTIALS_SQL, [
+          input.tokenDigest,
+          input.csrfTokenDigest,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record) throw Object.assign(new Error('TOTP enrollment credentials were not found'), { detail: 'SessionInvalid' });
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async completeTotpEnrollment(input) {
+      try {
+        const result = await query(COMPLETE_TOTP_ENROLLMENT_SQL, [
+          input.sessionId,
+          input.subjectId,
+          input.expectedAccessCiphertextDigest,
+          input.accessTokenCiphertext,
+          input.refreshTokenCiphertext,
+          input.authSessionRef,
+          input.accessTokenExpiresAt,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record) throw new Error('complete_browser_session_totp_enrollment returned no record');
         return record;
       } catch (error) {
         throw databaseError(error);

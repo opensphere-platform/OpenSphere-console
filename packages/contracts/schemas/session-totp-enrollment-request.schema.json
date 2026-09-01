@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:session-totp-enrollment-request:v1",
+  "title": "Console TOTP enrollment request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["friendlyName"],
+  "properties": {
+    "friendlyName": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^\\r\\n\\u0000-\\u001f\\u007f]+$" }
+  }
+}

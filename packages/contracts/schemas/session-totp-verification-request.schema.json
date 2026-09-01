@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:session-totp-verification-request:v1",
+  "title": "Console TOTP enrollment verification request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["factorId", "code"],
+  "properties": {
+    "factorId": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "code": { "type": "string", "pattern": "^[0-9]{6}$" }
+  }
+}

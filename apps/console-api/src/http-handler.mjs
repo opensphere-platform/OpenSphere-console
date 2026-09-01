@@ -101,6 +101,22 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         });
         return send(response, 200, result.body, { 'set-cookie': result.cookies });
       }
+      if (url.pathname === '/api/identity/session/totp/enrollment' && request.method === 'POST') {
+        if (!identitySessionBroker?.beginTotpEnrollment) throw Object.assign(new Error('target TOTP enrollment is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        return send(response, 201, await identitySessionBroker.beginTotpEnrollment({
+          request,
+          body: await jsonBody(request),
+          correlationId,
+        }));
+      }
+      if (url.pathname === '/api/identity/session/totp/verification' && request.method === 'POST') {
+        if (!identitySessionBroker?.verifyTotpEnrollment) throw Object.assign(new Error('target TOTP enrollment verification is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        return send(response, 200, await identitySessionBroker.verifyTotpEnrollment({
+          request,
+          body: await jsonBody(request),
+          correlationId,
+        }));
+      }
       if (url.pathname === '/api/identity/session/touch' && request.method === 'POST') {
         if (!identitySessionBroker?.touchActivity) throw Object.assign(new Error('target session activity is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         const body = await jsonBody(request);

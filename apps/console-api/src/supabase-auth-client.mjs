@@ -179,6 +179,102 @@ export function createSupabaseAuthClient({
       });
     },
 
+    async beginTotpEnrollment({ accessToken, expectedSubjectId, friendlyName }) {
+      const claims = jwtClaims(accessToken, now());
+      if (String(claims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'TOTP enrollment subject does not match', 401);
+      }
+      const name = String(friendlyName || '').trim();
+      if (name.length < 1 || name.length > 64 || /[\r\n\u0000-\u001f\u007f]/u.test(name)) {
+        fail('ValidationFailed', 'TOTP friendly name is invalid', 400);
+      }
+      const currentUser = await request('/user', { token: accessToken });
+      if (String(currentUser?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth subject verification failed', 503);
+      }
+      const factors = Array.isArray(currentUser.factors) ? currentUser.factors : [];
+      if (factors.some((factor) => factor?.factor_type === 'totp' && factor?.status === 'verified')) {
+        fail('MfaAlreadyEnrolled', 'a verified TOTP factor is already registered', 409);
+      }
+      for (const factor of factors.filter((candidate) => candidate?.factor_type === 'totp'
+        && candidate?.status === 'unverified' && candidate?.id)) {
+        await request(`/factors/${encodeURIComponent(String(factor.id))}`, {
+          method: 'DELETE', token: accessToken,
+          rejectedCode: 'MfaEnrollmentRejected', rejectedMessage: 'stale TOTP factor cleanup was rejected', rejectedStatus: 409,
+        });
+      }
+      const enrollment = await request('/factors', {
+        method: 'POST', token: accessToken,
+        body: { factor_type: 'totp', friendly_name: name },
+        rejectedCode: 'MfaEnrollmentRejected', rejectedMessage: 'TOTP enrollment was rejected', rejectedStatus: 409,
+      });
+      const factorId = String(enrollment?.id || '');
+      const secret = String(enrollment?.totp?.secret || '');
+      const qrCode = String(enrollment?.totp?.qr_code || '');
+      const uri = String(enrollment?.totp?.uri || '');
+      if (factorId.length < 1 || factorId.length > 256 || /[\r\n\u0000-\u001f\u007f]/u.test(factorId)
+          || secret.length < 8 || secret.length > 256 || /\s/u.test(secret)
+          || qrCode.length > 48 * 1024 || uri.length > 4096) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned invalid TOTP enrollment material', 503);
+      }
+      return Object.freeze({ factorId, secret, qrCode, uri });
+    },
+
+    async verifyTotpEnrollment({ accessToken, factorId, code, expectedSubjectId }) {
+      const normalizedFactorId = String(factorId || '');
+      if (normalizedFactorId.length < 1 || normalizedFactorId.length > 256
+          || /[\r\n\u0000-\u001f\u007f]/u.test(normalizedFactorId)
+          || !/^\d{6}$/u.test(String(code || ''))) {
+        fail('ValidationFailed', 'TOTP factor and current 6-digit authentication code are required', 400);
+      }
+      const claims = jwtClaims(accessToken, now());
+      if (String(claims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'TOTP enrollment subject does not match', 401);
+      }
+      const currentUser = await request('/user', { token: accessToken });
+      if (String(currentUser?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth subject verification failed', 503);
+      }
+      const factor = (Array.isArray(currentUser.factors) ? currentUser.factors : [])
+        .find((candidate) => candidate?.factor_type === 'totp' && candidate?.status === 'unverified'
+          && String(candidate?.id || '') === normalizedFactorId);
+      if (!factor) fail('MfaFactorUnavailable', 'pending TOTP factor was not found for this subject', 409);
+      const encodedFactorId = encodeURIComponent(normalizedFactorId);
+      const challenge = await request(`/factors/${encodedFactorId}/challenge`, {
+        method: 'POST', token: accessToken, body: {},
+        rejectedCode: 'MfaProofRejected', rejectedMessage: 'TOTP challenge was rejected', rejectedStatus: 401,
+      });
+      if (!challenge?.id) fail('AuthorityUnavailable', 'Supabase Auth returned no MFA challenge', 503);
+      const verification = await request(`/factors/${encodedFactorId}/verify`, {
+        method: 'POST', token: accessToken,
+        body: { challenge_id: String(challenge.id), code: String(code) },
+        rejectedCode: 'MfaProofRejected', rejectedMessage: 'TOTP proof was rejected', rejectedStatus: 401,
+      });
+      const session = verification?.session || verification;
+      if (!session?.access_token || !session?.refresh_token) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned no aal2 enrollment session', 503);
+      }
+      const completedClaims = jwtClaims(session.access_token, now());
+      if (completedClaims.aal !== 'aal2' || String(completedClaims.sub) !== String(expectedSubjectId)) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not produce the expected aal2 subject', 503);
+      }
+      const completedUser = await request('/user', { token: session.access_token });
+      const verifiedFactor = (Array.isArray(completedUser?.factors) ? completedUser.factors : [])
+        .some((candidate) => candidate?.factor_type === 'totp' && candidate?.status === 'verified'
+          && String(candidate?.id || '') === normalizedFactorId);
+      if (String(completedUser?.id || '') !== String(completedClaims.sub) || !verifiedFactor) {
+        fail('AuthorityUnavailable', 'Supabase Auth TOTP enrollment verification was not durable', 503);
+      }
+      return Object.freeze({
+        subjectId: String(completedClaims.sub),
+        accessToken: String(session.access_token),
+        refreshToken: String(session.refresh_token),
+        authSessionRef: String(completedClaims.session_id || completedClaims.sub),
+        aal: 'aal2',
+        accessTokenExpiresAt: new Date(Number(completedClaims.exp) * 1000).toISOString(),
+      });
+    },
+
     async refreshSession({ refreshToken, expectedSubjectId }) {
       if (!refreshToken || !expectedSubjectId) {
         fail('SessionCredentialInvalid', 'refresh credential binding is invalid', 401);

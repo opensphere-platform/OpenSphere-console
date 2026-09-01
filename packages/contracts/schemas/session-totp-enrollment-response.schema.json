@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:session-totp-enrollment-response:v1",
+  "title": "Console TOTP enrollment material",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["factorId", "secret", "qrCode", "uri"],
+  "properties": {
+    "factorId": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "secret": { "type": "string", "minLength": 8, "maxLength": 256, "pattern": "^[^\\s]+$" },
+    "qrCode": { "type": "string", "maxLength": 49152 },
+    "uri": { "type": "string", "maxLength": 4096 }
+  }
+}

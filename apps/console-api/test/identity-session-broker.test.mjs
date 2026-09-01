@@ -115,6 +115,58 @@ test('Supabase MFA client binds the verified factor and returns only an aal2 ses
   assert.equal(calls.filter(({ url }) => url.endsWith('/user')).length, 2);
 });
 
+test('Supabase TOTP enrollment replaces only unverified factors and verifies the same subject factor', async () => {
+  const accessToken = token();
+  const aal2Token = token({ aal: 'aal2', session_id: 'auth-session-enrolled' });
+  const calls = [];
+  let enrolled = false;
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      if (url.endsWith('/user')) {
+        if (init.headers.authorization === 'Bearer ' + aal2Token) {
+          return jsonResponse({
+            id: subjectId,
+            factors: [{ id: 'factor/new', factor_type: 'totp', status: 'verified' }],
+          });
+        }
+        return jsonResponse({
+          id: subjectId,
+          factors: [{ id: enrolled ? 'factor/new' : 'factor/old', factor_type: 'totp', status: 'unverified' }],
+        });
+      }
+      if (url.endsWith('/factors/factor%2Fold') && init.method === 'DELETE') return jsonResponse({});
+      if (url.endsWith('/factors') && init.method === 'POST') {
+        assert.deepEqual(JSON.parse(init.body), { factor_type: 'totp', friendly_name: 'OpenSphere Console' });
+        enrolled = true;
+        return jsonResponse({
+          id: 'factor/new',
+          totp: { secret: 'JBSWY3DPEHPK3PXP', qr_code: '<svg>qr</svg>', uri: 'otpauth://totp/OpenSphere' },
+        });
+      }
+      if (url.endsWith('/factors/factor%2Fnew/challenge')) return jsonResponse({ id: 'challenge-enroll' });
+      if (url.endsWith('/factors/factor%2Fnew/verify')) {
+        assert.deepEqual(JSON.parse(init.body), { challenge_id: 'challenge-enroll', code: '654321' });
+        return jsonResponse({ access_token: aal2Token, refresh_token: 'refresh-enrolled' });
+      }
+      return jsonResponse({}, 404);
+    },
+  });
+  const enrollment = await client.beginTotpEnrollment({
+    accessToken, expectedSubjectId: subjectId, friendlyName: 'OpenSphere Console',
+  });
+  assert.deepEqual(enrollment, {
+    factorId: 'factor/new', secret: 'JBSWY3DPEHPK3PXP', qrCode: '<svg>qr</svg>', uri: 'otpauth://totp/OpenSphere',
+  });
+  const completed = await client.verifyTotpEnrollment({
+    accessToken, factorId: enrollment.factorId, code: '654321', expectedSubjectId: subjectId,
+  });
+  assert.equal(completed.aal, 'aal2');
+  assert.equal(completed.authSessionRef, 'auth-session-enrolled');
+  assert.equal(calls.some(({ url, init }) => url.endsWith('/factors/factor%2Fold') && init.method === 'DELETE'), true);
+});
+
 test('Supabase refresh client rotates only to the same verified subject', async () => {
   const rotatedAccessToken = token({ exp: Math.floor(now.getTime() / 1000) + 3600, session_id: 'auth-session-rotated' });
   const client = createSupabaseAuthClient({
@@ -374,6 +426,83 @@ test('pending MFA completion activates the same opaque session and extends both 
   assert.equal(cipher.decrypt(activated[0].refreshTokenCiphertext), 'aal2-refresh');
   assert.equal(activated[0].authSessionRef, 'auth-session-aal2');
   assert.equal(Object.hasOwn(activated[0], 'expiresAt'), false);
+});
+
+test('active-session TOTP enrollment keeps setup material out of the store and promotes by access-CAS', async () => {
+  const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 13) });
+  const accessTokenCiphertext = cipher.encrypt('active-aal1-access');
+  const completions = [];
+  const sessionRecord = {
+    sessionId, subjectId,
+    idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+    persistence: '24h', lastSeenAt: now.toISOString(), createdAt: now.toISOString(), revokedAt: null,
+    authorityFresh: true, permissions: [], permissionRevision: '1', revokeEpoch: '0',
+    aal: 'aal1', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
+  };
+  const store = {
+    async resolveSession() { return { ...sessionRecord }; },
+    async issueSession() { throw new Error('login must not run during enrollment'); },
+    async getPendingMfa() { throw new Error('pending MFA must not run during enrollment'); },
+    async activateMfa() { throw new Error('pending MFA must not run during enrollment'); },
+    async getTotpEnrollmentCredentials(input) {
+      assert.equal(input.tokenDigest.length, 32);
+      assert.equal(input.csrfTokenDigest.length, 32);
+      return { sessionId, subjectId, accessTokenCiphertext };
+    },
+    async completeTotpEnrollment(input) {
+      completions.push(input);
+      sessionRecord.aal = 'aal2';
+      return { sessionId, subjectId, state: 'active', aal: 'aal2' };
+    },
+    async getRefreshCredentials() { throw new Error('refresh must not run during enrollment'); },
+    async rotateCredentials() { throw new Error('refresh must not run during enrollment'); },
+    async rejectRefresh() { throw new Error('refresh must not run during enrollment'); },
+    async touchActivity() { throw new Error('touch must not run during enrollment'); },
+    ...unusedOwnedSessionMethods(),
+  };
+  const authClient = {
+    async authenticatePassword() { throw new Error('login must not run during enrollment'); },
+    async completeTotp() { throw new Error('pending MFA must not run during enrollment'); },
+    async beginTotpEnrollment(input) {
+      assert.deepEqual(input, {
+        accessToken: 'active-aal1-access', expectedSubjectId: subjectId, friendlyName: 'OpenSphere Console administrator',
+      });
+      return { factorId: 'factor/enroll', secret: 'JBSWY3DPEHPK3PXP', qrCode: '', uri: 'otpauth://totp/OpenSphere' };
+    },
+    async verifyTotpEnrollment(input) {
+      assert.deepEqual(input, {
+        accessToken: 'active-aal1-access', factorId: 'factor/enroll', code: '123456', expectedSubjectId: subjectId,
+      });
+      return {
+        subjectId, accessToken: 'enrolled-aal2-access', refreshToken: 'enrolled-aal2-refresh',
+        authSessionRef: 'auth-session-enrolled', aal: 'aal2', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
+      };
+    },
+    async refreshSession() { throw new Error('refresh must not run during enrollment'); },
+    async logout() { throw new Error('logout must not run after enrollment success'); },
+  };
+  const broker = createIdentitySessionBroker({
+    store, authClient, credentialCipher: cipher, publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const request = { headers: {
+    cookie: '__Host-opensphere-session=opaque-session-handle-for-totp-enrollment',
+    'x-os-csrf-token': 'csrf-proof-for-totp-enrollment',
+  } };
+  const enrollment = await broker.beginTotpEnrollment({
+    request, body: { friendlyName: 'OpenSphere Console administrator' }, correlationId: 'totp-enrollment-begin-0001',
+  });
+  assert.equal(enrollment.secret, 'JBSWY3DPEHPK3PXP');
+  assert.equal(JSON.stringify(store).includes('JBSWY3DPEHPK3PXP'), false);
+  const verified = await broker.verifyTotpEnrollment({
+    request, body: { factorId: enrollment.factorId, code: '123456' }, correlationId: 'totp-enrollment-verify-0001',
+  });
+  assert.deepEqual(verified, { assurance: 'aal2', sessionId });
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].expectedAccessCiphertextDigest.length, 32);
+  assert.equal(cipher.decrypt(completions[0].accessTokenCiphertext), 'enrolled-aal2-access');
+  assert.equal(cipher.decrypt(completions[0].refreshTokenCiphertext), 'enrolled-aal2-refresh');
+  assert.equal(Object.hasOwn(completions[0], 'factorId'), false);
+  assert.equal(Object.hasOwn(completions[0], 'secret'), false);
 });
 
 function refreshBrokerFixture({ refreshResult, wait } = {}) {
@@ -668,6 +797,47 @@ test('HTTP MFA completion preserves the request proof and returns refreshed cook
   assert.equal(response.headers.getSetCookie().length, 2);
   assert.equal(calls[0].request.headers['x-os-csrf-token'], 'csrf-proof-for-mfa-completion');
   assert.deepEqual(calls[0].body, { code: '123456' });
+});
+
+test('HTTP TOTP enrollment routes preserve exact Web paths, bodies, CSRF proof, and status codes', async (t) => {
+  const calls = { begin: [], verify: [] };
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('generic resolution must not run'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async beginTotpEnrollment(input) {
+        calls.begin.push(input);
+        return { factorId: 'factor-1', secret: 'JBSWY3DPEHPK3PXP', qrCode: '', uri: 'otpauth://totp/OpenSphere' };
+      },
+      async verifyTotpEnrollment(input) {
+        calls.verify.push(input);
+        return { assurance: 'aal2', sessionId };
+      },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = 'http://127.0.0.1:' + server.address().port + '/api/identity/session/totp';
+  const headers = {
+    cookie: '__Host-opensphere-session=opaque',
+    'x-os-csrf-token': 'csrf-proof-for-totp-enrollment',
+    'content-type': 'application/json',
+    'x-correlation-id': 'totp-enrollment-http-0001',
+  };
+  const enrollment = await fetch(base + '/enrollment', {
+    method: 'POST', headers, body: JSON.stringify({ friendlyName: 'OpenSphere Console' }),
+  });
+  assert.equal(enrollment.status, 201);
+  assert.equal((await enrollment.json()).factorId, 'factor-1');
+  assert.deepEqual(calls.begin[0].body, { friendlyName: 'OpenSphere Console' });
+  assert.equal(calls.begin[0].request.headers['x-os-csrf-token'], headers['x-os-csrf-token']);
+  const verification = await fetch(base + '/verification', {
+    method: 'POST', headers, body: JSON.stringify({ factorId: 'factor-1', code: '123456' }),
+  });
+  assert.equal(verification.status, 200);
+  assert.deepEqual(await verification.json(), { assurance: 'aal2', sessionId });
+  assert.deepEqual(calls.verify[0].body, { factorId: 'factor-1', code: '123456' });
+  assert.equal(calls.verify[0].request.headers['x-os-csrf-token'], headers['x-os-csrf-token']);
 });
 
 test('HTTP activity touch requires an exact empty body and forwards the CSRF-bound request', async (t) => {

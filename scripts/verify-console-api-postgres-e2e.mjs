@@ -37,6 +37,11 @@ const rotatedLoginAccessToken = integrationAccessToken({
 });
 const loginRefreshToken = 'supabase-refresh-credential-integration-0001';
 const rotatedLoginRefreshToken = 'supabase-refresh-credential-integration-rotated-0001';
+const enrollmentAal2AccessToken = integrationAccessToken({
+  aal: 'aal2', expiresInSeconds: 3600, sessionId: 'supabase-auth-session-enrollment-aal2-0001',
+});
+const enrollmentAal2RefreshToken = 'supabase-refresh-credential-enrollment-aal2-0001';
+let totpEnrollmentState = 'none';
 const mfaAccessToken = [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
   Buffer.from(JSON.stringify({
@@ -117,14 +122,49 @@ const authorityServer = createServer(async (request, response) => {
   }
   if (request.url === '/user' && request.method === 'GET') {
     const bearer = request.headers.authorization;
-    assert.ok([loginAccessToken, mfaAccessToken, mfaAal2AccessToken].some((token) => bearer === 'Bearer ' + token));
+    assert.ok([loginAccessToken, rotatedLoginAccessToken, enrollmentAal2AccessToken, mfaAccessToken, mfaAal2AccessToken]
+      .some((token) => bearer === 'Bearer ' + token));
+    const enrollmentBearer = bearer === 'Bearer ' + rotatedLoginAccessToken
+      || bearer === 'Bearer ' + enrollmentAal2AccessToken;
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
       id: loginSubjectId,
       factors: bearer === 'Bearer ' + mfaAccessToken
         ? [{ id: 'factor-1', factor_type: 'totp', status: 'verified' }]
-        : [],
+        : enrollmentBearer && totpEnrollmentState !== 'none'
+          ? [{ id: 'factor-enrollment-1', factor_type: 'totp', status: totpEnrollmentState }]
+          : [],
     }));
+    return;
+  }
+  if (request.url === '/factors' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + rotatedLoginAccessToken);
+    assert.deepEqual(requestBody, { factor_type: 'totp', friendly_name: 'OpenSphere Console administrator' });
+    totpEnrollmentState = 'unverified';
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      id: 'factor-enrollment-1',
+      totp: {
+        secret: 'JBSWY3DPEHPK3PXP',
+        qr_code: '<svg>integration enrollment</svg>',
+        uri: 'otpauth://totp/OpenSphere-integration',
+      },
+    }));
+    return;
+  }
+  if (request.url === '/factors/factor-enrollment-1/challenge' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + rotatedLoginAccessToken);
+    assert.deepEqual(requestBody, {});
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ id: 'integration-enrollment-challenge-0001' }));
+    return;
+  }
+  if (request.url === '/factors/factor-enrollment-1/verify' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + rotatedLoginAccessToken);
+    assert.deepEqual(requestBody, { challenge_id: 'integration-enrollment-challenge-0001', code: '654321' });
+    totpEnrollmentState = 'verified';
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ access_token: enrollmentAal2AccessToken, refresh_token: enrollmentAal2RefreshToken }));
     return;
   }
   if (request.url === '/factors/factor-1/challenge' && request.method === 'POST') {
@@ -492,6 +532,58 @@ try {
   assert.deepEqual(touchEvidence.rows[0], {
     touched: true, idle_extended: true, absolute_bound: true, activity_audit_events: 0,
   });
+
+  const enrollmentResponse = await fetch(origin + '/api/identity/session/totp/enrollment', {
+    method: 'POST',
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-totp-enrollment-begin-0001',
+    },
+    body: JSON.stringify({ friendlyName: 'OpenSphere Console administrator' }),
+  });
+  assert.equal(enrollmentResponse.status, 201);
+  const enrollment = await enrollmentResponse.json();
+  assert.deepEqual(enrollment, {
+    factorId: 'factor-enrollment-1',
+    secret: 'JBSWY3DPEHPK3PXP',
+    qrCode: '<svg>integration enrollment</svg>',
+    uri: 'otpauth://totp/OpenSphere-integration',
+  });
+  const preEnrollmentEvidence = await admin.query(
+    'SELECT access_token_ciphertext, refresh_token_ciphertext, aal FROM console_identity.browser_session WHERE session_id = $1',
+    [loginBody.session.id],
+  );
+  assert.equal(preEnrollmentEvidence.rows[0].aal, 'aal1');
+  assert.doesNotMatch(JSON.stringify(preEnrollmentEvidence.rows[0]), /JBSWY3DPEHPK3PXP|factor-enrollment-1|otpauth/);
+
+  const enrollmentVerificationResponse = await fetch(origin + '/api/identity/session/totp/verification', {
+    method: 'POST',
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-totp-enrollment-verify-0001',
+    },
+    body: JSON.stringify({ factorId: enrollment.factorId, code: '654321' }),
+  });
+  assert.equal(enrollmentVerificationResponse.status, 200);
+  assert.deepEqual(await enrollmentVerificationResponse.json(), { assurance: 'aal2', sessionId: loginBody.session.id });
+  const enrollmentEvidence = await admin.query(
+    [
+      'SELECT access_token_ciphertext, refresh_token_ciphertext, auth_session_ref, aal,',
+      '(SELECT COALESCE(string_agg(evidence::text, \'\'), \'\') FROM console_audit.event',
+      "WHERE action = 'console.identity.factor.totp.enroll' AND correlation_id = $2) AS audit_evidence",
+      'FROM console_identity.browser_session WHERE session_id = $1',
+    ].join(' '),
+    [loginBody.session.id, 'integration-totp-enrollment-verify-0001'],
+  );
+  assert.equal(enrollmentEvidence.rows[0].aal, 'aal2');
+  assert.equal(enrollmentEvidence.rows[0].auth_session_ref, 'supabase-auth-session-enrollment-aal2-0001');
+  assert.notEqual(enrollmentEvidence.rows[0].access_token_ciphertext, preEnrollmentEvidence.rows[0].access_token_ciphertext);
+  assert.notEqual(enrollmentEvidence.rows[0].refresh_token_ciphertext, preEnrollmentEvidence.rows[0].refresh_token_ciphertext);
+  assert.doesNotMatch(enrollmentEvidence.rows[0].audit_evidence, /JBSWY3DPEHPK3PXP|factor-enrollment-1|otpauth|integration-signature/);
 
   const secondLoginResponse = await fetch(origin + '/api/identity/session/login', {
     method: 'POST',
@@ -1179,6 +1271,7 @@ try {
     sessionInventoryLifecycle: true,
     ownedSessionRevocationLifecycle: true,
     mfaLoginChallengeLifecycle: true,
+    mfaEnrollmentLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     revokeDenied: true,
