@@ -97,6 +97,12 @@ export async function verifyContracts(repoRoot = process.cwd()) {
     registryConnectionRead?.['x-opensphere-authority'] === 'ConsoleRegistryConnectionMetadata',
     'getRegistryConnection must declare its no-secret metadata authority',
   );
+  const auditRead = entries.find(({ operation }) => operation.operationId === 'listAuditEvents')?.operation;
+  assert(auditRead?.['x-opensphere-authority'] === 'SupabaseAuditLedger', 'listAuditEvents must declare audit ledger authority');
+  assert(
+    auditRead?.parameters?.find((parameter) => parameter.name === 'limit')?.schema?.maximum === 200,
+    'listAuditEvents must keep a bounded page size',
+  );
 
   const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
   for (const actionPolicyId of actionPolicyIds) {

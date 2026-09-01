@@ -364,6 +364,29 @@ try {
     audit_events: 5,
   });
 
+  const auditResponse = await fetch(origin + '/api/identity/audit?limit=2', {
+    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-audit-read-page-one' },
+  });
+  assert.equal(auditResponse.status, 200);
+  const auditProjection = await auditResponse.json();
+  assert.equal(auditProjection.authority, 'SupabaseAuditLedger');
+  assert.equal(auditProjection.data.items.length, 2);
+  assert.match(auditProjection.data.nextCursor, /^[1-9][0-9]*$/);
+  assert.equal(auditProjection.data.items[0].operationId, plannedRevocation.operationId);
+  assert.match(auditProjection.data.items[0].eventHash, /^sha256:[0-9a-f]{64}$/);
+
+  const nextAuditResponse = await fetch(
+    origin + '/api/identity/audit?limit=2&cursor=' + auditProjection.data.nextCursor,
+    { headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-audit-read-page-two' } },
+  );
+  assert.equal(nextAuditResponse.status, 200);
+  const nextAuditProjection = await nextAuditResponse.json();
+  assert.equal(nextAuditProjection.data.items.length, 2);
+  assert.equal(
+    BigInt(nextAuditProjection.data.items[0].sequenceId) < BigInt(auditProjection.data.nextCursor),
+    true,
+  );
+
   await admin.query(
     [
       'UPDATE console_identity.browser_session',
@@ -389,6 +412,7 @@ try {
     extensionExecution: executionEvidence,
     revocationProjection: true,
     verification: verificationEvidence.rows[0],
+    auditProjection: true,
     revokeDenied: true,
   }) + '\n');
 } finally {

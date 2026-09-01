@@ -17,6 +17,7 @@ VALUES
   ('11111111-1111-4111-8111-111111111111', 'console.registry.manage', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.extension.revoke', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.operation.verify', 7, '99999999-9999-4999-8999-999999999999'),
+  ('11111111-1111-4111-8111-111111111111', 'console.audit.read', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.operation.approve', 7, '99999999-9999-4999-8999-999999999999'),
   ('55555555-5555-4555-8555-555555555555', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999'),
   ('88888888-8888-4888-8888-888888888888', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999');
@@ -718,6 +719,48 @@ BEGIN
     );
     RAISE EXCEPTION 'verification with a stale state version unexpectedly succeeded';
   EXCEPTION WHEN serialization_failure THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+SET ROLE console_api;
+DO $$
+DECLARE
+  v_first jsonb;
+  v_second jsonb;
+  v_cursor bigint;
+BEGIN
+  v_first := console_audit.list_events(
+    '22222222-2222-4222-8222-222222222222',
+    '11111111-1111-4111-8111-111111111111',
+    7, 2, NULL, 2, 'correlation-audit-read-page-one'
+  );
+  IF v_first->>'authority' <> 'SupabaseAuditLedger'
+      OR v_first->>'freshness' <> 'fresh'
+      OR jsonb_array_length(v_first->'data'->'items') <> 2
+      OR v_first->'data'->>'nextCursor' IS NULL
+      OR jsonb_array_length(v_first->'evidenceRefs') <> 2 THEN
+    RAISE EXCEPTION 'audit first page lost bounded ledger semantics';
+  END IF;
+  v_cursor := (v_first->'data'->>'nextCursor')::bigint;
+  v_second := console_audit.list_events(
+    '22222222-2222-4222-8222-222222222222',
+    '11111111-1111-4111-8111-111111111111',
+    7, 2, v_cursor, 2, 'correlation-audit-read-page-two'
+  );
+  IF jsonb_array_length(v_second->'data'->'items') < 1
+      OR (v_second->'data'->'items'->0->>'sequenceId')::bigint >= v_cursor THEN
+    RAISE EXCEPTION 'audit cursor did not move monotonically backward';
+  END IF;
+  BEGIN
+    PERFORM console_audit.list_events(
+      '66666666-6666-4666-8666-666666666666',
+      '55555555-5555-4555-8555-555555555555',
+      3, 0, NULL, 50, 'correlation-forbidden-audit-read'
+    );
+    RAISE EXCEPTION 'actor without audit permission read the ledger';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 END;
 $$;

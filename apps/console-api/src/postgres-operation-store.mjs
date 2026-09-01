@@ -47,6 +47,12 @@ const GET_REGISTRY_CONNECTION_SQL = [
   ') AS read_envelope',
 ].join(' ');
 
+const LIST_AUDIT_EVENTS_SQL = [
+  'SELECT console_audit.list_events(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::bigint, $6::integer, $7::text',
+  ') AS read_envelope',
+].join(' ');
+
 function databaseError(error) {
   const code = String(error?.detail || '');
   const known = new Set([
@@ -231,6 +237,25 @@ export function createPostgresOperationStore({ query }) {
         ]);
         const envelope = result?.rows?.[0]?.read_envelope;
         if (!envelope) throw new Error('get_registry_connection returned no read envelope');
+        return envelope;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listAuditEvents(input) {
+      try {
+        const result = await query(LIST_AUDIT_EVENTS_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.cursor,
+          input.limit,
+          input.correlationId,
+        ]);
+        const envelope = result?.rows?.[0]?.read_envelope;
+        if (!envelope) throw new Error('list_events returned no read envelope');
         return envelope;
       } catch (error) {
         throw databaseError(error);

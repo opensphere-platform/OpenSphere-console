@@ -21,7 +21,7 @@ CREATE SCHEMA console_extension;
 
 REVOKE ALL ON SCHEMA console_identity, console_operation, console_audit, console_extension FROM PUBLIC;
 GRANT USAGE ON SCHEMA console_identity, console_operation TO authenticated;
-GRANT USAGE ON SCHEMA console_identity, console_operation, console_extension TO console_api;
+GRANT USAGE ON SCHEMA console_identity, console_operation, console_audit, console_extension TO console_api;
 GRANT USAGE ON SCHEMA console_operation, console_extension TO console_extension_controller;
 
 CREATE TABLE console_identity.subject_authority (
@@ -357,6 +357,111 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION console_audit.append_event_internal(uuid, text, text, text, text, text, text, jsonb) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION console_audit.list_events(
+  p_session_id uuid,
+  p_actor_ref uuid,
+  p_expected_permission_revision bigint,
+  p_expected_revoke_epoch bigint,
+  p_cursor bigint,
+  p_limit integer,
+  p_correlation_id text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_identity, console_audit
+AS $$
+DECLARE
+  v_session console_identity.browser_session;
+  v_authority console_identity.subject_authority;
+  v_items jsonb;
+  v_evidence_refs jsonb;
+  v_page_count bigint;
+  v_last_visible_sequence bigint;
+  v_observed_at timestamptz := statement_timestamp();
+BEGIN
+  IF p_limit NOT BETWEEN 1 AND 200
+      OR (p_cursor IS NOT NULL AND p_cursor < 1)
+      OR length(COALESCE(p_correlation_id, '')) NOT BETWEEN 8 AND 128 THEN
+    RAISE EXCEPTION 'invalid audit projection request' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+
+  SELECT * INTO v_session
+    FROM console_identity.browser_session
+    WHERE session_id = p_session_id;
+  IF NOT FOUND OR v_session.subject_id <> p_actor_ref OR v_session.revoked_at IS NOT NULL
+      OR v_session.expires_at <= v_observed_at THEN
+    RAISE EXCEPTION 'active Console session is required' USING ERRCODE = '28000', DETAIL = 'SessionInvalid';
+  END IF;
+  SELECT * INTO v_authority
+    FROM console_identity.subject_authority
+    WHERE subject_id = p_actor_ref;
+  IF NOT FOUND OR v_authority.permission_revision <> v_session.permission_revision
+      OR v_authority.permission_revision <> p_expected_permission_revision
+      OR v_authority.revoke_epoch <> v_session.revoke_epoch
+      OR v_authority.revoke_epoch <> p_expected_revoke_epoch THEN
+    RAISE EXCEPTION 'session authority revision is stale' USING ERRCODE = '28000', DETAIL = 'StaleAuthorityRevision';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM console_identity.permission_grant
+    WHERE subject_id = p_actor_ref
+      AND permission = 'console.audit.read'
+      AND grant_revision <= v_authority.permission_revision
+      AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'permission denied' USING ERRCODE = '42501', DETAIL = 'PermissionDenied';
+  END IF;
+
+  WITH page AS (
+    SELECT event.*
+    FROM console_audit.event
+    WHERE p_cursor IS NULL OR sequence_id < p_cursor
+    ORDER BY sequence_id DESC
+    LIMIT p_limit + 1
+  ), visible AS (
+    SELECT * FROM page ORDER BY sequence_id DESC LIMIT p_limit
+  )
+  SELECT
+    COALESCE(jsonb_agg(jsonb_build_object(
+      'sequenceId', visible.sequence_id::text,
+      'eventId', visible.event_id,
+      'operationId', visible.operation_id,
+      'occurredAt', visible.occurred_at,
+      'correlationId', visible.correlation_id,
+      'actorRef', visible.actor_ref,
+      'action', visible.action,
+      'targetRef', visible.target_ref,
+      'outcome', visible.outcome,
+      'reason', visible.reason,
+      'evidence', visible.evidence,
+      'previousHash', visible.previous_hash,
+      'eventHash', visible.event_hash
+    ) ORDER BY visible.sequence_id DESC), '[]'::jsonb),
+    COALESCE(jsonb_agg(('audit-event:' || visible.event_id::text)::text
+      ORDER BY visible.sequence_id DESC), '[]'::jsonb),
+    (SELECT count(*) FROM page),
+    min(visible.sequence_id)
+    INTO v_items, v_evidence_refs, v_page_count, v_last_visible_sequence
+    FROM visible;
+
+  RETURN jsonb_build_object(
+    'schemaVersion', '1.0',
+    'data', jsonb_build_object(
+      'items', v_items,
+      'nextCursor', CASE WHEN v_page_count > p_limit THEN v_last_visible_sequence::text ELSE NULL END
+    ),
+    'authority', 'SupabaseAuditLedger',
+    'observedAt', v_observed_at,
+    'freshness', 'fresh',
+    'correlationId', p_correlation_id,
+    'evidenceRefs', v_evidence_refs
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_audit.list_events(uuid, uuid, bigint, bigint, bigint, integer, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid, uuid, bigint, bigint, bigint, integer, text) TO console_api;
 
 CREATE OR REPLACE FUNCTION console_identity.resolve_browser_session(
   p_token_digest bytea,
@@ -1550,6 +1655,8 @@ COMMENT ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
   boolean, text, text, text, text, jsonb
 ) IS 'Atomically revalidates session and permission, accepts an idempotent intent, and appends audit/outbox evidence';
+COMMENT ON FUNCTION console_audit.list_events(uuid, uuid, bigint, bigint, bigint, integer, text)
+  IS 'Returns a bounded newest-first page from the append-only audit ledger after current authority checks';
 COMMENT ON FUNCTION console_operation.approve_operation(
   uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
 ) IS 'Atomically revalidates an independent aal2 approver and advances a Planned operation by compare-and-set';

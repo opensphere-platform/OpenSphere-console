@@ -57,7 +57,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-correlation-id'] || '').trim();
@@ -72,6 +72,15 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           state: ready ? 'Ready' : 'Unavailable',
           authority: 'SupabasePostgreSQL',
         });
+      }
+      if (url.pathname === '/api/identity/audit' && request.method === 'GET') {
+        const session = await resolveSession(request, { requireCsrf: false });
+        return send(response, 200, await auditOperations.list({
+          session,
+          cursor: url.searchParams.get('cursor'),
+          limit: url.searchParams.get('limit') || 50,
+          correlationId,
+        }));
       }
       const operationMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})$/);
       if (operationMatch && request.method === 'GET') {
