@@ -554,7 +554,7 @@ test('opaque session resolver sends only cookie and CSRF digests to PostgreSQL',
   const csrf = 'csrf-proof-with-more-than-16-bytes';
   const resolved = await resolver({ headers: {
     cookie: 'theme=dark; __Host-opensphere-session=' + handle,
-    'x-csrf-token': csrf,
+    'x-os-csrf-token': csrf,
   } }, { requireCsrf: true });
   assert.equal(resolved.subjectId, actorRef);
   assert.equal(calls[0].tokenDigest.toString('hex'), createHash('sha256').update(handle).digest('hex'));
@@ -612,7 +612,7 @@ test('HTTP Registry mutation returns a durable operation URL and no submitted cr
       'content-type': 'application/json',
       'idempotency-key': 'http-registry-operation-0001',
       'x-correlation-id': 'http-correlation-registry-0001',
-      'x-csrf-token': 'validated-by-session-resolver',
+      'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({ username: 'opensphere-platform', credential, reason: 'rotate registry credential' }),
   });
@@ -639,7 +639,7 @@ test('HTTP Extension install returns only a Planned exact-revision operation', a
       'content-type': 'application/json',
       'idempotency-key': 'http-extension-install-0001',
       'x-correlation-id': 'http-extension-install-correlation-0001',
-      'x-csrf-token': 'validated-by-session-resolver',
+      'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({
       descriptorId: 'extension.workspace',
@@ -672,7 +672,7 @@ test('HTTP Extension removal returns only a Planned typed operation', async (t) 
       'content-type': 'application/json',
       'idempotency-key': 'http-extension-remove-0001',
       'x-correlation-id': 'http-extension-remove-correlation-0001',
-      'x-csrf-token': 'validated-by-session-resolver',
+      'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({
       descriptorId: 'extension.workspace', reason: 'remove retired workspace extension',
@@ -703,7 +703,7 @@ test('HTTP Extension inspection returns only current C_REG evidence and requires
     headers: {
       'content-type': 'application/json',
       'x-correlation-id': 'http-extension-inspect-correlation-0001',
-      'x-csrf-token': 'validated-by-session-resolver',
+      'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({ descriptorId: 'extension.workspace', catalogRevision }),
   });
@@ -776,7 +776,7 @@ test('HTTP approval route requires CSRF and returns the Authorized receipt', asy
         'content-type': 'application/json',
         'idempotency-key': 'http-approval-operation-0001',
         'x-correlation-id': 'http-approval-correlation-0001',
-        'x-csrf-token': 'validated-by-session-resolver',
+        'x-os-csrf-token': 'validated-by-session-resolver',
       },
       body: JSON.stringify({
         reason: 'independent HTTP approval',
@@ -822,7 +822,7 @@ test('HTTP verification route requires CSRF and returns the Verified receipt', a
         'content-type': 'application/json',
         'idempotency-key': 'http-verification-operation-0001',
         'x-correlation-id': 'http-verification-correlation-0001',
-        'x-csrf-token': 'validated-by-session-resolver',
+        'x-os-csrf-token': 'validated-by-session-resolver',
       },
       body: JSON.stringify({ expectedStateVersion: 4 }),
     },

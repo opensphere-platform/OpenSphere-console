@@ -29,7 +29,7 @@ export function createDatabaseSessionResolver({ store, cookieName = DEFAULT_COOK
     if (handle.length < 32 || handle.length > 512) {
       fail('SessionInvalid', 'active Console session is required', 401);
     }
-    const csrf = String(request.headers['x-csrf-token'] || '');
+    const csrf = String(request.headers['x-os-csrf-token'] || '');
     if (requireCsrf && (csrf.length < 16 || csrf.length > 512)) {
       fail('CsrfRejected', 'Console session CSRF validation failed', 403);
     }

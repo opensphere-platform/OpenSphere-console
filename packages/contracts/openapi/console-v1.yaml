@@ -425,7 +425,7 @@ components:
       name: __Host-opensphere-session
   parameters:
     CsrfToken:
-      name: X-CSRF-Token
+      name: X-OS-CSRF-Token
       in: header
       required: true
       schema: { type: string, minLength: 16, maxLength: 512 }

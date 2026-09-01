@@ -28,7 +28,7 @@ const approvalIdempotencyKey = 'integration-approval-operation-0001';
 const policyRevision = 'console-operation-policy-2026-09-02.1';
 const headers = {
   cookie: '__Host-opensphere-session=' + handle,
-  'x-csrf-token': csrf,
+  'x-os-csrf-token': csrf,
   'idempotency-key': idempotencyKey,
   'x-correlation-id': correlationId,
   'content-type': 'application/json',
@@ -252,7 +252,7 @@ function approval(operationId, candidateBody, candidateHeaders = {}) {
     method: 'POST',
     headers: {
       cookie: '__Host-opensphere-session=' + approverHandle,
-      'x-csrf-token': approverCsrf,
+      'x-os-csrf-token': approverCsrf,
       'idempotency-key': approvalIdempotencyKey,
       'x-correlation-id': approvalCorrelationId,
       'content-type': 'application/json',
@@ -267,7 +267,7 @@ function verification(operationId, candidateBody, candidateHeaders = {}) {
     method: 'POST',
     headers: {
       cookie: headers.cookie,
-      'x-csrf-token': csrf,
+      'x-os-csrf-token': csrf,
       'idempotency-key': 'integration-verification-operation-0001',
       'x-correlation-id': 'integration-verification-correlation-0001',
       'content-type': 'application/json',
@@ -346,7 +346,7 @@ try {
 
   const selfApproval = await approval(plannedRevocation.operationId, approvalBody, {
     cookie: headers.cookie,
-    'x-csrf-token': csrf,
+    'x-os-csrf-token': csrf,
     'idempotency-key': 'integration-self-approval-operation-0001',
     'x-correlation-id': 'integration-self-approval-correlation-0001',
   });
@@ -516,7 +516,7 @@ try {
     method: 'POST',
     headers: {
       cookie: headers.cookie,
-      'x-csrf-token': csrf,
+      'x-os-csrf-token': csrf,
       'content-type': 'application/json',
       'idempotency-key': 'integration-extension-install-0001',
       'x-correlation-id': 'integration-extension-install-correlation-0001',
@@ -620,7 +620,7 @@ try {
     method: 'POST',
     headers: {
       cookie: headers.cookie,
-      'x-csrf-token': csrf,
+      'x-os-csrf-token': csrf,
       'content-type': 'application/json',
       'idempotency-key': 'integration-extension-remove-0001',
       'x-correlation-id': 'integration-extension-remove-correlation-0001',
@@ -738,7 +738,7 @@ try {
     method: 'DELETE',
     headers: {
       cookie: headers.cookie,
-      'x-csrf-token': csrf,
+      'x-os-csrf-token': csrf,
       'x-correlation-id': 'integration-session-revoke-0001',
     },
   });
