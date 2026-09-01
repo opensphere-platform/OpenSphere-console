@@ -125,6 +125,8 @@ $$;
 
 
 
+
+
 SELECT set_config(
   'verification.operation_id',
   (SELECT operation_id::text FROM console_operation.operation LIMIT 1),
@@ -753,3 +755,33 @@ BEGIN
   END IF;
 END;
 $$;
+
+SET ROLE console_api;
+DO $$
+DECLARE
+  v_projection jsonb;
+BEGIN
+  v_projection := console_extension.list_revocations(
+    '22222222-2222-4222-8222-222222222222',
+    '11111111-1111-4111-8111-111111111111',
+    'correlation-revocation-read-0001'
+  );
+  IF v_projection->>'authority' <> 'ConsoleExtensionRevocation'
+      OR v_projection->>'freshness' <> 'fresh'
+      OR jsonb_array_length(v_projection->'data') <> 1
+      OR v_projection->'data'->0->>'imageRef' <> 'ghcr.io/opensphere-platform/console@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+      OR jsonb_array_length(v_projection->'evidenceRefs') <> 1 THEN
+    RAISE EXCEPTION 'C_EXT revocation read projection lost authority evidence';
+  END IF;
+  BEGIN
+    PERFORM console_extension.list_revocations(
+      '66666666-6666-4666-8666-666666666666',
+      '55555555-5555-4555-8555-555555555555',
+      'correlation-forbidden-revocation-read-0001'
+    );
+    RAISE EXCEPTION 'approver without revocation permission read the projection';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;

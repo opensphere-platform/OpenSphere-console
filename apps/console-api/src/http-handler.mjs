@@ -146,6 +146,10 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           'x-idempotent-replay': String(result.replayed),
         });
       }
+      if (url.pathname === '/api/admin/extensions/revocations' && request.method === 'GET') {
+        const session = await resolveSession(request, { requireCsrf: false });
+        return send(response, 200, await registryOperations.listRevocations({ session, correlationId }));
+      }
       return send(response, 404, errorEnvelope(Object.assign(new Error('route was not found'), { code: 'NotFound' }), correlationId));
     } catch (error) {
       return send(response, Number(error?.status) || 503, errorEnvelope(error, correlationId));

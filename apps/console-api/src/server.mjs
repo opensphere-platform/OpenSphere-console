@@ -37,6 +37,7 @@ const operationService = createOperationService({ store, policyCatalog });
 const registryOperations = createRegistryOperations({
   operationService,
   policyRevision: policyCatalog.policyRevision,
+  projectionStore: store,
 });
 const handler = createConsoleApiHandler({
   resolveSession: createDatabaseSessionResolver({ store }),

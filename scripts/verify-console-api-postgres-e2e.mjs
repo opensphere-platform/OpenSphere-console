@@ -281,6 +281,22 @@ try {
     revocations: 1,
     delivered_outbox: 1,
   });
+  const revocationProjectionResponse = await fetch(origin + '/api/admin/extensions/revocations', {
+    headers: {
+      cookie: headers.cookie,
+      'x-correlation-id': 'integration-revocation-projection-0001',
+    },
+  });
+  assert.equal(revocationProjectionResponse.status, 200);
+  const revocationProjection = await revocationProjectionResponse.json();
+  assert.equal(revocationProjection.authority, 'ConsoleExtensionRevocation');
+  assert.equal(revocationProjection.freshness, 'fresh');
+  assert.equal(revocationProjection.correlationId, 'integration-revocation-projection-0001');
+  assert.equal(
+    revocationProjection.data.some((item) => item.imageRef === plannedRevocation.targetRef
+      && item.operationId === plannedRevocation.operationId),
+    true,
+  );
 
   await admin.query(
     [
@@ -304,6 +320,7 @@ try {
     selfApprovalDenied: true,
     revokedApprovalDenied: true,
     extensionExecution: executionEvidence,
+    revocationProjection: true,
     revokeDenied: true,
   }) + '\n');
 } finally {

@@ -21,7 +21,7 @@ CREATE SCHEMA console_extension;
 
 REVOKE ALL ON SCHEMA console_identity, console_operation, console_audit, console_extension FROM PUBLIC;
 GRANT USAGE ON SCHEMA console_identity, console_operation TO authenticated;
-GRANT USAGE ON SCHEMA console_identity, console_operation TO console_api;
+GRANT USAGE ON SCHEMA console_identity, console_operation, console_extension TO console_api;
 GRANT USAGE ON SCHEMA console_operation, console_extension TO console_extension_controller;
 
 CREATE TABLE console_identity.subject_authority (
@@ -1140,6 +1140,79 @@ $$;
 REVOKE ALL ON FUNCTION console_operation.get_operation(uuid, uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION console_operation.get_operation(uuid, uuid, uuid) TO console_api;
 
+CREATE OR REPLACE FUNCTION console_extension.list_revocations(
+  p_session_id uuid,
+  p_actor_ref uuid,
+  p_correlation_id text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_identity, console_operation, console_extension
+AS $$
+DECLARE
+  v_session console_identity.browser_session;
+  v_authority console_identity.subject_authority;
+  v_data jsonb;
+  v_evidence_refs jsonb;
+  v_observed_at timestamptz := statement_timestamp();
+BEGIN
+  IF length(COALESCE(p_correlation_id, '')) NOT BETWEEN 8 AND 128 THEN
+    RAISE EXCEPTION 'invalid correlation id' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+  SELECT * INTO v_session
+    FROM console_identity.browser_session
+    WHERE session_id = p_session_id;
+  IF NOT FOUND OR v_session.subject_id <> p_actor_ref OR v_session.revoked_at IS NOT NULL
+      OR v_session.expires_at <= v_observed_at THEN
+    RAISE EXCEPTION 'active Console session is required' USING ERRCODE = '28000', DETAIL = 'SessionInvalid';
+  END IF;
+  SELECT * INTO v_authority
+    FROM console_identity.subject_authority
+    WHERE subject_id = p_actor_ref;
+  IF NOT FOUND OR v_authority.permission_revision <> v_session.permission_revision
+      OR v_authority.revoke_epoch <> v_session.revoke_epoch THEN
+    RAISE EXCEPTION 'session authority revision is stale' USING ERRCODE = '28000', DETAIL = 'StaleAuthorityRevision';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM console_identity.permission_grant
+    WHERE subject_id = p_actor_ref
+      AND permission = 'console.extension.revoke'
+      AND grant_revision <= v_authority.permission_revision
+      AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'permission denied' USING ERRCODE = '42501', DETAIL = 'PermissionDenied';
+  END IF;
+
+  SELECT
+    COALESCE(jsonb_agg(jsonb_build_object(
+      'imageRef', revocation.image_ref,
+      'operationId', revocation.operation_id,
+      'payloadDigest', revocation.payload_digest,
+      'actionVersion', revocation.action_version,
+      'claimEpoch', revocation.claim_epoch,
+      'revokedAt', revocation.revoked_at
+    ) ORDER BY revocation.revoked_at DESC, revocation.image_ref), '[]'::jsonb),
+    COALESCE(jsonb_agg(to_jsonb('operation:' || revocation.operation_id::text)
+      ORDER BY revocation.revoked_at DESC, revocation.image_ref), '[]'::jsonb)
+    INTO v_data, v_evidence_refs
+    FROM console_extension.revocation;
+
+  RETURN jsonb_build_object(
+    'schemaVersion', '1.0',
+    'data', v_data,
+    'authority', 'ConsoleExtensionRevocation',
+    'observedAt', v_observed_at,
+    'freshness', 'fresh',
+    'correlationId', p_correlation_id,
+    'evidenceRefs', v_evidence_refs
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.list_revocations(uuid, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.list_revocations(uuid, uuid, text) TO console_api;
+
 COMMENT ON SCHEMA console_identity IS 'Supabase-backed Console identity projections and opaque sessions';
 COMMENT ON SCHEMA console_operation IS 'Durable intent, idempotency and external-effect outbox authority';
 COMMENT ON SCHEMA console_audit IS 'Append-only Console security and operation evidence';
@@ -1160,5 +1233,7 @@ COMMENT ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uui
   IS 'Applies one exact-digest Extension revocation under the current claim fence and appends execution evidence';
 COMMENT ON FUNCTION console_extension.record_execution_failure(uuid, bigint, bigint, uuid, text, text, boolean)
   IS 'Records a typed Failed or Unknown owner result under the current claim fence without raw error material';
+COMMENT ON FUNCTION console_extension.list_revocations(uuid, uuid, text)
+  IS 'Returns the current C_EXT exact-digest revocation authority through a session-revalidated no-secret projection';
 
 COMMIT;

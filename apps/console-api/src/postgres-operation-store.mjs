@@ -27,6 +27,12 @@ const RESOLVE_SESSION_SQL = [
   ') AS session_record',
 ].join(' ');
 
+const LIST_REVOCATIONS_SQL = [
+  'SELECT console_extension.list_revocations(',
+  '$1::uuid, $2::uuid, $3::text',
+  ') AS read_envelope',
+].join(' ');
+
 function databaseError(error) {
   const code = String(error?.detail || '');
   const known = new Set([
@@ -161,6 +167,19 @@ export function createPostgresOperationStore({ query }) {
       try {
         const result = await query(GET_SQL, [input.sessionId, input.actorRef, input.operationId]);
         return result?.rows?.[0]?.operation_record || null;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listRevocations(input) {
+      try {
+        const result = await query(LIST_REVOCATIONS_SQL, [
+          input.sessionId, input.actorRef, input.correlationId,
+        ]);
+        const envelope = result?.rows?.[0]?.read_envelope;
+        if (!envelope) throw new Error('list_revocations returned no read envelope');
+        return envelope;
       } catch (error) {
         throw databaseError(error);
       }

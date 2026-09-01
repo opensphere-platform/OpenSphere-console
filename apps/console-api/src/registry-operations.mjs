@@ -11,9 +11,21 @@ function exact(value, fields, label) {
   if (unknown.length) fail(label + ' contains unknown fields: ' + unknown.join(', '));
 }
 
-export function createRegistryOperations({ operationService, policyRevision }) {
+export function createRegistryOperations({ operationService, policyRevision, projectionStore }) {
   if (!operationService?.accept) throw new TypeError('operation service is required');
   return Object.freeze({
+    async listRevocations({ session, correlationId }) {
+      if (!projectionStore?.listRevocations) throw Object.assign(
+        new Error('Extension revocation projection is unavailable'),
+        { code: 'AuthorityUnavailable', status: 503 },
+      );
+      return projectionStore.listRevocations({
+        sessionId: session.sessionId,
+        actorRef: session.subjectId,
+        correlationId,
+      });
+    },
+
     async replaceCredential({ session, body, idempotencyKey, correlationId }) {
       exact(body, ['username', 'credential', 'reason'], 'registry credential request');
       const username = String(body.username || '').trim();

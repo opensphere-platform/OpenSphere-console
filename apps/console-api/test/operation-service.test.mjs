@@ -83,11 +83,23 @@ function fixture() {
       operationRecord.approval_revision = input.approvalRevision;
       return { operationRecord, replayed: approved.length > 1 };
     },
+    async listRevocations(input) {
+      return {
+        schemaVersion: '1.0',
+        data: [],
+        authority: 'ConsoleExtensionRevocation',
+        observedAt: current.toISOString(),
+        freshness: 'fresh',
+        correlationId: input.correlationId,
+        evidenceRefs: [],
+      };
+    },
   };
   const operationService = createOperationService({ store, policyCatalog, clock: () => current });
   const registryOperations = createRegistryOperations({
     operationService,
     policyRevision: policyCatalog.policyRevision,
+    projectionStore: store,
   });
   return { accepted, approved, operationService, registryOperations };
 }
@@ -384,4 +396,30 @@ test('HTTP approval route requires CSRF and returns the Authorized receipt', asy
   assert.equal(receipt.stateVersion, 1);
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + planned.receipt.operationId);
   assert.equal(resolverCalls[0].requireCsrf, true);
+});
+
+test('HTTP revocation projection is a session-revalidated authority-aware read', async (t) => {
+  const { registryOperations, operationService } = fixture();
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) {
+      resolverCalls.push(options);
+      return session;
+    },
+    operationService,
+    registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const response = await fetch(
+    'http://127.0.0.1:' + address.port + '/api/admin/extensions/revocations',
+    { headers: { 'x-correlation-id': 'http-revocation-read-correlation-0001' } },
+  );
+  const envelope = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(envelope.authority, 'ConsoleExtensionRevocation');
+  assert.equal(envelope.freshness, 'fresh');
+  assert.equal(envelope.correlationId, 'http-revocation-read-correlation-0001');
+  assert.equal(resolverCalls[0].requireCsrf, false);
 });
