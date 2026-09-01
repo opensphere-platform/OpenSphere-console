@@ -16,6 +16,11 @@ const csrf = 'csrf-proof-for-console-api-integration';
 const credential = 'integration-registry-credential-never-persisted';
 const correlationId = 'integration-correlation-registry-0001';
 const idempotencyKey = 'integration-registry-operation-0001';
+const approverHandle = 'opaque-approver-session-for-console-api-integration';
+const approverCsrf = 'csrf-approver-proof-for-console-api-integration';
+const approvalCorrelationId = 'integration-correlation-approval-0001';
+const approvalIdempotencyKey = 'integration-approval-operation-0001';
+const policyRevision = 'console-operation-policy-2026-09-01.1';
 const headers = {
   cookie: '__Host-opensphere-session=' + handle,
   'x-csrf-token': csrf,
@@ -60,6 +65,40 @@ async function mutation(candidateBody = body, candidateHeaders = headers) {
     method: 'PUT',
     headers: candidateHeaders,
     body: candidateBody,
+  });
+}
+
+async function createRevocation() {
+  const image = 'ghcr.io/opensphere-platform/console@sha256:' + 'e'.repeat(64);
+  const response = await fetch(origin + '/api/admin/extensions/revocations', {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'idempotency-key': 'integration-revocation-operation-0001',
+      'x-correlation-id': 'integration-correlation-revocation-0001',
+    },
+    body: JSON.stringify({
+      image,
+      reason: 'verify independent approval integration',
+      confirmation: 'REVOKE ' + image,
+    }),
+  });
+  assert.equal(response.status, 202);
+  return response.json();
+}
+
+function approval(operationId, candidateBody, candidateHeaders = {}) {
+  return fetch(origin + '/api/platform/operations/' + operationId + '/approvals', {
+    method: 'POST',
+    headers: {
+      cookie: '__Host-opensphere-session=' + approverHandle,
+      'x-csrf-token': approverCsrf,
+      'idempotency-key': approvalIdempotencyKey,
+      'x-correlation-id': approvalCorrelationId,
+      'content-type': 'application/json',
+      ...candidateHeaders,
+    },
+    body: JSON.stringify(candidateBody),
   });
 }
 
@@ -108,6 +147,78 @@ try {
     credential_position: 0,
   });
 
+  const plannedRevocation = await createRevocation();
+  assert.equal(plannedRevocation.state, 'Planned');
+  assert.equal(plannedRevocation.approvalRequired, true);
+  const approvalBody = {
+    reason: 'independent approval integration review',
+    approvalRevision: policyRevision,
+    expectedStateVersion: 0,
+    confirmation: null,
+  };
+
+  const selfApproval = await approval(plannedRevocation.operationId, approvalBody, {
+    cookie: headers.cookie,
+    'x-csrf-token': csrf,
+    'idempotency-key': 'integration-self-approval-operation-0001',
+    'x-correlation-id': 'integration-self-approval-correlation-0001',
+  });
+  assert.equal(selfApproval.status, 403);
+  assert.equal((await selfApproval.json()).code, 'PermissionDenied');
+
+  const approved = await approval(plannedRevocation.operationId, approvalBody);
+  assert.equal(approved.status, 202);
+  assert.equal(approved.headers.get('x-idempotent-replay'), 'false');
+  const approvedReceipt = await approved.json();
+  assert.equal(approvedReceipt.state, 'Authorized');
+  assert.equal(approvedReceipt.stateVersion, 1);
+  assert.equal(approvedReceipt.approvalRevision, policyRevision);
+
+  const approvalReplay = await approval(plannedRevocation.operationId, approvalBody);
+  assert.equal(approvalReplay.status, 202);
+  assert.equal(approvalReplay.headers.get('x-idempotent-replay'), 'true');
+  assert.equal((await approvalReplay.json()).operationId, plannedRevocation.operationId);
+
+  const approvalMismatch = await approval(plannedRevocation.operationId, {
+    ...approvalBody,
+    reason: 'different approval replay content',
+  });
+  assert.equal(approvalMismatch.status, 409);
+  assert.equal((await approvalMismatch.json()).code, 'IdempotencyMismatch');
+
+  const approvalEvidence = await admin.query(
+    [
+      'SELECT',
+      '(SELECT count(*)::int FROM console_operation.approval WHERE operation_id = $1) AS approvals,',
+      '(SELECT count(*)::int FROM console_operation.outbox WHERE operation_id = $1) AS outbox_events,',
+      '(SELECT count(*)::int FROM console_audit.event WHERE operation_id = $1) AS audit_events,',
+      '(SELECT state FROM console_operation.operation WHERE operation_id = $1) AS state,',
+      '(SELECT state_version::int FROM console_operation.operation WHERE operation_id = $1) AS state_version'
+    ].join(' '),
+    [plannedRevocation.operationId],
+  );
+  assert.deepEqual(approvalEvidence.rows[0], {
+    approvals: 1,
+    outbox_events: 2,
+    audit_events: 2,
+    state: 'Authorized',
+    state_version: 1,
+  });
+
+  await admin.query(
+    [
+      'UPDATE console_identity.browser_session',
+      'SET revoked_at = statement_timestamp(), revoke_reason = $1',
+      'WHERE session_id = $2',
+    ].join(' '),
+    ['integration approver revoke', '66666666-6666-4666-8666-666666666666'],
+  );
+  const revokedApproval = await approval(plannedRevocation.operationId, approvalBody, {
+    'idempotency-key': 'integration-revoked-approval-operation-0001',
+  });
+  assert.equal(revokedApproval.status, 401);
+  assert.equal((await revokedApproval.json()).code, 'AuthenticationRequired');
+
   await admin.query(
     [
       'UPDATE console_identity.browser_session',
@@ -126,6 +237,9 @@ try {
     durableCounts: evidence.rows[0],
     replay: true,
     idempotencyMismatch: true,
+    approval: approvalEvidence.rows[0],
+    selfApprovalDenied: true,
+    revokedApprovalDenied: true,
     revokeDenied: true,
   }) + '\n');
 } finally {
@@ -136,6 +250,14 @@ try {
       'WHERE session_id = $1',
     ].join(' '),
     ['22222222-2222-4222-8222-222222222222'],
+  ).catch(() => {});
+  await admin.query(
+    [
+      'UPDATE console_identity.browser_session',
+      'SET revoked_at = NULL, revoke_reason = NULL',
+      'WHERE session_id = $1',
+    ].join(' '),
+    ['66666666-6666-4666-8666-666666666666'],
   ).catch(() => {});
   await admin.end().catch(() => {});
   if (child.exitCode == null) child.kill('SIGTERM');

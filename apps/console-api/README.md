@@ -2,7 +2,7 @@
 
 `C_API` is the Console policy enforcement point. This first target slice accepts durable operations through a constrained PostgreSQL function after checking the current opaque session, permission revision, revoke epoch, risk, reason, AAL, and action policy.
 
-The application role has no direct table write permission. `console_operation.accept_operation` atomically writes the intent, audit-chain event, and outbox event. Registry credential material is used only to calculate the canonical payload digest and is never passed to the store.
+The application role has no direct table write permission. `console_operation.accept_operation` atomically writes the intent, audit-chain event, and outbox event. `console_operation.approve_operation` records one independent AAL2 approver and atomically advances an approval-required operation from `Planned` to `Authorized` using the caller's expected state version. Registry credential material is used only to calculate the canonical payload digest and is never passed to the store.
 
 This package does not yet replace the complete legacy Backend. Its current HTTP boundary implements the foundational operation endpoint and the first Registry mutation consumers while the remaining legacy routes stay under controlled migration.
 
@@ -16,4 +16,4 @@ $env:CONSOLE_DATABASE_URL = 'postgresql://<limited-runtime-role>@<supabase-postg
 npm start --prefix apps/console-api
 ```
 
-Implemented routes are `GET /healthz`, `POST /api/platform/operations`, `GET /api/platform/operations/{operationId}`, Registry credential replace/remove, and exact-digest revocation acceptance. Registry owner dispatch, approval execution, and legacy Backend cutover remain separate later slices; a `202` response currently proves durable intent only.
+Implemented routes are `GET /healthz`, `POST /api/platform/operations`, `GET /api/platform/operations/{operationId}`, `POST /api/platform/operations/{operationId}/approvals`, Registry credential replace/remove, and exact-digest revocation acceptance. Registry owner dispatch and legacy Backend cutover remain separate later slices. An operation-intake `202` proves durable intent; an approval `202` proves durable authorization, and neither response proves owner-side execution.

@@ -2,15 +2,23 @@
 
 INSERT INTO auth.users(id) VALUES
   ('11111111-1111-4111-8111-111111111111'),
+  ('55555555-5555-4555-8555-555555555555'),
+  ('88888888-8888-4888-8888-888888888888'),
   ('99999999-9999-4999-8999-999999999999');
 
-INSERT INTO console_identity.subject_authority(subject_id, permission_revision, revoke_epoch)
-VALUES ('11111111-1111-4111-8111-111111111111', 7, 2);
+INSERT INTO console_identity.subject_authority(subject_id, person_ref, permission_revision, revoke_epoch)
+VALUES
+  ('11111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 7, 2),
+  ('55555555-5555-4555-8555-555555555555', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 3, 0),
+  ('88888888-8888-4888-8888-888888888888', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 3, 0);
 
 INSERT INTO console_identity.permission_grant(subject_id, permission, grant_revision, granted_by)
 VALUES
   ('11111111-1111-4111-8111-111111111111', 'console.registry.manage', 7, '99999999-9999-4999-8999-999999999999'),
-  ('11111111-1111-4111-8111-111111111111', 'console.extension.revoke', 7, '99999999-9999-4999-8999-999999999999');
+  ('11111111-1111-4111-8111-111111111111', 'console.extension.revoke', 7, '99999999-9999-4999-8999-999999999999'),
+  ('11111111-1111-4111-8111-111111111111', 'console.operation.approve', 7, '99999999-9999-4999-8999-999999999999'),
+  ('55555555-5555-4555-8555-555555555555', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999'),
+  ('88888888-8888-4888-8888-888888888888', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999');
 
 INSERT INTO console_identity.browser_session(
   session_id, subject_id, token_digest, csrf_token_digest, aal,
@@ -28,6 +36,26 @@ INSERT INTO console_identity.browser_session(
     '44444444-4444-4444-8444-444444444444',
     '11111111-1111-4111-8111-111111111111',
     decode('cc', 'hex'), decode('dd', 'hex'), 'aal1', 7, 2,
+    statement_timestamp() + interval '1 hour'
+  ),
+  (
+    '66666666-6666-4666-8666-666666666666',
+    '55555555-5555-4555-8555-555555555555',
+    sha256(convert_to('opaque-approver-session-for-console-api-integration', 'UTF8')),
+    sha256(convert_to('csrf-approver-proof-for-console-api-integration', 'UTF8')),
+    'aal2', 3, 0,
+    statement_timestamp() + interval '1 hour'
+  ),
+  (
+    '77777777-7777-4777-8777-777777777777',
+    '55555555-5555-4555-8555-555555555555',
+    decode('ee', 'hex'), decode('ff', 'hex'), 'aal1', 3, 0,
+    statement_timestamp() + interval '1 hour'
+  ),
+  (
+    '88888888-8888-4888-8888-888888888888',
+    '88888888-8888-4888-8888-888888888888',
+    decode('ab', 'hex'), decode('ac', 'hex'), 'aal2', 3, 0,
     statement_timestamp() + interval '1 hour'
   );
 
@@ -355,8 +383,8 @@ BEGIN
     'console_identity'::regnamespace,
     'console_operation'::regnamespace,
     'console_audit'::regnamespace
-  )) <> 6 THEN
-    RAISE EXCEPTION 'expected six RLS-protected authority tables';
+  )) <> 7 THEN
+    RAISE EXCEPTION 'expected seven RLS-protected authority tables';
   END IF;
   IF EXISTS (
     SELECT 1
@@ -376,6 +404,140 @@ BEGIN
     )::text, 'UTF8')), 'hex')
   ) THEN
     RAISE EXCEPTION 'audit event hash verification failed';
+  END IF;
+END;
+$$;
+
+SET ROLE console_api;
+SELECT * FROM console_operation.accept_operation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, 'console.extension.revoke',
+  'console.extension.revocation.create', '1.0',
+  'image-digest:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+  'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+  'R2', 'revoke compromised image',
+  'console-operation-policy-2026-09-01.1', true,
+  'approval-source-operation-0001', 'correlation-approval-source-0001',
+  NULL, 'C_EXT', NULL
+);
+RESET ROLE;
+
+SELECT set_config(
+  'verification.approval_operation_id',
+  (SELECT operation_id::text FROM console_operation.operation WHERE idempotency_key = 'approval-source-operation-0001'),
+  false
+);
+
+SET ROLE console_api;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM console_operation.approve_operation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.approval_operation_id')::uuid, 0,
+      'self approval must fail', 'console-operation-policy-2026-09-01.1', NULL,
+      'self-approval-operation-0001', 'correlation-self-approval-0001'
+    );
+    RAISE EXCEPTION 'operation initiator unexpectedly approved its own operation';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM * FROM console_operation.approve_operation(
+      '77777777-7777-4777-8777-777777777777',
+      '55555555-5555-4555-8555-555555555555',
+      3, 0, current_setting('verification.approval_operation_id')::uuid, 0,
+      'aal1 approval must fail', 'console-operation-policy-2026-09-01.1', NULL,
+      'aal1-approval-operation-0001', 'correlation-aal1-approval-0001'
+    );
+    RAISE EXCEPTION 'aal1 approval unexpectedly succeeded';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM * FROM console_operation.approve_operation(
+      '88888888-8888-4888-8888-888888888888',
+      '88888888-8888-4888-8888-888888888888',
+      3, 0, current_setting('verification.approval_operation_id')::uuid, 0,
+      'alias account approval must fail', 'console-operation-policy-2026-09-01.1', NULL,
+      'alias-approval-operation-0001', 'correlation-alias-approval-0001'
+    );
+    RAISE EXCEPTION 'second account for the same person unexpectedly approved the operation';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END;
+$$;
+
+SELECT * FROM console_operation.approve_operation(
+  '66666666-6666-4666-8666-666666666666',
+  '55555555-5555-4555-8555-555555555555',
+  3, 0, current_setting('verification.approval_operation_id')::uuid, 0,
+  'independent approval completed', 'console-operation-policy-2026-09-01.1', NULL,
+  'approval-operation-0001', 'correlation-approval-0001'
+);
+
+SELECT * FROM console_operation.approve_operation(
+  '66666666-6666-4666-8666-666666666666',
+  '55555555-5555-4555-8555-555555555555',
+  3, 0, current_setting('verification.approval_operation_id')::uuid, 0,
+  'independent approval completed', 'console-operation-policy-2026-09-01.1', NULL,
+  'approval-operation-0001', 'correlation-approval-0001'
+);
+
+DO $$
+BEGIN
+  BEGIN
+    PERFORM * FROM console_operation.approve_operation(
+      '66666666-6666-4666-8666-666666666666',
+      '55555555-5555-4555-8555-555555555555',
+      3, 0, current_setting('verification.approval_operation_id')::uuid, 0,
+      'different approval content', 'console-operation-policy-2026-09-01.1', NULL,
+      'approval-operation-0001', 'correlation-approval-0001'
+    );
+    RAISE EXCEPTION 'approval idempotency mismatch unexpectedly succeeded';
+  EXCEPTION WHEN unique_violation THEN
+    IF SQLERRM NOT LIKE '%different approval%' THEN RAISE; END IF;
+  END;
+  BEGIN
+    PERFORM * FROM console_operation.approve_operation(
+      '66666666-6666-4666-8666-666666666666',
+      '55555555-5555-4555-8555-555555555555',
+      3, 0, current_setting('verification.approval_operation_id')::uuid, 0,
+      'second approval must fail', 'console-operation-policy-2026-09-01.1', NULL,
+      'approval-operation-0002', 'correlation-approval-0002'
+    );
+    RAISE EXCEPTION 'stale state approval unexpectedly succeeded';
+  EXCEPTION WHEN serialization_failure THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM console_operation.approval WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 1
+      OR (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 'Authorized'
+      OR (SELECT state_version FROM console_operation.operation WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 1
+      OR (SELECT count(*) FROM console_operation.outbox WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 2
+      OR (SELECT count(*) FROM console_audit.event WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 2 THEN
+    RAISE EXCEPTION 'approval was not committed atomically or replay created duplicate effects';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM console_operation.approval a
+    JOIN console_operation.operation o USING (operation_id)
+    WHERE a.actor_ref = o.actor_ref
+  ) THEN
+    RAISE EXCEPTION 'distinct-person approval invariant was violated';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM (
+      SELECT sequence_id, previous_hash,
+        lag(event_hash) OVER (ORDER BY sequence_id) AS expected_previous_hash
+      FROM console_audit.event
+    ) chain
+    WHERE previous_hash IS DISTINCT FROM expected_previous_hash
+  ) THEN
+    RAISE EXCEPTION 'audit chain linkage verification failed after approval';
   END IF;
 END;
 $$;

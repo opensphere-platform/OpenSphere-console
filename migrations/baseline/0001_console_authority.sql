@@ -21,6 +21,7 @@ GRANT USAGE ON SCHEMA console_identity, console_operation TO console_api;
 
 CREATE TABLE console_identity.subject_authority (
   subject_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE RESTRICT,
+  person_ref uuid NOT NULL,
   permission_revision bigint NOT NULL CHECK (permission_revision >= 0),
   revoke_epoch bigint NOT NULL DEFAULT 0 CHECK (revoke_epoch >= 0),
   updated_at timestamptz NOT NULL DEFAULT statement_timestamp()
@@ -129,17 +130,42 @@ CREATE TABLE console_operation.outbox (
   UNIQUE (operation_id, event_type, payload_digest)
 );
 
+CREATE TABLE console_operation.approval (
+  approval_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  operation_id uuid NOT NULL REFERENCES console_operation.operation(operation_id) ON DELETE RESTRICT,
+  actor_ref uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
+  reason text NOT NULL CHECK (length(btrim(reason)) BETWEEN 3 AND 500),
+  approval_revision text NOT NULL CHECK (length(approval_revision) BETWEEN 1 AND 128),
+  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+  permission_revision bigint NOT NULL CHECK (permission_revision >= 0),
+  revoke_epoch bigint NOT NULL CHECK (revoke_epoch >= 0),
+  aal text NOT NULL CHECK (aal = 'aal2'),
+  expected_state_version bigint NOT NULL CHECK (expected_state_version >= 0),
+  idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 8 AND 256),
+  correlation_id text NOT NULL CHECK (length(correlation_id) BETWEEN 8 AND 128),
+  created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+  UNIQUE (actor_ref, idempotency_key),
+  UNIQUE (operation_id, actor_ref)
+);
+
 ALTER TABLE console_operation.operation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.operation FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.outbox FORCE ROW LEVEL SECURITY;
+ALTER TABLE console_operation.approval ENABLE ROW LEVEL SECURITY;
+ALTER TABLE console_operation.approval FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY operation_actor_read
   ON console_operation.operation
   FOR SELECT TO authenticated
   USING (actor_ref = auth.uid());
 
-GRANT SELECT ON console_operation.operation TO authenticated;
+CREATE POLICY approval_actor_read
+  ON console_operation.approval
+  FOR SELECT TO authenticated
+  USING (actor_ref = auth.uid());
+
+GRANT SELECT ON console_operation.operation, console_operation.approval TO authenticated;
 
 CREATE TABLE console_audit.event (
   sequence_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -460,6 +486,196 @@ GRANT EXECUTE ON FUNCTION console_operation.accept_operation(
   boolean, text, text, text, text, jsonb
 ) TO console_api;
 
+CREATE OR REPLACE FUNCTION console_operation.approve_operation(
+  p_session_id uuid,
+  p_actor_ref uuid,
+  p_expected_permission_revision bigint,
+  p_expected_revoke_epoch bigint,
+  p_operation_id uuid,
+  p_expected_state_version bigint,
+  p_reason text,
+  p_approval_revision text,
+  p_confirmation text,
+  p_idempotency_key text,
+  p_correlation_id text
+)
+RETURNS TABLE(operation_record jsonb, replayed boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_identity, console_operation, console_audit
+AS $$
+DECLARE
+  v_session console_identity.browser_session;
+  v_authority console_identity.subject_authority;
+  v_initiator_authority console_identity.subject_authority;
+  v_operation console_operation.operation;
+  v_approval console_operation.approval;
+  v_request_digest text;
+  v_outbox_payload jsonb;
+BEGIN
+  IF p_expected_state_version < 0
+      OR length(btrim(COALESCE(p_reason, ''))) < 3
+      OR length(COALESCE(p_approval_revision, '')) NOT BETWEEN 1 AND 128 THEN
+    RAISE EXCEPTION 'invalid approval request' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+
+  SELECT * INTO v_session
+    FROM console_identity.browser_session
+    WHERE session_id = p_session_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_session.subject_id <> p_actor_ref OR v_session.revoked_at IS NOT NULL
+      OR v_session.expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'active Console session is required' USING ERRCODE = '28000', DETAIL = 'SessionInvalid';
+  END IF;
+
+  SELECT * INTO v_authority
+    FROM console_identity.subject_authority
+    WHERE subject_id = p_actor_ref
+    FOR SHARE;
+  IF NOT FOUND OR v_authority.permission_revision <> v_session.permission_revision
+      OR v_authority.permission_revision <> p_expected_permission_revision
+      OR v_authority.revoke_epoch <> v_session.revoke_epoch
+      OR v_authority.revoke_epoch <> p_expected_revoke_epoch THEN
+    RAISE EXCEPTION 'session authority revision is stale' USING ERRCODE = '28000', DETAIL = 'StaleAuthorityRevision';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM console_identity.permission_grant
+    WHERE subject_id = p_actor_ref
+      AND permission = 'console.operation.approve'
+      AND grant_revision <= v_authority.permission_revision
+      AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'permission denied' USING ERRCODE = '42501', DETAIL = 'PermissionDenied';
+  END IF;
+  IF v_session.aal <> 'aal2' THEN
+    RAISE EXCEPTION 'recent aal2 is required' USING ERRCODE = '42501', DETAIL = 'StepUpRequired';
+  END IF;
+
+  v_request_digest := 'sha256:' || encode(sha256(convert_to(jsonb_build_object(
+    'operationId', p_operation_id,
+    'expectedStateVersion', p_expected_state_version,
+    'reason', btrim(p_reason),
+    'approvalRevision', p_approval_revision,
+    'confirmation', p_confirmation
+  )::text, 'UTF8')), 'hex');
+
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_actor_ref::text || ':' || p_idempotency_key, 0));
+  SELECT * INTO v_approval
+    FROM console_operation.approval
+    WHERE actor_ref = p_actor_ref AND idempotency_key = p_idempotency_key
+    FOR UPDATE;
+  IF FOUND THEN
+    IF v_approval.request_digest <> v_request_digest THEN
+      RAISE EXCEPTION 'idempotency key was already used for a different approval'
+        USING ERRCODE = '23505', DETAIL = 'IdempotencyMismatch';
+    END IF;
+    SELECT * INTO v_operation
+      FROM console_operation.operation
+      WHERE operation_id = v_approval.operation_id;
+    RETURN QUERY SELECT to_jsonb(v_operation), true;
+    RETURN;
+  END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'operation was not found' USING ERRCODE = 'P0002', DETAIL = 'NotFound';
+  END IF;
+  IF v_operation.actor_ref = p_actor_ref THEN
+    RAISE EXCEPTION 'operation initiator cannot approve the same operation'
+      USING ERRCODE = '42501', DETAIL = 'SelfApprovalDenied';
+  END IF;
+  SELECT * INTO v_initiator_authority
+    FROM console_identity.subject_authority
+    WHERE subject_id = v_operation.actor_ref
+    FOR SHARE;
+  IF NOT FOUND OR v_initiator_authority.person_ref = v_authority.person_ref THEN
+    RAISE EXCEPTION 'operation initiator and approver must be different people'
+      USING ERRCODE = '42501', DETAIL = 'SelfApprovalDenied';
+  END IF;
+  IF NOT v_operation.approval_required THEN
+    RAISE EXCEPTION 'operation does not require approval' USING ERRCODE = '22023', DETAIL = 'ApprovalNotRequired';
+  END IF;
+  IF v_operation.approval_revision IS NOT NULL OR v_operation.plan_revision <> p_approval_revision THEN
+    RAISE EXCEPTION 'approval policy revision is stale' USING ERRCODE = '40001', DETAIL = 'StaleRevision';
+  END IF;
+  IF v_operation.state_version <> p_expected_state_version THEN
+    RAISE EXCEPTION 'operation state version changed' USING ERRCODE = '40001', DETAIL = 'StaleOperationVersion';
+  END IF;
+  IF v_operation.state <> 'Planned' THEN
+    RAISE EXCEPTION 'operation is not awaiting approval' USING ERRCODE = '55000', DETAIL = 'InvalidOperationState';
+  END IF;
+
+  INSERT INTO console_operation.approval(
+    operation_id, actor_ref, reason, approval_revision, request_digest,
+    permission_revision, revoke_epoch, aal, expected_state_version,
+    idempotency_key, correlation_id
+  ) VALUES (
+    v_operation.operation_id, p_actor_ref, btrim(p_reason), p_approval_revision,
+    v_request_digest, v_authority.permission_revision, v_authority.revoke_epoch,
+    v_session.aal, p_expected_state_version, p_idempotency_key, p_correlation_id
+  ) RETURNING * INTO v_approval;
+
+  UPDATE console_operation.operation
+    SET state = 'Authorized',
+        state_version = state_version + 1,
+        approval_revision = p_approval_revision,
+        updated_at = statement_timestamp()
+    WHERE operation_id = v_operation.operation_id
+    RETURNING * INTO v_operation;
+
+  v_outbox_payload := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'eventType', 'ApprovalRecorded',
+    'operationId', v_operation.operation_id,
+    'approvalId', v_approval.approval_id,
+    'approverRef', v_approval.actor_ref,
+    'approvalRevision', v_approval.approval_revision,
+    'state', v_operation.state,
+    'stateVersion', v_operation.state_version,
+    'correlationId', p_correlation_id
+  );
+  INSERT INTO console_operation.outbox(operation_id, event_type, payload, payload_digest)
+  VALUES (v_operation.operation_id, 'ApprovalRecorded', v_outbox_payload, v_request_digest);
+
+  PERFORM console_audit.append_event_internal(
+    v_operation.operation_id,
+    p_correlation_id,
+    p_actor_ref::text,
+    'console.operation.approve',
+    v_operation.target_ref,
+    'accepted',
+    btrim(p_reason),
+    jsonb_build_object(
+      'approvalId', v_approval.approval_id,
+      'approvalRevision', v_approval.approval_revision,
+      'requestDigest', v_approval.request_digest,
+      'permissionRevision', v_approval.permission_revision,
+      'revokeEpoch', v_approval.revoke_epoch,
+      'aal', v_approval.aal,
+      'initiatorRef', v_operation.actor_ref,
+      'distinctPerson', true,
+      'stateVersion', v_operation.state_version
+    )
+  );
+
+  UPDATE console_identity.browser_session
+    SET last_seen_at = statement_timestamp()
+    WHERE session_id = v_session.session_id;
+
+  RETURN QUERY SELECT to_jsonb(v_operation), false;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_operation.approve_operation(
+  uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_operation.approve_operation(
+  uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
+) TO console_api;
+
 CREATE OR REPLACE FUNCTION console_operation.get_operation(
   p_session_id uuid,
   p_actor_ref uuid,
@@ -507,5 +723,8 @@ COMMENT ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
   boolean, text, text, text, text, jsonb
 ) IS 'Atomically revalidates session and permission, accepts an idempotent intent, and appends audit/outbox evidence';
+COMMENT ON FUNCTION console_operation.approve_operation(
+  uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
+) IS 'Atomically revalidates an independent aal2 approver and advances a Planned operation by compare-and-set';
 
 COMMIT;

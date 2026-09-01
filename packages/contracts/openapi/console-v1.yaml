@@ -164,10 +164,11 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [reason, approvalRevision]
+              required: [reason, approvalRevision, expectedStateVersion]
               properties:
                 reason: { type: string, minLength: 3, maxLength: 500 }
                 approvalRevision: { type: string, minLength: 1, maxLength: 128 }
+                expectedStateVersion: { type: integer, minimum: 0 }
                 confirmation: { type: [string, "null"], maxLength: 500 }
       responses:
         "202":

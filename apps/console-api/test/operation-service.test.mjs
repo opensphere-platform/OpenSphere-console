@@ -24,7 +24,10 @@ const session = {
   expiresAt: '2026-09-01T01:00:00.000Z',
   revokedAt: null,
   authorityFresh: true,
-  permissions: ['console.registry.manage', 'console.extension.revoke', 'console.extension.install'],
+  permissions: [
+    'console.registry.manage', 'console.extension.revoke', 'console.extension.install',
+    'console.operation.approve',
+  ],
   permissionRevision: '7',
   revokeEpoch: '2',
   aal: 'aal2',
@@ -63,6 +66,7 @@ function record(input) {
 
 function fixture() {
   const accepted = [];
+  const approved = [];
   const store = {
     async accept(input) {
       accepted.push(input);
@@ -71,13 +75,21 @@ function fixture() {
     async get() {
       return accepted[0] ? record(accepted[0]) : null;
     },
+    async approve(input) {
+      approved.push(input);
+      const operationRecord = record(accepted[0]);
+      operationRecord.state = 'Authorized';
+      operationRecord.state_version = 1;
+      operationRecord.approval_revision = input.approvalRevision;
+      return { operationRecord, replayed: approved.length > 1 };
+    },
   };
   const operationService = createOperationService({ store, policyCatalog, clock: () => current });
   const registryOperations = createRegistryOperations({
     operationService,
     policyRevision: policyCatalog.policyRevision,
   });
-  return { accepted, operationService, registryOperations };
+  return { accepted, approved, operationService, registryOperations };
 }
 
 test('Registry credential mutation persists only a digest after current policy authorization', async () => {
@@ -120,6 +132,69 @@ test('Registry revocation requires an exact digest and canonical confirmation', 
   });
   assert.equal(result.receipt.approvalRequired, true);
   assert.equal(accepted.length, 1);
+});
+
+test('approval requires current aal2 approval authority and carries compare-and-set state', async () => {
+  const { approved, operationService, registryOperations } = fixture();
+  const image = 'ghcr.io/opensphere-platform/console@sha256:' + 'd'.repeat(64);
+  const planned = await registryOperations.createRevocation({
+    session,
+    body: { image, reason: 'revoke compromised image', confirmation: 'REVOKE ' + image },
+    idempotencyKey: 'approval-source-operation-0001',
+    correlationId: 'approval-source-correlation-0001',
+  });
+  const approver = { ...session, subjectId: '55555555-5555-4555-8555-555555555555' };
+  const result = await operationService.approve({
+    session: approver,
+    operationId: planned.receipt.operationId,
+    request: {
+      reason: 'independent review completed',
+      approvalRevision: policyCatalog.policyRevision,
+      expectedStateVersion: 0,
+      confirmation: null,
+    },
+    idempotencyKey: 'approval-operation-0001',
+    correlationId: 'approval-correlation-0001',
+  });
+  assert.equal(result.receipt.state, 'Authorized');
+  assert.equal(result.receipt.stateVersion, 1);
+  assert.equal(approved[0].actorRef, approver.subjectId);
+  assert.equal(approved[0].expectedStateVersion, 0);
+  assert.equal(approved[0].expectedPermissionRevision, 7);
+  assert.equal(approved[0].expectedRevokeEpoch, 2);
+
+  await assert.rejects(operationService.approve({
+    session: { ...approver, aal: 'aal1' },
+    operationId: planned.receipt.operationId,
+    request: {
+      reason: 'attempt without step-up',
+      approvalRevision: policyCatalog.policyRevision,
+      expectedStateVersion: 0,
+    },
+    idempotencyKey: 'approval-operation-0002',
+    correlationId: 'approval-correlation-0002',
+  }), { code: 'StepUpRequired' });
+  assert.equal(approved.length, 1);
+});
+
+test('approval request rejects unknown fields and invalid state versions before storage', async () => {
+  const { approved, operationService } = fixture();
+  const invoke = (request) => operationService.approve({
+    session,
+    operationId,
+    request,
+    idempotencyKey: 'approval-validation-0001',
+    correlationId: 'approval-validation-correlation-0001',
+  });
+  await assert.rejects(invoke({
+    reason: 'reviewed', approvalRevision: policyCatalog.policyRevision,
+    expectedStateVersion: -1,
+  }), { code: 'ValidationFailed' });
+  await assert.rejects(invoke({
+    reason: 'reviewed', approvalRevision: policyCatalog.policyRevision,
+    expectedStateVersion: 0, approverRef: actorRef,
+  }), { code: 'ValidationFailed' });
+  assert.equal(approved.length, 0);
 });
 
 test('unknown action, risk downgrade, stale policy, revoked session, and missing permission fail before storage', async () => {
@@ -263,4 +338,50 @@ test('HTTP Registry mutation returns a durable operation URL and no submitted cr
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
   assert.equal(resolverCalls[0].requireCsrf, true);
   assert.doesNotMatch(body, new RegExp(credential));
+});
+
+test('HTTP approval route requires CSRF and returns the Authorized receipt', async (t) => {
+  const { registryOperations, operationService } = fixture();
+  const image = 'ghcr.io/opensphere-platform/console@sha256:' + 'f'.repeat(64);
+  const planned = await registryOperations.createRevocation({
+    session,
+    body: { image, reason: 'revoke compromised image', confirmation: 'REVOKE ' + image },
+    idempotencyKey: 'http-approval-source-operation-0001',
+    correlationId: 'http-approval-source-correlation-0001',
+  });
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) {
+      resolverCalls.push(options);
+      return { ...session, subjectId: '55555555-5555-4555-8555-555555555555' };
+    },
+    operationService,
+    registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const response = await fetch(
+    'http://127.0.0.1:' + address.port + '/api/platform/operations/' + planned.receipt.operationId + '/approvals',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'http-approval-operation-0001',
+        'x-correlation-id': 'http-approval-correlation-0001',
+        'x-csrf-token': 'validated-by-session-resolver',
+      },
+      body: JSON.stringify({
+        reason: 'independent HTTP approval',
+        approvalRevision: policyCatalog.policyRevision,
+        expectedStateVersion: 0,
+      }),
+    },
+  );
+  const receipt = await response.json();
+  assert.equal(response.status, 202);
+  assert.equal(receipt.state, 'Authorized');
+  assert.equal(receipt.stateVersion, 1);
+  assert.equal(response.headers.get('location'), '/api/platform/operations/' + planned.receipt.operationId);
+  assert.equal(resolverCalls[0].requireCsrf, true);
 });

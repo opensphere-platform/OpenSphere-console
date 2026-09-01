@@ -41,7 +41,9 @@ function errorEnvelope(error, correlationId) {
     SessionInvalid: 'AuthenticationRequired',
     CsrfRejected: 'PermissionDenied',
     StaleAuthorityRevision: 'StaleRevision',
+    StaleOperationVersion: 'StaleRevision',
     ReasonRequired: 'ValidationFailed',
+    SelfApprovalDenied: 'PermissionDenied',
   }[internalCode] || internalCode;
   return {
     schemaVersion: '1.0',
@@ -75,6 +77,21 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       if (operationMatch && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false });
         return send(response, 200, await operationService.get({ session, operationId: operationMatch[1] }));
+      }
+      const approvalMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})\/approvals$/);
+      if (approvalMatch && request.method === 'POST') {
+        const session = await resolveSession(request, { requireCsrf: true });
+        const result = await operationService.approve({
+          session,
+          operationId: approvalMatch[1],
+          request: await jsonBody(request),
+          idempotencyKey: header(request, 'idempotency-key', 8),
+          correlationId,
+        });
+        return send(response, 202, result.receipt, {
+          location: '/api/platform/operations/' + result.receipt.operationId,
+          'x-idempotent-replay': String(result.replayed),
+        });
       }
       if (url.pathname === '/api/platform/operations' && request.method === 'POST') {
         const session = await resolveSession(request, { requireCsrf: true });
