@@ -4,7 +4,7 @@ import pg from 'pg';
 import { createOperationService } from './operation-service.mjs';
 import { createAuditOperations } from './audit-operations.mjs';
 import { createIdentityOperations } from './identity-operations.mjs';
-import { createDataIdentityOperations } from './data-identity-operations.mjs';
+import { createDataIdentityOperations, createSupabaseLiveProbes } from './data-identity-operations.mjs';
 import { createPostgresOperationStore } from './postgres-operation-store.mjs';
 import { createRegistryOperations } from './registry-operations.mjs';
 import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
@@ -40,7 +40,14 @@ const store = createPostgresOperationStore({ query: pool.query.bind(pool) });
 const operationService = createOperationService({ store, policyCatalog });
 const auditOperations = createAuditOperations({ store });
 const identityOperations = createIdentityOperations({ store });
-const dataIdentityOperations = createDataIdentityOperations({ store });
+const supabaseLiveProbes = createSupabaseLiveProbes({
+  authUrl: String(process.env.CONSOLE_SUPABASE_AUTH_URL || 'http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999'),
+  dataApiUrl: String(process.env.CONSOLE_SUPABASE_REST_URL || 'http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000'),
+  storageUrl: String(process.env.CONSOLE_SUPABASE_STORAGE_URL || 'http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000'),
+  timeoutMs: positiveInteger('CONSOLE_SUPABASE_PROBE_TIMEOUT_MS', 1500, 10000),
+  maximumResponseBytes: positiveInteger('CONSOLE_SUPABASE_PROBE_MAX_RESPONSE_BYTES', 131072, 1024 * 1024),
+});
+const dataIdentityOperations = createDataIdentityOperations({ store, liveProbes: supabaseLiveProbes });
 const registryResolver = createRegistryResolver({
   baseUrl: String(process.env.CONSOLE_REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080'),
   timeoutMs: positiveInteger('CONSOLE_REGISTRY_TIMEOUT_MS', 8000, 30000),

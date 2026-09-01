@@ -45,6 +45,16 @@ const authorityServer = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const requestBody = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+  if (request.url === '/health' || request.url === '/status') {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end('{}');
+    return;
+  }
+  if (request.url === '/') {
+    response.writeHead(200, { 'content-type': 'application/openapi+json' });
+    response.end(JSON.stringify({ openapi: '3.0.0', paths: { '/console': {} } }));
+    return;
+  }
   if (request.url === '/api/v1/registry/resolve' && request.method === 'POST') {
     const revision = String(requestBody?.revision || '');
     response.writeHead(200, { 'content-type': 'application/json' });
@@ -55,10 +65,13 @@ const authorityServer = createServer(async (request, response) => {
         image: installImage, digest: installDigest, channel: 'edge', catalogRevision: revision,
         descriptorRevision: revision, executionRevision: installImage,
         sourceRevision: 'a'.repeat(40), manifestDigest: 'sha256:' + 'd'.repeat(64),
-        compatibilityVersion: '1.0.0', keyId: 'integration-release-key',
-        evidenceRefs: ['oci:integration-provenance', 'oci:integration-sbom'],
+        compatibilityVersion: '1.0.0', buildAuthority: 'localhost', keyId: 'integration-release-key',
+        evidenceRefs: [`oci:${installImage}#p256-module-signature`, `oci:${installImage}#local-edge-build-metadata`],
         packageResourceVersion: '17', packageGeneration: 2,
-        verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
+        verification: {
+          catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved',
+          provenance: 'LocalEdgeSigned', sbom: 'NotRequiredLocalEdge',
+        },
       },
     }));
     return;
@@ -134,7 +147,15 @@ await Promise.all([
 ]);
 const child = spawn(process.execPath, ['apps/console-api/src/server.mjs'], {
   cwd: new URL('..', import.meta.url),
-  env: { ...process.env, PORT: String(port), CONSOLE_DATABASE_URL: runtimeUrl, CONSOLE_REGISTRY_URL: authorityOrigin },
+  env: {
+    ...process.env,
+    PORT: String(port),
+    CONSOLE_DATABASE_URL: runtimeUrl,
+    CONSOLE_REGISTRY_URL: authorityOrigin,
+    CONSOLE_SUPABASE_AUTH_URL: authorityOrigin,
+    CONSOLE_SUPABASE_REST_URL: authorityOrigin,
+    CONSOLE_SUPABASE_STORAGE_URL: authorityOrigin,
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let extensionChild;
@@ -685,7 +706,9 @@ try {
   assert.equal(supabaseStatus.authority, 'Supabase');
   assert.equal(supabaseStatus.data.state, 'Degraded');
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'database').state, 'Ready');
-  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'auth').state, 'Unknown');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'auth').state, 'Ready');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'dataApi').state, 'Ready');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'storage').state, 'Ready');
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'migration').state, 'Partial');
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'rls').state, 'Ready');
 
@@ -741,6 +764,7 @@ try {
     extensionRemoveExecution: removeExecution,
     extensionRemoveVerification: removeVerificationEvidence.rows[0],
     supabaseStatusProjection: true,
+    supabaseLiveProbes: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     revokeDenied: true,
