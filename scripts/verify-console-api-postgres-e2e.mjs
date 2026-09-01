@@ -387,14 +387,35 @@ try {
     true,
   );
 
-  await admin.query(
-    [
-      'UPDATE console_identity.browser_session',
-      'SET revoked_at = statement_timestamp(), revoke_reason = $1',
-      'WHERE session_id = $2',
-    ].join(' '),
-    ['integration revoke', '22222222-2222-4222-8222-222222222222'],
-  );
+  const sessionProjectionResponse = await fetch(origin + '/api/identity/session', {
+    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-session-read-0001' },
+  });
+  assert.equal(sessionProjectionResponse.status, 200);
+  const sessionProjection = await sessionProjectionResponse.json();
+  assert.equal(sessionProjection.authority, 'SupabaseAuth');
+  assert.equal(sessionProjection.data.state, 'Active');
+  assert.equal(sessionProjection.data.subjectId, '11111111-1111-4111-8111-111111111111');
+
+  const actorProjectionResponse = await fetch(origin + '/api/identity/me', {
+    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-actor-read-0001' },
+  });
+  assert.equal(actorProjectionResponse.status, 200);
+  const actorProjection = await actorProjectionResponse.json();
+  assert.equal(actorProjection.authority, 'SupabaseAuth');
+  assert.equal(actorProjection.data.permissions.includes('console.audit.read'), true);
+  assert.doesNotMatch(JSON.stringify(actorProjection.data), /sessionId|token|cookie|csrf/i);
+
+  const logoutResponse = await fetch(origin + '/api/identity/session', {
+    method: 'DELETE',
+    headers: {
+      cookie: headers.cookie,
+      'x-csrf-token': csrf,
+      'x-correlation-id': 'integration-session-revoke-0001',
+    },
+  });
+  assert.equal(logoutResponse.status, 204);
+  assert.match(logoutResponse.headers.get('set-cookie'), /^__Host-opensphere-session=;/);
+  assert.match(logoutResponse.headers.get('set-cookie'), /Max-Age=0/);
   const revoked = await mutation(body, { ...headers, 'idempotency-key': 'integration-registry-operation-0002' });
   assert.equal(revoked.status, 401);
   assert.equal((await revoked.json()).code, 'AuthenticationRequired');
@@ -413,6 +434,8 @@ try {
     revocationProjection: true,
     verification: verificationEvidence.rows[0],
     auditProjection: true,
+    identityProjection: true,
+    sessionSelfRevoke: true,
     revokeDenied: true,
   }) + '\n');
 } finally {
@@ -433,7 +456,7 @@ try {
     ['66666666-6666-4666-8666-666666666666'],
   ).catch(() => {});
   await admin.end().catch(() => {});
-  if (extensionChild?.exitCode == null) extensionChild.kill('SIGTERM');
+  if (extensionChild && extensionChild.exitCode == null) extensionChild.kill('SIGTERM');
   if (extensionChild) {
     await Promise.race([
       new Promise((resolve) => extensionChild.once('exit', resolve)),

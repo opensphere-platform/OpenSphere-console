@@ -34,6 +34,7 @@ paths:
       operationId: deleteSession
       tags: [Session]
       x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuth
       x-opensphere-risk: R1
       x-opensphere-idempotency: optional
       parameters:

@@ -53,6 +53,12 @@ const LIST_AUDIT_EVENTS_SQL = [
   ') AS read_envelope',
 ].join(' ');
 
+const REVOKE_SESSION_SQL = [
+  'SELECT console_identity.revoke_browser_session(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::text',
+  ') AS revocation_record',
+].join(' ');
+
 function databaseError(error) {
   const code = String(error?.detail || '');
   const known = new Set([
@@ -257,6 +263,23 @@ export function createPostgresOperationStore({ query }) {
         const envelope = result?.rows?.[0]?.read_envelope;
         if (!envelope) throw new Error('list_events returned no read envelope');
         return envelope;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async revokeSession(input) {
+      try {
+        const result = await query(REVOKE_SESSION_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.revocation_record;
+        if (!record) throw new Error('revoke_browser_session returned no revocation record');
+        return record;
       } catch (error) {
         throw databaseError(error);
       }

@@ -103,6 +103,10 @@ export async function verifyContracts(repoRoot = process.cwd()) {
     auditRead?.parameters?.find((parameter) => parameter.name === 'limit')?.schema?.maximum === 200,
     'listAuditEvents must keep a bounded page size',
   );
+  for (const operationId of ['getSession', 'deleteSession', 'getMe']) {
+    const identityRead = entries.find(({ operation }) => operation.operationId === operationId)?.operation;
+    assert(identityRead?.['x-opensphere-authority'] === 'SupabaseAuth', operationId + ' must declare Supabase Auth authority');
+  }
 
   const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
   for (const actionPolicyId of actionPolicyIds) {

@@ -57,7 +57,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-correlation-id'] || '').trim();
@@ -81,6 +81,21 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           limit: url.searchParams.get('limit') || 50,
           correlationId,
         }));
+      }
+      if (url.pathname === '/api/identity/session' && request.method === 'GET') {
+        const session = await resolveSession(request, { requireCsrf: false });
+        return send(response, 200, identityOperations.getSession({ session, correlationId }));
+      }
+      if (url.pathname === '/api/identity/me' && request.method === 'GET') {
+        const session = await resolveSession(request, { requireCsrf: false });
+        return send(response, 200, identityOperations.getMe({ session, correlationId }));
+      }
+      if (url.pathname === '/api/identity/session' && request.method === 'DELETE') {
+        const session = await resolveSession(request, { requireCsrf: true });
+        await identityOperations.revokeSession({ session, correlationId });
+        return send(response, 204, null, {
+          'set-cookie': '__Host-opensphere-session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0',
+        });
       }
       const operationMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})$/);
       if (operationMatch && request.method === 'GET') {

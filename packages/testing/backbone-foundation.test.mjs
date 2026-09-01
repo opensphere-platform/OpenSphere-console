@@ -50,6 +50,7 @@ test('baseline migration declares separated authority schemas, RLS and append-on
   assert.match(sql, /CREATE POLICY browser_session_self_read/i);
   assert.match(sql, /CREATE TABLE console_identity\.subject_authority/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity\.resolve_browser_session/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity\.revoke_browser_session/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.accept_operation/i);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION console_operation\.accept_operation/i);
   assert.match(sql, /CREATE TABLE console_operation\.approval/i);

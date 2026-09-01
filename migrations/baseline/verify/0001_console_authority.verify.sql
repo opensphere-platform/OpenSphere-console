@@ -272,9 +272,25 @@ RESET ROLE;
 UPDATE console_identity.subject_authority
 SET permission_revision = 7, updated_at = statement_timestamp()
 WHERE subject_id = '11111111-1111-4111-8111-111111111111';
-UPDATE console_identity.browser_session
-SET revoked_at = statement_timestamp(), revoke_reason = 'verification revoke'
-WHERE session_id = '22222222-2222-4222-8222-222222222222';
+SET ROLE console_api;
+SELECT console_identity.revoke_browser_session(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, 'correlation-session-self-revoke-0001'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT revoke_reason FROM console_identity.browser_session
+      WHERE session_id = '22222222-2222-4222-8222-222222222222') <> 'self-logout'
+      OR (SELECT count(*) FROM console_audit.event
+          WHERE action = 'console.identity.session.revoke'
+            AND actor_ref = '11111111-1111-4111-8111-111111111111') <> 1 THEN
+    RAISE EXCEPTION 'session self-revoke did not atomically append audit evidence';
+  END IF;
+END;
+$$;
 
 SET ROLE console_api;
 DO $$
@@ -384,7 +400,7 @@ DO $$
 BEGIN
   IF (SELECT count(*) FROM console_operation.operation) <> 1
       OR (SELECT count(*) FROM console_operation.outbox) <> 1
-      OR (SELECT count(*) FROM console_audit.event) <> 1 THEN
+      OR (SELECT count(*) FROM console_audit.event) <> 2 THEN
     RAISE EXCEPTION 'negative tests changed atomic authority records';
   END IF;
   IF (SELECT count(*) FROM pg_class WHERE relrowsecurity AND relnamespace IN (
