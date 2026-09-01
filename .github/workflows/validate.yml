@@ -39,12 +39,16 @@ jobs:
         run: npm ci --no-audit --no-fund --legacy-peer-deps
       - name: Verify machine contracts
         run: npm run verify:contracts
+      - name: Verify fresh migration manifest
+        run: npm run verify:migrations
       - name: Verify fresh Console authority baseline on PostgreSQL
         env:
           PGPASSWORD: console-test
+          CONSOLE_MIGRATION_DATABASE_URL: postgresql://postgres:console-test@localhost:5432/postgres
         run: |
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/supabase-test-prerequisites.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/0001_console_authority.sql
+          node scripts/console-migrations.mjs apply
+          node scripts/console-migrations.mjs apply
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/0001_console_authority.verify.sql
       - name: Verify Console API through PostgreSQL
         env:

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 const requireFromApi = createRequire(new URL('../apps/console-api/package.json', import.meta.url));
 const { Pool } = requireFromApi('pg');
+const migrationManifest = JSON.parse(await readFile(new URL('../migrations/manifest.json', import.meta.url), 'utf8'));
 
 const runtimeUrl = process.env.CONSOLE_DATABASE_URL;
 const adminUrl = process.env.CONSOLE_TEST_ADMIN_DATABASE_URL;
@@ -709,7 +710,10 @@ try {
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'auth').state, 'Ready');
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'dataApi').state, 'Ready');
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'storage').state, 'Ready');
-  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'migration').state, 'Partial');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'migration').state, 'Ready');
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'migration').baselineRevision, migrationManifest.latestGlobalId);
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'migration').setDigest, migrationManifest.setDigest);
+  assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'migration').migrationCount, migrationManifest.migrationCount);
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'rls').state, 'Ready');
 
   const sessionProjectionResponse = await fetch(origin + '/api/identity/session', {
@@ -765,6 +769,7 @@ try {
     extensionRemoveVerification: removeVerificationEvidence.rows[0],
     supabaseStatusProjection: true,
     supabaseLiveProbes: true,
+    migrationLineage: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     revokeDenied: true,

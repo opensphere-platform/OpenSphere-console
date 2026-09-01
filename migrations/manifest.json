@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "repository": "OpenSphere-Console",
+  "latestGlobalId": "opensphere-console/20260902/0001",
+  "migrationCount": 1,
+  "setDigest": "sha256:3866b59613f17bfa0cc019a2c895a9135e0d6e7e6b44b0997971bb075ccf90c4",
+  "migrations": [
+    {
+      "globalId": "opensphere-console/20260902/0001",
+      "semanticKey": "console.authority.baseline",
+      "predecessorGlobalId": null,
+      "path": "migrations/baseline/0001_console_authority.sql",
+      "sha256": "ad9cc5bd66b35e8d9591b5894a24f16a59e4aaf658b711070684132330c1de68",
+      "sourceRevision": "8e4da5924ec54f09ad137ee67a8bf093342cbf0e",
+      "setDigest": "sha256:3866b59613f17bfa0cc019a2c895a9135e0d6e7e6b44b0997971bb075ccf90c4",
+      "setSize": 1
+    }
+  ]
+}
