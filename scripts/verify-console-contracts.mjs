@@ -60,6 +60,73 @@ export function verifyConsoleApiAuthority({ storeSource, baselineSource }) {
   return databaseFunctions;
 }
 
+function documentByKind(documents, kind) {
+  return documents.filter((document) => document?.kind === kind);
+}
+
+function between(source, start, end) {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert(startIndex >= 0 && endIndex > startIndex, `Console Web proxy boundary markers are missing: ${start}`);
+  return source.slice(startIndex, endIndex);
+}
+
+export function verifyConsoleApiDeployment({ documents, nginxSource }) {
+  assert(documentByKind(documents, 'Secret').length === 0, 'C_API manifest must consume, not create, its database Secret');
+  assert(documentByKind(documents, 'Role').length === 0 && documentByKind(documents, 'ClusterRole').length === 0,
+    'C_API must not acquire Kubernetes API authority');
+
+  const [serviceAccount] = documentByKind(documents, 'ServiceAccount');
+  const [deployment] = documentByKind(documents, 'Deployment');
+  const [service] = documentByKind(documents, 'Service');
+  const [networkPolicy] = documentByKind(documents, 'NetworkPolicy');
+  assert(documentByKind(documents, 'ServiceAccount').length === 1, 'C_API must have one dedicated ServiceAccount');
+  assert(documentByKind(documents, 'Deployment').length === 1, 'C_API must have one component-owned Deployment');
+  assert(documentByKind(documents, 'Service').length === 1, 'C_API must have one internal Service');
+  assert(documentByKind(documents, 'NetworkPolicy').length === 1, 'C_API must have one closed NetworkPolicy');
+  assert(serviceAccount.automountServiceAccountToken === false, 'C_API ServiceAccount token automount must be disabled');
+  assert(deployment.spec?.template?.spec?.automountServiceAccountToken === false, 'C_API Pod token automount must be disabled');
+  assert(deployment.spec?.replicas === 1, 'C_API foundational deployment must not claim unverified HA');
+
+  const container = deployment.spec?.template?.spec?.containers?.[0];
+  assert(container?.image === '__OPENSPHERE_CONSOLE_API_IMAGE__', 'C_API image must remain an exact-digest render input');
+  assert(container?.securityContext?.readOnlyRootFilesystem === true, 'C_API root filesystem must be read-only');
+  assert(container?.securityContext?.allowPrivilegeEscalation === false, 'C_API privilege escalation must be disabled');
+  assert(container?.securityContext?.capabilities?.drop?.includes('ALL'), 'C_API Linux capabilities must be dropped');
+  assert(container?.readinessProbe?.httpGet?.path === '/healthz', 'C_API readiness must check its PostgreSQL authority');
+  assert(container?.livenessProbe?.httpGet?.path === '/livez', 'C_API liveness must not restart the process for an authority outage');
+  const databaseEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_DATABASE_URL');
+  assert(databaseEnv?.value === undefined, 'C_API database credential must not be a literal value');
+  assert(databaseEnv?.valueFrom?.secretKeyRef?.name === 'opensphere-console-api-runtime', 'C_API database Secret name differs from the install contract');
+  assert(databaseEnv?.valueFrom?.secretKeyRef?.key === 'database-url', 'C_API database Secret key differs from the install contract');
+  assert(service.spec?.type === 'ClusterIP', 'C_API Service must remain cluster-internal');
+
+  assert(JSON.stringify(networkPolicy.spec?.policyTypes) === JSON.stringify(['Ingress', 'Egress']), 'C_API NetworkPolicy must select both directions');
+  const ingress = JSON.stringify(networkPolicy.spec?.ingress || []);
+  const egress = JSON.stringify(networkPolicy.spec?.egress || []);
+  assert(ingress.includes('opensphere-console') && !ingress.includes('namespaceSelector'), 'C_API ingress must be limited to Console Web pods');
+  for (const destination of ['kube-system', 'opensphere-console-data', 'opensphere-supabase-postgres', 'opensphere-supabase-auth', 'opensphere-supabase-rest', 'opensphere-supabase-storage', 'opensphere-registry']) {
+    assert(egress.includes(destination), `C_API NetworkPolicy omits required destination ${destination}`);
+  }
+  assert(!egress.includes('ipBlock'), 'C_API NetworkPolicy must not add an unbounded IP egress escape');
+
+  const targetPlatform = between(nginxSource, '# The target common-control operation ledger', '# Temporary migration exception: other /api/platform routes');
+  const targetAdmin = between(nginxSource, '# Target C_API owns only the reconstructed Extension routes', '# Temporary migration exception. Routes not implemented by target C_API');
+  const targetIdentity = between(nginxSource, '# The first Supabase-backed identity slice', '# Temporary migration exception for identity routes');
+  for (const [name, boundary] of [['platform', targetPlatform], ['admin', targetAdmin], ['identity', targetIdentity]]) {
+    assert(boundary.includes('opensphere-console-api.opensphere-console.svc.cluster.local'), `Target ${name} routes do not use C_API`);
+    assert(!boundary.includes('opensphere-console-backend'), `Target ${name} routes drifted back to legacy Backend`);
+    assert(boundary.includes('X-Correlation-ID $os_correlation_id'), `Target ${name} routes do not preserve correlation`);
+  }
+  const legacyPlatform = between(nginxSource, '# Temporary migration exception: other /api/platform routes', '# Minimal module lifecycle receipts');
+  const legacyAdmin = between(nginxSource, '# Temporary migration exception. Routes not implemented by target C_API', '# The first Supabase-backed identity slice');
+  const legacyIdentity = between(nginxSource, '# Temporary migration exception for identity routes', '# ADR-006 Supabase same-origin endpoints');
+  for (const [name, boundary] of [['platform', legacyPlatform], ['admin', legacyAdmin], ['identity', legacyIdentity]]) {
+    assert(boundary.includes('opensphere-console-backend.opensphere-console.svc.cluster.local'), `Legacy ${name} exception lost its explicit upstream`);
+    assert(!boundary.includes('opensphere-console-api.opensphere-console.svc.cluster.local'), `Legacy ${name} exception leaked into C_API`);
+  }
+}
+
 export async function verifyContracts(repoRoot = process.cwd(), { requireReleaseReady = false } = {}) {
   const root = resolve(repoRoot);
   const contractRoot = resolve(root, 'packages', 'contracts');
@@ -191,6 +258,10 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   const consoleApiDockerfile = await readFile(resolve(root, 'apps', 'console-api', 'Dockerfile'), 'utf8');
   assert(consoleApiDockerfile.includes('COPY apps/console-api/src ./src'), 'C_API image does not copy the target runtime source');
   assert(consoleApiDockerfile.includes('USER 1001'), 'C_API image must run as the declared non-root identity');
+  const consoleApiDeployment = [];
+  yaml.loadAll(await readFile(resolve(root, 'apps', 'console-api', 'deploy.yaml'), 'utf8'), (document) => consoleApiDeployment.push(document));
+  const consoleWebProxy = await readFile(resolve(root, 'nginx', 'default.conf.template'), 'utf8');
+  verifyConsoleApiDeployment({ documents: consoleApiDeployment, nginxSource: consoleWebProxy });
 
   const candidateWorkflow = await readFile(resolve(root, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
   const promotionWorkflow = await readFile(resolve(root, '.github', 'workflows', 'promote-release.yml'), 'utf8');

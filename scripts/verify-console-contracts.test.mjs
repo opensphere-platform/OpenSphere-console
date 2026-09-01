@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { verifyConsoleApiAuthority, verifyContracts } from './verify-console-contracts.mjs';
+import yaml from 'js-yaml';
+import { verifyConsoleApiAuthority, verifyConsoleApiDeployment, verifyContracts } from './verify-console-contracts.mjs';
 
 test('foundational Console contracts are internally complete and self-contained', async () => {
   const result = await verifyContracts();
@@ -41,5 +42,29 @@ test('Console API authority verification rejects missing grants and direct table
       baselineSource,
     }),
     /must use granted functions instead of direct authority-table mutation/,
+  );
+});
+
+test('Console API deployment verification rejects credential ownership and broad route drift', async () => {
+  const deploymentSource = await readFile(new URL('../apps/console-api/deploy.yaml', import.meta.url), 'utf8');
+  const nginxSource = await readFile(new URL('../nginx/default.conf.template', import.meta.url), 'utf8');
+  const documents = [];
+  yaml.loadAll(deploymentSource, (document) => documents.push(document));
+  assert.throws(
+    () => verifyConsoleApiDeployment({
+      documents: [...documents, { apiVersion: 'v1', kind: 'Secret', metadata: { name: 'forbidden' } }],
+      nginxSource,
+    }),
+    /must consume, not create, its database Secret/,
+  );
+  assert.throws(
+    () => verifyConsoleApiDeployment({
+      documents,
+      nginxSource: nginxSource.replaceAll(
+        'opensphere-console-backend.opensphere-console.svc.cluster.local',
+        'opensphere-console-api.opensphere-console.svc.cluster.local',
+      ),
+    }),
+    /Legacy platform exception lost its explicit upstream/,
   );
 });

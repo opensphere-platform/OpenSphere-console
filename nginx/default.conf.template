@@ -270,9 +270,37 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # Platform Control Plane native read models: Supabase data/identity and
-    # Gitea declarative change authority. Browser traffic never reaches either
-    # product service directly.
+    # The target common-control operation ledger owns only the collection and
+    # UUID resource/approval/verification routes. The upstream returns 404 for
+    # unsupported methods and suffixes instead of falling through to legacy.
+    location = /api/platform/operations {
+        set $console_api_upstream opensphere-console-api.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_api_upstream:8080$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header X-Correlation-ID $os_correlation_id;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    location ~ "^/api/platform/operations/[0-9a-f-]{36}(?:/(?:approvals|verification))?$" {
+        set $console_api_upstream opensphere-console-api.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_api_upstream:8080$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header X-Correlation-ID $os_correlation_id;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # Temporary migration exception: other /api/platform routes continue to
+    # use the legacy Gitea change adapter until their target contracts exist.
     location /api/platform/ {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;
@@ -391,10 +419,24 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # Browser and CLI administrative requests enter through Console Backend,
-    # the policy/CSRF enforcement point. It resolves the opaque HttpOnly browser
-    # session and forwards a short-lived verified bearer to DUPA; credentials
-    # supplied by the browser are never exposed to JavaScript.
+    # Target C_API owns only the reconstructed Extension routes below. Keep the
+    # exact closed set visible so an unimplemented /api/admin route cannot drift
+    # into the new authority boundary by prefix matching.
+    location ~ ^/api/admin/extensions/(?:registry-connections/opensphere-ghcr|revocations|inspect|install|remove)$ {
+        set $console_api_upstream opensphere-console-api.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_api_upstream:8080$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header X-Correlation-ID $os_correlation_id;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # Temporary migration exception. Routes not implemented by target C_API
+    # remain on the legacy Backend and keep release status target-migration.
     location /api/admin/ {
         set $console_backend_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_backend_upstream:8080$request_uri;
@@ -406,9 +448,23 @@ server {
         proxy_set_header X-OS-Correlation-ID $os_correlation_id;
     }
 
-    # 콘솔 네이티브 identity(Supabase IGA) — /console-admins 백엔드(console-core 서비스).
-    # ADR-UI-003 §3.2 Core≠Plugin: identity API는 DUPA plugin이 아닌 Console Core 서비스로 내장.
-    # 감사 P0-1/B: opensphere-console-backend가 Authorization: Bearer로 검증(쓰기=admin, 읽기=인증). 스푸핑 헤더 clear.
+    # The first Supabase-backed identity slice is an exact target C_API set.
+    # The browser session cookie is intentionally preserved to the policy
+    # enforcement point; caller-supplied identity projection headers are not.
+    location ~ ^/api/identity/(?:audit|session|me|supabase/status)$ {
+        set $console_api_upstream opensphere-console-api.opensphere-console.svc.cluster.local;
+        proxy_pass http://$console_api_upstream:8080$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-OpenSphere-User "";
+        proxy_set_header X-OpenSphere-Actor "";
+        proxy_set_header X-OS-Id-Token "";
+        proxy_set_header X-Correlation-ID $os_correlation_id;
+        proxy_set_header X-OS-Correlation-ID $os_correlation_id;
+    }
+
+    # Temporary migration exception for identity routes outside the closed set.
     location /api/identity {
         set $console_identity_upstream opensphere-console-backend.opensphere-console.svc.cluster.local;
         proxy_pass http://$console_identity_upstream:8080;

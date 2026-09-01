@@ -66,6 +66,9 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       : randomUUID();
     try {
       const url = new URL(request.url, 'http://console-api.local');
+      if (url.pathname === '/livez' && request.method === 'GET') {
+        return send(response, 200, { state: 'Alive' });
+      }
       if (url.pathname === '/healthz' && request.method === 'GET') {
         const ready = await health();
         return send(response, ready ? 200 : 503, {

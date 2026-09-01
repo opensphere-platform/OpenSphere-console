@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opensphere-console-api
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/name: opensphere-console-api
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/component: C_API
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensphere-console-api
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/name: opensphere-console-api
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/component: C_API
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opensphere-console-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opensphere-console-api
+        app.kubernetes.io/part-of: opensphere-console
+        opensphere.io/component: C_API
+    spec:
+      serviceAccountName: opensphere-console-api
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: opensphere-ghcr-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: __OPENSPHERE_CONSOLE_API_IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # This Secret is an input contract. This manifest never creates a
+            # database login or stores a password. The URL must identify a LOGIN
+            # role that inherits only the NOLOGIN console_api authority role.
+            - name: CONSOLE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-console-api-runtime
+                  key: database-url
+            - name: CONSOLE_REGISTRY_URL
+              value: http://opensphere-registry.opensphere-console.svc.cluster.local:8080
+            - name: CONSOLE_SUPABASE_AUTH_URL
+              value: http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999
+            - name: CONSOLE_SUPABASE_REST_URL
+              value: http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000
+            - name: CONSOLE_SUPABASE_STORAGE_URL
+              value: http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            timeoutSeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensphere-console-api
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/name: opensphere-console-api
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/component: C_API
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: opensphere-console-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensphere-console-api
+  namespace: opensphere-console
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opensphere-console-api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: opensphere-console
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opensphere-console-data
+          podSelector:
+            matchLabels:
+              app: opensphere-supabase-postgres
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opensphere-console-data
+          podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: [opensphere-supabase-auth, opensphere-supabase-rest, opensphere-supabase-storage]
+      ports:
+        - { protocol: TCP, port: 9999 }
+        - { protocol: TCP, port: 3000 }
+        - { protocol: TCP, port: 5000 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opensphere-registry
+      ports:
+        - { protocol: TCP, port: 8080 }

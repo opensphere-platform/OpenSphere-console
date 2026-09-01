@@ -568,6 +568,29 @@ test('opaque session resolver sends only cookie and CSRF digests to PostgreSQL',
   assert.equal(calls.length, 1);
 });
 
+test('HTTP liveness remains independent from database readiness', async (t) => {
+  let healthCalls = 0;
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('session resolver must not run for probes'); },
+    operationService: {},
+    registryOperations: {},
+    health: async () => { healthCalls += 1; return false; },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+
+  const liveness = await fetch(origin + '/livez');
+  assert.equal(liveness.status, 200);
+  assert.deepEqual(await liveness.json(), { state: 'Alive' });
+  assert.equal(healthCalls, 0);
+
+  const readiness = await fetch(origin + '/healthz');
+  assert.equal(readiness.status, 503);
+  assert.deepEqual(await readiness.json(), { state: 'Unavailable', authority: 'SupabasePostgreSQL' });
+  assert.equal(healthCalls, 1);
+});
+
 test('HTTP Registry mutation returns a durable operation URL and no submitted credential', async (t) => {
   const { registryOperations, operationService } = fixture();
   const resolverCalls = [];
