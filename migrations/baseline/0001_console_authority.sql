@@ -1368,6 +1368,85 @@ REVOKE ALL ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, 
 GRANT EXECUTE ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uuid, text, text)
   TO console_extension_controller;
 
+CREATE OR REPLACE FUNCTION console_extension.assert_install_not_revoked(
+  p_worker_id uuid,
+  p_outbox_id bigint,
+  p_claim_epoch bigint,
+  p_operation_id uuid,
+  p_target_ref text,
+  p_payload_digest text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation, console_extension
+AS $$
+DECLARE
+  v_outbox console_operation.outbox;
+  v_operation console_operation.operation;
+BEGIN
+  IF COALESCE(p_target_ref, '') !~ '^ghcr\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$'
+      OR COALESCE(p_payload_digest, '') !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'invalid Extension install revocation check'
+      USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+
+  SELECT * INTO v_outbox
+    FROM console_operation.outbox
+    WHERE outbox_id = p_outbox_id
+    FOR SHARE;
+  IF NOT FOUND OR v_outbox.operation_id <> p_operation_id
+      OR v_outbox.event_type NOT IN ('OperationReadyForDispatch', 'ExtensionInstallObservationRequested')
+      OR v_outbox.claim_owner <> p_worker_id
+      OR v_outbox.claim_epoch <> p_claim_epoch
+      OR v_outbox.delivered_at IS NOT NULL
+      OR v_outbox.lease_expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'owner claim is stale or expired'
+      USING ERRCODE = '40001', DETAIL = 'StaleClaim';
+  END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR SHARE;
+  IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
+      OR v_operation.action_id <> 'console.extension.install'
+      OR v_operation.action_version <> '1.0'
+      OR v_operation.target_ref <> p_target_ref
+      OR v_operation.payload_digest <> p_payload_digest
+      OR NOT (
+        (v_outbox.event_type = 'OperationReadyForDispatch'
+          AND v_operation.state IN ('Submitted', 'Reconciling', 'Unknown'))
+        OR (v_outbox.event_type = 'ExtensionInstallObservationRequested'
+          AND v_operation.state = 'Applied')
+      ) THEN
+    RAISE EXCEPTION 'revocation check does not match the typed Extension install action'
+      USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM console_extension.revocation
+    WHERE image_ref = p_target_ref
+  ) THEN
+    RAISE EXCEPTION 'exact Extension image digest is revoked'
+      USING ERRCODE = '55000', DETAIL = 'ImageRevoked';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'image', p_target_ref,
+    'revoked', false,
+    'checkedAt', statement_timestamp()
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.assert_install_not_revoked(
+  uuid, bigint, bigint, uuid, text, text
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.assert_install_not_revoked(
+  uuid, bigint, bigint, uuid, text, text
+) TO console_extension_controller;
+
 CREATE OR REPLACE FUNCTION console_extension.apply_install_registration(
   p_worker_id uuid,
   p_outbox_id bigint,
@@ -1448,6 +1527,14 @@ BEGIN
       OR v_operation.state NOT IN ('Submitted', 'Reconciling', 'Unknown') THEN
     RAISE EXCEPTION 'claim does not match the typed Extension install action'
       USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM console_extension.revocation
+    WHERE image_ref = p_target_ref
+  ) THEN
+    RAISE EXCEPTION 'exact Extension image digest is revoked before install receipt'
+      USING ERRCODE = '55000', DETAIL = 'ImageRevoked';
   END IF;
 
   IF v_operation.state <> 'Reconciling' THEN
@@ -1800,6 +1887,14 @@ BEGIN
       OR v_operation.state <> 'Applied' THEN
     RAISE EXCEPTION 'observation claim does not match an Applied Extension install'
       USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM console_extension.revocation
+    WHERE image_ref = p_target_ref
+  ) THEN
+    RAISE EXCEPTION 'exact Extension image digest is revoked before ready observation'
+      USING ERRCODE = '55000', DETAIL = 'ImageRevoked';
   END IF;
 
   SELECT * INTO v_applied_receipt
@@ -2292,6 +2387,13 @@ BEGIN
       'postcondition', 'RevocationPresent'
     );
   ELSIF v_operation.action_id = 'console.extension.install' THEN
+    IF EXISTS (
+      SELECT 1 FROM console_extension.revocation
+      WHERE image_ref = v_operation.target_ref
+    ) THEN
+      RAISE EXCEPTION 'exact Extension image digest is revoked before verification'
+        USING ERRCODE = '55000', DETAIL = 'ImageRevoked';
+    END IF;
     SELECT * INTO v_applied_receipt
       FROM console_operation.execution_receipt
       WHERE operation_id = v_operation.operation_id
@@ -2641,13 +2743,15 @@ COMMENT ON FUNCTION console_operation.renew_owner_claim(uuid, bigint, bigint, in
   IS 'Renews only the current unexpired owner claim fence';
 COMMENT ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uuid, text, text)
   IS 'Applies one exact-digest Extension revocation under the current claim fence and appends execution evidence';
+COMMENT ON FUNCTION console_extension.assert_install_not_revoked(uuid, bigint, bigint, uuid, text, text)
+  IS 'Checks the current fenced install or observation claim against C_EXT exact-digest revocation authority before side effect or success evidence';
 COMMENT ON FUNCTION console_extension.apply_install_registration(
   uuid, bigint, bigint, uuid, text, text, jsonb, text, text, text, text, bigint, boolean,
   text, text, text, text
 )
-  IS 'Records one C_REG-bound UIPluginRegistration application under the current claim fence';
+  IS 'Records one unrevoked C_REG-bound UIPluginRegistration application under the current claim fence';
 COMMENT ON FUNCTION console_extension.record_install_observation(uuid, bigint, bigint, uuid, text, text, text, jsonb)
-  IS 'Records exact Ready UIPluginRegistration evidence without advancing the operation verification state';
+  IS 'Records exact Ready UIPluginRegistration evidence only while its image remains unrevoked, without advancing verifier state';
 COMMENT ON FUNCTION console_extension.apply_remove_registration(
   uuid, bigint, bigint, uuid, text, text, text, text, text, text, bigint, text, bigint, text, boolean
 )

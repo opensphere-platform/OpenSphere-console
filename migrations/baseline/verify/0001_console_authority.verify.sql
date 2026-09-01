@@ -1085,16 +1085,73 @@ SELECT set_config(
   false
 );
 
+RESET ROLE;
+BEGIN;
+INSERT INTO console_extension.revocation(
+  image_ref, operation_id, payload_digest, action_version, claim_epoch
+) VALUES (
+  'ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  current_setting('verification.install_operation_id')::uuid,
+  'sha256:abababababababababababababababababababababababababababababababab',
+  '1.0', 1
+);
+SET ROLE console_extension_controller;
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.install_claim')::jsonb;
+  v_detail text;
+BEGIN
+  BEGIN
+    PERFORM console_extension.assert_install_not_revoked(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest'
+    );
+    RAISE EXCEPTION 'revoked digest passed the pre-write authority check';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF v_detail <> 'ImageRevoked' THEN RAISE; END IF;
+  END;
+  BEGIN
+    PERFORM console_extension.apply_install_registration(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+      v_claim->'executionPlan', 'workspace', 'registration-uid-revoked', '18', '17', 2, true,
+      'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '1.0.0', 'verification-key'
+    );
+    RAISE EXCEPTION 'revoked digest produced an Applied install receipt';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF v_detail <> 'ImageRevoked' THEN RAISE; END IF;
+  END;
+END;
+$$;
+RESET ROLE;
+ROLLBACK;
+SET ROLE console_extension_controller;
+
 DO $$
 DECLARE
   v_claim jsonb := current_setting('verification.install_claim')::jsonb;
   v_execution jsonb;
+  v_revocation_check jsonb;
 BEGIN
   IF v_claim->>'actionId' <> 'console.extension.install'
       OR v_claim->>'actorRef' <> '11111111-1111-4111-8111-111111111111'
       OR v_claim->>'reason' <> 'install verified workspace extension'
       OR v_claim->'executionPlan'->>'catalogRevision' <> 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' THEN
     RAISE EXCEPTION 'install claim lost actor, reason, or C_REG plan evidence';
+  END IF;
+  v_revocation_check := console_extension.assert_install_not_revoked(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+    (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest'
+  );
+  IF (v_revocation_check->>'revoked')::boolean
+      OR v_revocation_check->>'image' <> v_claim->>'targetRef' THEN
+    RAISE EXCEPTION 'unrevoked install authority result is inconsistent';
   END IF;
   BEGIN
     PERFORM console_extension.apply_install_registration(
@@ -1217,6 +1274,62 @@ $$;
 ROLLBACK TO SAVEPOINT verify_install_observation_timeout;
 COMMIT;
 
+RESET ROLE;
+BEGIN;
+INSERT INTO console_extension.revocation(
+  image_ref, operation_id, payload_digest, action_version, claim_epoch
+) VALUES (
+  'ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  current_setting('verification.install_operation_id')::uuid,
+  'sha256:abababababababababababababababababababababababababababababababab',
+  '1.0', 1
+);
+SET ROLE console_extension_controller;
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.install_observation_claim')::jsonb;
+  v_detail text;
+  v_observation jsonb := jsonb_build_object(
+    'package', jsonb_build_object(
+      'name', 'workspace', 'resourceVersion', '17', 'generation', 2,
+      'digest', 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      'manifestDigest', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      'sourceRevision', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'compatibilityVersion', '1.0.0', 'keyId', 'verification-key'
+    ),
+    'registration', jsonb_build_object(
+      'name', 'workspace', 'uid', 'registration-uid-0001', 'resourceVersion', '19',
+      'generation', 3, 'observedGeneration', 3, 'desiredState', 'Installed', 'phase', 'Ready'
+    ),
+    'workload', jsonb_build_object('phase', 'Ready'),
+    'verification', jsonb_build_object(
+      'manifest', 'Verified', 'signature', 'Verified',
+      'entryDigest', 'Verified', 'permissions', 'Approved'
+    ),
+    'serving', jsonb_build_object(
+      'phase', 'Current',
+      'digest', 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      'manifestDigest', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    ),
+    'revalidation', jsonb_build_object('phase', 'Passed')
+  );
+BEGIN
+  PERFORM console_extension.record_install_observation(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+    (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+    v_claim->'dispatchPayload'->>'appliedReceiptDigest', v_observation
+  );
+  RAISE EXCEPTION 'revoked digest produced an InstallReady owner receipt';
+EXCEPTION WHEN SQLSTATE '55000' THEN
+  GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+  IF v_detail <> 'ImageRevoked' THEN RAISE; END IF;
+END;
+$$;
+RESET ROLE;
+ROLLBACK;
+SET ROLE console_extension_controller;
+
 DO $$
 DECLARE
   v_claim jsonb := current_setting('verification.install_observation_claim')::jsonb;
@@ -1287,6 +1400,37 @@ BEGIN
   END IF;
 END;
 $$;
+
+BEGIN;
+INSERT INTO console_extension.revocation(
+  image_ref, operation_id, payload_digest, action_version, claim_epoch
+) VALUES (
+  'ghcr.io/opensphere-platform/opensphere-plugin-workspace@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  current_setting('verification.install_operation_id')::uuid,
+  'sha256:abababababababababababababababababababababababababababababababab',
+  '1.0', 1
+);
+SET ROLE console_api;
+DO $$
+DECLARE
+  v_detail text;
+BEGIN
+  BEGIN
+    PERFORM console_operation.verify_extension_operation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.install_operation_id')::uuid, 4,
+      'revoked-install-verification-0001', 'correlation-revoked-install-verification-0001'
+    );
+    RAISE EXCEPTION 'revoked digest was independently verified as installed';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+    IF v_detail <> 'ImageRevoked' THEN RAISE; END IF;
+  END;
+END;
+$$;
+RESET ROLE;
+ROLLBACK;
 
 SET ROLE console_api;
 SELECT * FROM console_operation.verify_extension_operation(

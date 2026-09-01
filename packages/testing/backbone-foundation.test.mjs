@@ -66,6 +66,9 @@ test('baseline migration declares separated authority schemas, RLS and append-on
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.claim_owner_operation/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.renew_owner_claim/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_extension\.apply_revocation/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_extension\.assert_install_not_revoked/i);
+  assert.match(sql, /DETAIL = 'ImageRevoked'/i);
+  assert.match(sql, /v_operation\.action_id = 'console\.extension\.install'[\s\S]*console_extension\.revocation/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_extension\.apply_remove_registration/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_extension\.record_remove_observation/i);
   assert.match(sql, /CREATE TABLE console_extension\.registry_connection/i);

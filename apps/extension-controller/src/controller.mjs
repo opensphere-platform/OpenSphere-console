@@ -99,7 +99,7 @@ export function createExtensionController({
   store, registryResolver, registrationWriter, workerId,
   leaseSeconds = 30, maxObservationAttempts = 20,
 }) {
-  if (!store?.claim || !store?.renew || !store?.applyRevocation || !store?.applyInstall
+  if (!store?.claim || !store?.renew || !store?.applyRevocation || !store?.assertInstallNotRevoked || !store?.applyInstall
       || !store?.recordInstallObservation || !store?.applyRemove || !store?.recordRemoveObservation || !store?.recordFailure) {
     throw new TypeError('Extension Controller store claim/renew/apply/observe methods are required');
   }
@@ -207,10 +207,20 @@ export function createExtensionController({
             claimEpoch: input.claimEpoch, reason: result.reason || 'RegistrationNotReady', attemptCount,
           });
         }
-        const receipt = await store.recordInstallObservation({
-          ...input, appliedReceiptDigest: coordinates.appliedReceiptDigest,
-          observation: result.observation,
-        });
+        let receipt;
+        try {
+          await store.assertInstallNotRevoked(input);
+          receipt = await store.recordInstallObservation({
+            ...input, appliedReceiptDigest: coordinates.appliedReceiptDigest,
+            observation: result.observation,
+          });
+        } catch (error) {
+          if (error?.code !== 'ImageRevoked') throw error;
+          return closeObservation({
+            input, actionId: INSTALL_ACTION, errorCode: 'ImageRevoked',
+            sideEffect: 'present', attemptCount,
+          });
+        }
         return Object.freeze({
           state: 'Observed', actionId: INSTALL_ACTION, operationId: input.operationId,
           claimEpoch: input.claimEpoch, evidenceDigest: receipt.evidenceDigest,
@@ -280,13 +290,43 @@ export function createExtensionController({
           throw Object.assign(new Error('C_REG candidate changed after operation approval'), { code: 'StaleAuthorityRevision' });
         }
         await store.renew({ ...input, leaseSeconds });
+        try {
+          await store.assertInstallNotRevoked(input);
+        } catch (error) {
+          if (error?.code !== 'ImageRevoked') throw error;
+          await store.recordFailure({
+            ...input,
+            errorCode: 'ImageRevoked',
+            errorDigest: failureDigest(INSTALL_ACTION, 'ImageRevoked'),
+            sideEffect: 'none',
+          });
+          return Object.freeze({
+            state: 'Failed', actionId: INSTALL_ACTION, operationId: input.operationId,
+            claimEpoch: input.claimEpoch, errorCode: 'ImageRevoked',
+          });
+        }
         const applied = await registrationWriter.applyInstall({
           candidate,
           operationId: input.operationId,
           requestedBy: String(claimField(claim, 'actorRef')),
           reason: String(claimField(claim, 'reason')),
         });
-        const execution = await store.applyInstall({ ...input, executionPlan: plan, ...applied });
+        let execution;
+        try {
+          execution = await store.applyInstall({ ...input, executionPlan: plan, ...applied });
+        } catch (error) {
+          if (error?.code !== 'ImageRevoked') throw error;
+          await store.recordFailure({
+            ...input,
+            errorCode: 'ImageRevoked',
+            errorDigest: failureDigest(INSTALL_ACTION, 'ImageRevoked'),
+            sideEffect: 'present',
+          });
+          return Object.freeze({
+            state: 'Failed', actionId: INSTALL_ACTION, operationId: input.operationId,
+            claimEpoch: input.claimEpoch, errorCode: 'ImageRevoked',
+          });
+        }
         return Object.freeze({
           state: 'Applied', actionId: INSTALL_ACTION, operationId: input.operationId,
           claimEpoch: input.claimEpoch, evidenceDigest: execution.evidenceDigest,

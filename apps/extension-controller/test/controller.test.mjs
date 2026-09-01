@@ -19,7 +19,7 @@ const candidate = {
   verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
 };
 
-function fixture(claim, observationResult = null, writerOverrides = {}, controllerOverrides = {}) {
+function fixture(claim, observationResult = null, writerOverrides = {}, controllerOverrides = {}, storeOverrides = {}) {
   const calls = [];
   const store = {
     async claim(input) { calls.push({ method: 'claim', input }); return claim; },
@@ -27,6 +27,10 @@ function fixture(claim, observationResult = null, writerOverrides = {}, controll
     async applyRevocation(input) {
       calls.push({ method: 'applyRevocation', input });
       return { evidenceDigest: digest, inserted: true };
+    },
+    async assertInstallNotRevoked(input) {
+      calls.push({ method: 'assertInstallNotRevoked', input });
+      return { image: input.targetRef, revoked: false };
     },
     async applyInstall(input) {
       calls.push({ method: 'applyInstall', input });
@@ -48,6 +52,7 @@ function fixture(claim, observationResult = null, writerOverrides = {}, controll
       calls.push({ method: 'recordFailure', input });
       return { state: input.sideEffect === 'unknown' ? 'Unknown' : 'Failed' };
     },
+    ...storeOverrides,
   };
   const registryResolver = {
     async resolveExtension(input) { calls.push({ method: 'resolveExtension', input }); return candidate; },
@@ -134,11 +139,11 @@ test('typed install re-resolves C_REG before one idempotent Registration apply',
   assert.equal(result.state, 'Applied');
   assert.equal(result.actionId, 'console.extension.install');
   assert.deepEqual(calls.map((call) => call.method), [
-    'claim', 'resolveExtension', 'renew', 'applyRegistration', 'applyInstall',
+    'claim', 'resolveExtension', 'renew', 'assertInstallNotRevoked', 'applyRegistration', 'applyInstall',
   ]);
   assert.equal(calls[1].input.catalogRevision, catalogRevision);
-  assert.equal(calls[3].input.candidate.packageResourceVersion, '17');
-  assert.equal(calls[4].input.registrationUid, 'registration-uid');
+  assert.equal(calls[4].input.candidate.packageResourceVersion, '17');
+  assert.equal(calls[5].input.registrationUid, 'registration-uid');
 });
 
 test('install plan or C_REG drift fails before lease renewal and Kubernetes write', async () => {
@@ -155,6 +160,59 @@ test('install plan or C_REG drift fails before lease renewal and Kubernetes writ
     await assert.rejects(controller.runOnce(), { code: patch.executionPlan ? 'StaleAuthorityRevision' : 'ClaimBindingMismatch' });
     assert.equal(calls.some((call) => ['renew', 'applyRegistration', 'applyInstall'].includes(call.method)), false);
   }
+});
+
+test('revoked install digest fails before the Kubernetes write with no side effect', async () => {
+  const revoked = Object.assign(new Error('revoked'), { code: 'ImageRevoked', terminal: true });
+  const { calls, controller } = fixture({
+    outboxId: 19, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
+    targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 5,
+    executionPlan: {
+      schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+      catalogRevision, image: installImage,
+    },
+    actorRef: '11111111-1111-4111-8111-111111111111', reason: 'install workspace extension',
+    correlationId: 'extension-install-correlation-0001',
+  }, null, {}, {}, {
+    async assertInstallNotRevoked(input) {
+      calls.push({ method: 'assertInstallNotRevoked', input });
+      throw revoked;
+    },
+  });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Failed');
+  assert.equal(result.errorCode, 'ImageRevoked');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'claim', 'resolveExtension', 'renew', 'assertInstallNotRevoked', 'recordFailure',
+  ]);
+  assert.equal(calls[4].input.sideEffect, 'none');
+});
+
+test('revocation racing after the Kubernetes write closes as Failed with a present side effect', async () => {
+  const revoked = Object.assign(new Error('revoked'), { code: 'ImageRevoked', terminal: true });
+  const { calls, controller } = fixture({
+    outboxId: 19, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
+    targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 5,
+    executionPlan: {
+      schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+      catalogRevision, image: installImage,
+    },
+    actorRef: '11111111-1111-4111-8111-111111111111', reason: 'install workspace extension',
+    correlationId: 'extension-install-correlation-0001',
+  }, null, {}, {}, {
+    async applyInstall(input) {
+      calls.push({ method: 'applyInstall', input });
+      throw revoked;
+    },
+  });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Failed');
+  assert.equal(result.errorCode, 'ImageRevoked');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'claim', 'resolveExtension', 'renew', 'assertInstallNotRevoked',
+    'applyRegistration', 'applyInstall', 'recordFailure',
+  ]);
+  assert.equal(calls[6].input.sideEffect, 'present');
 });
 
 test('install observation preserves Applied until exact Kubernetes readiness is recorded', async () => {
@@ -178,10 +236,10 @@ test('install observation preserves Applied until exact Kubernetes readiness is 
   assert.equal(result.state, 'Observed');
   assert.equal(result.postcondition, 'InstallReady');
   assert.deepEqual(calls.map((call) => call.method), [
-    'claim', 'renew', 'observeRegistration', 'recordInstallObservation',
+    'claim', 'renew', 'observeRegistration', 'assertInstallNotRevoked', 'recordInstallObservation',
   ]);
   assert.equal(calls[2].input.registrationUid, 'registration-uid');
-  assert.equal(calls[3].input.appliedReceiptDigest, digest);
+  assert.equal(calls[4].input.appliedReceiptDigest, digest);
 });
 
 test('pending install observation does not record readiness or change operation state', async () => {
@@ -207,6 +265,38 @@ test('pending install observation does not record readiness or change operation 
     claimEpoch: 1, reason: 'RegistrationNotReady', attemptCount: 1,
   });
   assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'observeRegistration']);
+});
+
+test('revocation racing with ready observation prevents InstallReady and closes Failed', async () => {
+  const dispatchPayload = {
+    schemaVersion: '1.0', eventType: 'ExtensionInstallObservationRequested', operationId,
+    descriptorId: 'extension.workspace', image: installImage, packageResourceVersion: '17',
+    packageGeneration: 1, manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+    compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+    registrationName: 'workspace', registrationUid: 'registration-uid', appliedReceiptDigest: digest,
+  };
+  const revoked = Object.assign(new Error('revoked'), { code: 'ImageRevoked', terminal: true });
+  const { calls, controller } = fixture({
+    outboxId: 20, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
+    targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
+    dispatchPhase: 'observe', dispatchPayload, attemptCount: 1,
+    executionPlan: {
+      schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+      catalogRevision, image: installImage,
+    },
+  }, null, {}, {}, {
+    async assertInstallNotRevoked(input) {
+      calls.push({ method: 'assertInstallNotRevoked', input });
+      throw revoked;
+    },
+  });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Failed');
+  assert.equal(result.errorCode, 'ImageRevoked');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'claim', 'renew', 'observeRegistration', 'assertInstallNotRevoked', 'recordFailure',
+  ]);
+  assert.equal(calls[4].input.sideEffect, 'present');
 });
 
 test('last pending install observation closes durably as Unknown without another queue', async () => {
@@ -360,6 +450,7 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
       calls.push({ sql, values });
       if (sql.includes('claim_owner_operation')) return { rows: [{ claim_record: null }] };
       if (sql.includes('renew_owner_claim')) return { rows: [{ lease_expires_at: new Date() }] };
+      if (sql.includes('assert_install_not_revoked')) return { rows: [{ revocation_check: { image: installImage, revoked: false } }] };
       if (sql.includes('record_execution_failure')) return { rows: [{ operation_record: { state: 'Failed' } }] };
       if (sql.includes('record_install_observation')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
       if (sql.includes('record_remove_observation')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
@@ -375,6 +466,9 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
   });
   await store.renew({ workerId, outboxId: 17, claimEpoch: 4, leaseSeconds: 30 });
   await store.applyRevocation({ workerId, outboxId: 17, claimEpoch: 4, operationId, targetRef: image, payloadDigest: digest });
+  await store.assertInstallNotRevoked({
+    workerId, outboxId: 19, claimEpoch: 5, operationId, targetRef: installImage, payloadDigest: digest,
+  });
   await store.applyInstall({
     workerId, outboxId: 19, claimEpoch: 5, operationId, targetRef: installImage, payloadDigest: digest,
     executionPlan: { schemaVersion: '1.0' }, registrationName: 'workspace', registrationUid: 'registration-uid',
@@ -406,14 +500,16 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
   assert.match(calls[1].sql, /renew_owner_claim/);
   assert.match(calls[2].sql, /apply_revocation/);
   assert.equal(calls[2].values.length, 6);
-  assert.match(calls[3].sql, /apply_install_registration/);
-  assert.equal(calls[3].values.length, 17);
-  assert.match(calls[4].sql, /record_install_observation/);
-  assert.equal(calls[4].values.length, 8);
-  assert.match(calls[5].sql, /apply_remove_registration/);
-  assert.equal(calls[5].values.length, 15);
-  assert.match(calls[6].sql, /record_remove_observation/);
-  assert.equal(calls[6].values.length, 8);
-  assert.match(calls[7].sql, /record_execution_failure/);
-  assert.equal(calls[7].values.length, 7);
+  assert.match(calls[3].sql, /assert_install_not_revoked/);
+  assert.equal(calls[3].values.length, 6);
+  assert.match(calls[4].sql, /apply_install_registration/);
+  assert.equal(calls[4].values.length, 17);
+  assert.match(calls[5].sql, /record_install_observation/);
+  assert.equal(calls[5].values.length, 8);
+  assert.match(calls[6].sql, /apply_remove_registration/);
+  assert.equal(calls[6].values.length, 15);
+  assert.match(calls[7].sql, /record_remove_observation/);
+  assert.equal(calls[7].values.length, 8);
+  assert.match(calls[8].sql, /record_execution_failure/);
+  assert.equal(calls[8].values.length, 7);
 });

@@ -16,6 +16,12 @@ const APPLY_REVOCATION_SQL = [
   ') AS execution_record',
 ].join(' ');
 
+const ASSERT_INSTALL_NOT_REVOKED_SQL = [
+  'SELECT console_extension.assert_install_not_revoked(',
+  '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text',
+  ') AS revocation_check',
+].join(' ');
+
 const APPLY_INSTALL_SQL = [
   'SELECT console_extension.apply_install_registration(',
   '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text,',
@@ -52,16 +58,19 @@ const RECORD_FAILURE_SQL = [
 
 function databaseError(error) {
   const detail = String(error?.detail || '');
-  const known = new Set(['ValidationFailed', 'StaleClaim', 'ClaimBindingMismatch']);
+  const known = new Set(['ValidationFailed', 'StaleClaim', 'ClaimBindingMismatch', 'ImageRevoked']);
   const code = known.has(detail) ? detail : 'AuthorityUnavailable';
   return Object.assign(new Error({
     ValidationFailed: 'Extension Controller request failed database validation',
     StaleClaim: 'Extension Controller claim is stale or expired',
     ClaimBindingMismatch: 'Extension Controller claim binding does not match the action',
+    ImageRevoked: 'The exact Extension image digest is revoked',
     AuthorityUnavailable: 'Extension Controller authority database is unavailable',
   }[code]), {
     code,
     retryable: code === 'AuthorityUnavailable' || code === 'StaleClaim',
+    terminal: code === 'ImageRevoked',
+    sideEffect: code === 'ImageRevoked' ? 'present' : 'unknown',
     cause: error,
   });
 }
@@ -102,6 +111,21 @@ export function createExtensionPostgresStore({ query }) {
         ]);
         const record = result?.rows?.[0]?.execution_record;
         if (!record) throw new Error('apply_revocation returned no execution receipt');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async assertInstallNotRevoked({ workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest }) {
+      try {
+        const result = await query(ASSERT_INSTALL_NOT_REVOKED_SQL, [
+          workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+        ]);
+        const record = result?.rows?.[0]?.revocation_check;
+        if (!record || record.revoked !== false || record.image !== targetRef) {
+          throw new Error('assert_install_not_revoked returned an invalid authority result');
+        }
         return record;
       } catch (error) {
         throw databaseError(error);
