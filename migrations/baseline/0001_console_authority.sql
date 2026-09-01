@@ -1,8 +1,6 @@
 -- OpenSphere Console fresh-start authority baseline.
 -- This file is the proposed baseline-0001 model. It does not migrate a legacy DB.
 
-BEGIN;
-
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'console_api') THEN
@@ -18,11 +16,48 @@ CREATE SCHEMA console_identity;
 CREATE SCHEMA console_operation;
 CREATE SCHEMA console_audit;
 CREATE SCHEMA console_extension;
+CREATE SCHEMA console_migration;
 
-REVOKE ALL ON SCHEMA console_identity, console_operation, console_audit, console_extension FROM PUBLIC;
+REVOKE ALL ON SCHEMA console_identity, console_operation, console_audit, console_extension, console_migration FROM PUBLIC;
 GRANT USAGE ON SCHEMA console_identity, console_operation TO authenticated;
 GRANT USAGE ON SCHEMA console_identity, console_operation, console_audit, console_extension TO console_api;
 GRANT USAGE ON SCHEMA console_operation, console_extension TO console_extension_controller;
+
+CREATE TABLE console_migration.applied_migration (
+  applied_sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  global_id text NOT NULL UNIQUE
+    CHECK (global_id ~ '^opensphere-console/[0-9]{8}/[0-9]{4}$'),
+  semantic_key text NOT NULL UNIQUE
+    CHECK (semantic_key ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),
+  predecessor_global_id text REFERENCES console_migration.applied_migration(global_id) ON DELETE RESTRICT,
+  file_sha256 text NOT NULL CHECK (file_sha256 ~ '^[a-f0-9]{64}$'),
+  source_revision text NOT NULL CHECK (source_revision ~ '^[a-f0-9]{40}$'),
+  migration_set_digest text NOT NULL CHECK (migration_set_digest ~ '^sha256:[a-f0-9]{64}$'),
+  migration_set_size integer NOT NULL CHECK (migration_set_size > 0),
+  applied_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  executor name NOT NULL DEFAULT current_user
+);
+
+CREATE FUNCTION console_migration.reject_applied_migration_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+  RAISE EXCEPTION 'console_migration.applied_migration is append-only' USING ERRCODE = '55000';
+END;
+$$;
+
+CREATE TRIGGER applied_migration_row_append_only
+  BEFORE UPDATE OR DELETE ON console_migration.applied_migration
+  FOR EACH ROW EXECUTE FUNCTION console_migration.reject_applied_migration_mutation();
+CREATE TRIGGER applied_migration_truncate_append_only
+  BEFORE TRUNCATE ON console_migration.applied_migration
+  FOR EACH STATEMENT EXECUTE FUNCTION console_migration.reject_applied_migration_mutation();
+
+REVOKE ALL ON TABLE console_migration.applied_migration FROM PUBLIC;
+REVOKE ALL ON SEQUENCE console_migration.applied_migration_applied_sequence_seq FROM PUBLIC;
+REVOKE ALL ON FUNCTION console_migration.reject_applied_migration_mutation() FROM PUBLIC;
 
 CREATE TABLE console_identity.subject_authority (
   subject_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE RESTRICT,
@@ -613,6 +648,13 @@ DECLARE
   v_authority_table_count integer;
   v_rls_table_count integer;
   v_baseline_objects_present boolean;
+  v_migration_count integer := 0;
+  v_migration_chain_count integer := 0;
+  v_migration_latest_global_id text;
+  v_migration_latest_set_digest text;
+  v_migration_latest_set_size integer;
+  v_migration_state text;
+  v_migration_reason text;
 BEGIN
   IF length(COALESCE(p_correlation_id, '')) NOT BETWEEN 8 AND 128 THEN
     RAISE EXCEPTION 'invalid correlation id' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
@@ -662,6 +704,42 @@ BEGIN
     AND to_regprocedure('console_extension.record_install_observation(uuid,bigint,bigint,uuid,text,text,text,jsonb)') IS NOT NULL
     AND to_regprocedure('console_operation.verify_extension_operation(uuid,uuid,bigint,bigint,uuid,bigint,text,text)') IS NOT NULL;
 
+  IF to_regclass('console_migration.applied_migration') IS NOT NULL THEN
+    WITH ordered AS (
+      SELECT global_id, predecessor_global_id,
+             row_number() OVER (ORDER BY applied_sequence) AS ordinal,
+             lag(global_id) OVER (ORDER BY applied_sequence) AS prior_global_id
+      FROM console_migration.applied_migration
+    )
+    SELECT count(*)::integer,
+           count(*) FILTER (
+             WHERE (ordinal = 1 AND predecessor_global_id IS NULL)
+                OR (ordinal > 1 AND predecessor_global_id = prior_global_id)
+           )::integer
+      INTO v_migration_count, v_migration_chain_count
+      FROM ordered;
+
+    SELECT global_id, migration_set_digest, migration_set_size
+      INTO v_migration_latest_global_id, v_migration_latest_set_digest, v_migration_latest_set_size
+      FROM console_migration.applied_migration
+      ORDER BY applied_sequence DESC
+      LIMIT 1;
+  END IF;
+
+  IF NOT v_baseline_objects_present THEN
+    v_migration_state := 'Unknown';
+    v_migration_reason := 'BaselineObjectsMissing';
+  ELSIF v_migration_count = 0 THEN
+    v_migration_state := 'Partial';
+    v_migration_reason := 'MigrationLedgerMissing';
+  ELSIF v_migration_chain_count <> v_migration_count OR v_migration_latest_set_size <> v_migration_count THEN
+    v_migration_state := 'Blocked';
+    v_migration_reason := 'MigrationLedgerInvalid';
+  ELSE
+    v_migration_state := 'Ready';
+    v_migration_reason := NULL;
+  END IF;
+
   RETURN jsonb_build_object(
     'schemaVersion', '1.0',
     'data', jsonb_build_object(
@@ -674,10 +752,12 @@ BEGIN
         jsonb_build_object('component', 'storage', 'state', 'Unknown', 'authority', 'SupabaseStorage', 'reasonCode', 'LiveProbeUnavailable'),
         jsonb_build_object(
           'component', 'migration',
-          'state', CASE WHEN v_baseline_objects_present THEN 'Partial' ELSE 'Unknown' END,
-          'authority', 'PostgreSQLCatalog',
-          'reasonCode', CASE WHEN v_baseline_objects_present THEN 'BaselineObjectsPresentManifestLedgerMissing' ELSE 'BaselineObjectsMissing' END,
-          'baselineRevision', CASE WHEN v_baseline_objects_present THEN 'baseline-0001' ELSE NULL END
+          'state', v_migration_state,
+          'authority', 'ConsoleMigrationLedger',
+          'reasonCode', v_migration_reason,
+          'baselineRevision', v_migration_latest_global_id,
+          'setDigest', v_migration_latest_set_digest,
+          'migrationCount', v_migration_count
         ),
         jsonb_build_object(
           'component', 'rls',
@@ -697,7 +777,11 @@ BEGIN
     'correlationId', p_correlation_id,
     'evidenceRefs', jsonb_build_array(
       'supabase-postgresql:connected',
-      CASE WHEN v_baseline_objects_present THEN 'baseline-schema:baseline-0001:objects-present' ELSE 'baseline-schema:objects-missing' END,
+      CASE
+        WHEN v_migration_state = 'Ready' THEN 'migration-ledger:' || v_migration_latest_global_id || '@' || v_migration_latest_set_digest
+        WHEN v_baseline_objects_present THEN 'baseline-schema:objects-present-ledger-missing'
+        ELSE 'baseline-schema:objects-missing'
+      END,
       'rls:' || v_rls_table_count::text || '/' || v_authority_table_count::text
     )
   );
@@ -2730,7 +2814,7 @@ COMMENT ON FUNCTION console_audit.list_events(uuid, uuid, bigint, bigint, bigint
 COMMENT ON FUNCTION console_identity.revoke_browser_session(uuid, uuid, bigint, bigint, text)
   IS 'Revokes only the caller current opaque session and atomically appends no-token audit evidence';
 COMMENT ON FUNCTION console_identity.get_supabase_status(uuid, uuid, bigint, bigint, text)
-  IS 'Returns a fail-closed Supabase readiness projection without promoting unprobed Auth, PostgREST, Storage or recovery evidence';
+  IS 'Returns a fail-closed Supabase readiness projection with append-only migration lineage and without promoting unprobed recovery evidence';
 COMMENT ON FUNCTION console_operation.approve_operation(
   uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
 ) IS 'Atomically revalidates an independent aal2 approver and advances a Planned operation by compare-and-set';
@@ -2764,5 +2848,3 @@ COMMENT ON FUNCTION console_extension.list_revocations(uuid, uuid, text)
   IS 'Returns the current C_EXT exact-digest revocation authority through a session-revalidated no-secret projection';
 COMMENT ON FUNCTION console_extension.get_registry_connection(uuid, uuid, text)
   IS 'Returns fixed GHCR connection metadata without credential or SecretRef material after current authority checks';
-
-COMMIT;
