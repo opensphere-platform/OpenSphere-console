@@ -16,6 +16,7 @@ INSERT INTO console_identity.permission_grant(subject_id, permission, grant_revi
 VALUES
   ('11111111-1111-4111-8111-111111111111', 'console.registry.manage', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.extension.revoke', 7, '99999999-9999-4999-8999-999999999999'),
+  ('11111111-1111-4111-8111-111111111111', 'console.operation.verify', 7, '99999999-9999-4999-8999-999999999999'),
   ('11111111-1111-4111-8111-111111111111', 'console.operation.approve', 7, '99999999-9999-4999-8999-999999999999'),
   ('55555555-5555-4555-8555-555555555555', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999'),
   ('88888888-8888-4888-8888-888888888888', 'console.operation.approve', 3, '99999999-9999-4999-8999-999999999999');
@@ -390,8 +391,8 @@ BEGIN
     'console_operation'::regnamespace,
     'console_audit'::regnamespace,
     'console_extension'::regnamespace
-  )) <> 9 THEN
-    RAISE EXCEPTION 'expected nine RLS-protected authority tables';
+  )) <> 10 THEN
+    RAISE EXCEPTION 'expected ten RLS-protected authority tables';
   END IF;
   IF EXISTS (
     SELECT 1
@@ -696,6 +697,98 @@ END;
 $$;
 
 SET ROLE console_api;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM console_operation.verify_extension_revocation(
+      '66666666-6666-4666-8666-666666666666',
+      '55555555-5555-4555-8555-555555555555',
+      3, 0, current_setting('verification.approval_operation_id')::uuid, 4,
+      'verification-permission-denied-0001', 'correlation-verification-denied-0001'
+    );
+    RAISE EXCEPTION 'verification without permission unexpectedly succeeded';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM console_operation.verify_extension_revocation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.approval_operation_id')::uuid, 3,
+      'verification-stale-version-0001', 'correlation-verification-stale-0001'
+    );
+    RAISE EXCEPTION 'verification with a stale state version unexpectedly succeeded';
+  EXCEPTION WHEN serialization_failure THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+DO $$
+BEGIN
+  BEGIN
+    UPDATE console_extension.revocation
+      SET payload_digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      WHERE operation_id = current_setting('verification.approval_operation_id')::uuid;
+    PERFORM console_operation.verify_extension_revocation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.approval_operation_id')::uuid, 4,
+      'verification-mismatch-0001', 'correlation-verification-mismatch-0001'
+    );
+    RAISE EXCEPTION 'verification with a mismatched observation unexpectedly succeeded';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END;
+$$;
+
+SET ROLE console_api;
+SELECT * FROM console_operation.verify_extension_revocation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, current_setting('verification.approval_operation_id')::uuid, 4,
+  'verification-operation-0001', 'correlation-verification-operation-0001'
+);
+SELECT * FROM console_operation.verify_extension_revocation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, current_setting('verification.approval_operation_id')::uuid, 4,
+  'verification-operation-0001', 'correlation-verification-operation-0001'
+);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM console_operation.verify_extension_revocation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.approval_operation_id')::uuid, 5,
+      'verification-operation-0001', 'correlation-verification-operation-0001'
+    );
+    RAISE EXCEPTION 'verification idempotency mismatch unexpectedly succeeded';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM console_operation.verification_receipt
+      WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 1
+      OR (SELECT state FROM console_operation.operation
+          WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 'Verified'
+      OR (SELECT state_version FROM console_operation.operation
+          WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 5
+      OR (SELECT observed_postcondition->>'authority' FROM console_operation.operation
+          WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 'ConsoleExtensionRevocation'
+      OR (SELECT count(*) FROM console_audit.event
+          WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 6 THEN
+    RAISE EXCEPTION 'verification receipt was not committed atomically or replay created duplicate effects';
+  END IF;
+END;
+$$;
+
+
+SET ROLE console_api;
 SELECT * FROM console_operation.accept_operation(
   '22222222-2222-4222-8222-222222222222',
   '11111111-1111-4111-8111-111111111111',
@@ -753,6 +846,25 @@ BEGIN
           WHERE operation_id = current_setting('verification.failure_operation_id')::uuid) <> 'unknown' THEN
     RAISE EXCEPTION 'typed Unknown execution receipt was not committed';
   END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+  BEGIN
+    UPDATE console_operation.operation
+      SET state = 'Applied', state_version = 4
+      WHERE operation_id = current_setting('verification.failure_operation_id')::uuid;
+    PERFORM console_operation.verify_extension_revocation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.failure_operation_id')::uuid, 4,
+      'verification-missing-observation-0001', 'correlation-verification-missing-0001'
+    );
+    RAISE EXCEPTION 'verification without an owner observation unexpectedly succeeded';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    IF SQLERRM NOT LIKE '%missing%' THEN RAISE; END IF;
+  END;
 END;
 $$;
 

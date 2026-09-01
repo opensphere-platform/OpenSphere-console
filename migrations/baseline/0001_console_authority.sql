@@ -156,6 +156,23 @@ CREATE TABLE console_operation.approval (
   UNIQUE (operation_id, actor_ref)
 );
 
+CREATE TABLE console_operation.verification_receipt (
+  verification_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  operation_id uuid NOT NULL UNIQUE REFERENCES console_operation.operation(operation_id) ON DELETE RESTRICT,
+  actor_ref uuid NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
+  request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+  permission_revision bigint NOT NULL CHECK (permission_revision >= 0),
+  revoke_epoch bigint NOT NULL CHECK (revoke_epoch >= 0),
+  expected_state_version bigint NOT NULL CHECK (expected_state_version >= 0),
+  authority text NOT NULL CHECK (authority = 'ConsoleExtensionRevocation'),
+  observation_digest text NOT NULL CHECK (observation_digest ~ '^sha256:[0-9a-f]{64}$'),
+  observation jsonb NOT NULL,
+  idempotency_key text NOT NULL CHECK (length(idempotency_key) BETWEEN 8 AND 256),
+  correlation_id text NOT NULL CHECK (length(correlation_id) BETWEEN 8 AND 128),
+  created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+  UNIQUE (actor_ref, idempotency_key)
+);
+
 CREATE TABLE console_operation.execution_receipt (
   execution_receipt_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   operation_id uuid NOT NULL REFERENCES console_operation.operation(operation_id) ON DELETE RESTRICT,
@@ -186,6 +203,8 @@ ALTER TABLE console_operation.outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.approval ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.approval FORCE ROW LEVEL SECURITY;
+ALTER TABLE console_operation.verification_receipt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE console_operation.verification_receipt FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.execution_receipt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.execution_receipt FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_extension.revocation ENABLE ROW LEVEL SECURITY;
@@ -201,6 +220,11 @@ CREATE POLICY approval_actor_read
   FOR SELECT TO authenticated
   USING (actor_ref = auth.uid());
 
+CREATE POLICY verification_actor_read
+  ON console_operation.verification_receipt
+  FOR SELECT TO authenticated
+  USING (actor_ref = auth.uid());
+
 CREATE POLICY execution_receipt_initiator_read
   ON console_operation.execution_receipt
   FOR SELECT TO authenticated
@@ -211,6 +235,7 @@ CREATE POLICY execution_receipt_initiator_read
   ));
 
 GRANT SELECT ON console_operation.operation, console_operation.approval,
+  console_operation.verification_receipt,
   console_operation.execution_receipt TO authenticated;
 
 CREATE TABLE console_audit.event (
@@ -1101,6 +1126,208 @@ GRANT EXECUTE ON FUNCTION console_extension.record_execution_failure(
   uuid, bigint, bigint, uuid, text, text, boolean
 ) TO console_extension_controller;
 
+CREATE OR REPLACE FUNCTION console_operation.verify_extension_revocation(
+  p_session_id uuid,
+  p_actor_ref uuid,
+  p_expected_permission_revision bigint,
+  p_expected_revoke_epoch bigint,
+  p_operation_id uuid,
+  p_expected_state_version bigint,
+  p_idempotency_key text,
+  p_correlation_id text
+)
+RETURNS TABLE(operation_record jsonb, replayed boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_identity, console_operation, console_extension, console_audit
+AS $$
+DECLARE
+  v_session console_identity.browser_session;
+  v_authority console_identity.subject_authority;
+  v_operation console_operation.operation;
+  v_verification console_operation.verification_receipt;
+  v_revocation console_extension.revocation;
+  v_applied_receipt console_operation.execution_receipt;
+  v_request_digest text;
+  v_observation jsonb;
+  v_observation_digest text;
+BEGIN
+  IF p_expected_state_version < 0
+      OR length(COALESCE(p_idempotency_key, '')) NOT BETWEEN 8 AND 256
+      OR length(COALESCE(p_correlation_id, '')) NOT BETWEEN 8 AND 128 THEN
+    RAISE EXCEPTION 'invalid verification request' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+
+  SELECT * INTO v_session
+    FROM console_identity.browser_session
+    WHERE session_id = p_session_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_session.subject_id <> p_actor_ref OR v_session.revoked_at IS NOT NULL
+      OR v_session.expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'active Console session is required' USING ERRCODE = '28000', DETAIL = 'SessionInvalid';
+  END IF;
+
+  SELECT * INTO v_authority
+    FROM console_identity.subject_authority
+    WHERE subject_id = p_actor_ref
+    FOR SHARE;
+  IF NOT FOUND OR v_authority.permission_revision <> v_session.permission_revision
+      OR v_authority.permission_revision <> p_expected_permission_revision
+      OR v_authority.revoke_epoch <> v_session.revoke_epoch
+      OR v_authority.revoke_epoch <> p_expected_revoke_epoch THEN
+    RAISE EXCEPTION 'session authority revision is stale' USING ERRCODE = '28000', DETAIL = 'StaleAuthorityRevision';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM console_identity.permission_grant
+    WHERE subject_id = p_actor_ref
+      AND permission = 'console.operation.verify'
+      AND grant_revision <= v_authority.permission_revision
+      AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'permission denied' USING ERRCODE = '42501', DETAIL = 'PermissionDenied';
+  END IF;
+
+  v_request_digest := 'sha256:' || encode(sha256(convert_to(jsonb_build_object(
+    'operationId', p_operation_id,
+    'expectedStateVersion', p_expected_state_version
+  )::text, 'UTF8')), 'hex');
+
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_actor_ref::text || ':' || p_idempotency_key, 0));
+  SELECT * INTO v_verification
+    FROM console_operation.verification_receipt
+    WHERE actor_ref = p_actor_ref AND idempotency_key = p_idempotency_key
+    FOR UPDATE;
+  IF FOUND THEN
+    IF v_verification.request_digest <> v_request_digest THEN
+      RAISE EXCEPTION 'idempotency key was already used for a different verification'
+        USING ERRCODE = '23505', DETAIL = 'IdempotencyMismatch';
+    END IF;
+    SELECT * INTO v_operation
+      FROM console_operation.operation
+      WHERE operation_id = v_verification.operation_id;
+    RETURN QUERY SELECT to_jsonb(v_operation), true;
+    RETURN;
+  END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'operation was not found' USING ERRCODE = 'P0002', DETAIL = 'NotFound';
+  END IF;
+  IF v_operation.state_version <> p_expected_state_version THEN
+    RAISE EXCEPTION 'operation state version changed' USING ERRCODE = '40001', DETAIL = 'StaleOperationVersion';
+  END IF;
+  IF v_operation.state <> 'Applied' THEN
+    RAISE EXCEPTION 'operation is not ready for verification' USING ERRCODE = '55000', DETAIL = 'InvalidOperationState';
+  END IF;
+  IF v_operation.owner_ref <> 'C_EXT'
+      OR v_operation.action_id <> 'console.extension.revocation.create'
+      OR v_operation.action_version <> '1.0' THEN
+    RAISE EXCEPTION 'verification action is outside the Extension revocation boundary'
+      USING ERRCODE = '42501', DETAIL = 'ObservationMismatch';
+  END IF;
+
+  SELECT * INTO v_revocation
+    FROM console_extension.revocation
+    WHERE operation_id = v_operation.operation_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Extension revocation observation is missing'
+      USING ERRCODE = '55000', DETAIL = 'ObservationMissing';
+  END IF;
+  IF v_revocation.image_ref <> v_operation.target_ref
+      OR v_revocation.payload_digest <> v_operation.payload_digest
+      OR v_revocation.action_version <> v_operation.action_version THEN
+    RAISE EXCEPTION 'Extension revocation observation does not match the operation'
+      USING ERRCODE = '55000', DETAIL = 'ObservationMismatch';
+  END IF;
+
+  SELECT * INTO v_applied_receipt
+    FROM console_operation.execution_receipt
+    WHERE operation_id = v_operation.operation_id
+      AND owner_ref = 'C_EXT'
+      AND claim_epoch = v_revocation.claim_epoch
+      AND phase = 'Applied';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Applied owner receipt is missing'
+      USING ERRCODE = '55000', DETAIL = 'ObservationMissing';
+  END IF;
+  IF v_applied_receipt.evidence->>'authority' <> 'ConsoleExtensionRevocation'
+      OR v_applied_receipt.evidence->>'imageRef' <> v_operation.target_ref
+      OR v_applied_receipt.evidence->>'operationId' <> v_operation.operation_id::text
+      OR v_applied_receipt.evidence->>'claimEpoch' <> v_revocation.claim_epoch::text
+      OR v_applied_receipt.evidence->>'postcondition' <> 'RevocationPresent' THEN
+    RAISE EXCEPTION 'Applied owner receipt does not match the observed revocation'
+      USING ERRCODE = '55000', DETAIL = 'ObservationMismatch';
+  END IF;
+
+  v_observation := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'authority', 'ConsoleExtensionRevocation',
+    'imageRef', v_revocation.image_ref,
+    'operationId', v_revocation.operation_id,
+    'payloadDigest', v_revocation.payload_digest,
+    'actionVersion', v_revocation.action_version,
+    'claimEpoch', v_revocation.claim_epoch,
+    'revokedAt', v_revocation.revoked_at,
+    'appliedReceiptDigest', v_applied_receipt.evidence_digest,
+    'postcondition', 'RevocationPresent'
+  );
+  v_observation_digest := 'sha256:' || encode(sha256(convert_to(v_observation::text, 'UTF8')), 'hex');
+
+  INSERT INTO console_operation.verification_receipt(
+    operation_id, actor_ref, request_digest, permission_revision, revoke_epoch,
+    expected_state_version, authority, observation_digest, observation,
+    idempotency_key, correlation_id
+  ) VALUES (
+    v_operation.operation_id, p_actor_ref, v_request_digest,
+    v_authority.permission_revision, v_authority.revoke_epoch,
+    p_expected_state_version, 'ConsoleExtensionRevocation', v_observation_digest,
+    v_observation, p_idempotency_key, p_correlation_id
+  ) RETURNING * INTO v_verification;
+
+  UPDATE console_operation.operation
+    SET state = 'Verified', state_version = state_version + 1,
+        observed_postcondition = v_observation, updated_at = statement_timestamp()
+    WHERE operation_id = v_operation.operation_id
+    RETURNING * INTO v_operation;
+
+  PERFORM console_audit.append_event_internal(
+    v_operation.operation_id,
+    p_correlation_id,
+    p_actor_ref::text,
+    'console.operation.verify',
+    v_operation.target_ref,
+    'succeeded',
+    '',
+    jsonb_build_object(
+      'verificationId', v_verification.verification_id,
+      'authority', v_verification.authority,
+      'requestDigest', v_verification.request_digest,
+      'observationDigest', v_verification.observation_digest,
+      'appliedReceiptDigest', v_applied_receipt.evidence_digest,
+      'permissionRevision', v_verification.permission_revision,
+      'revokeEpoch', v_verification.revoke_epoch,
+      'stateVersion', v_operation.state_version
+    )
+  );
+
+  UPDATE console_identity.browser_session
+    SET last_seen_at = statement_timestamp()
+    WHERE session_id = v_session.session_id;
+
+  RETURN QUERY SELECT to_jsonb(v_operation), false;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_operation.verify_extension_revocation(
+  uuid, uuid, bigint, bigint, uuid, bigint, text, text
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_operation.verify_extension_revocation(
+  uuid, uuid, bigint, bigint, uuid, bigint, text, text
+) TO console_api;
+
 CREATE OR REPLACE FUNCTION console_operation.get_operation(
   p_session_id uuid,
   p_actor_ref uuid,
@@ -1218,6 +1445,7 @@ COMMENT ON SCHEMA console_operation IS 'Durable intent, idempotency and external
 COMMENT ON SCHEMA console_audit IS 'Append-only Console security and operation evidence';
 COMMENT ON SCHEMA console_extension IS 'Extension Controller-owned package, registration and revocation authority';
 COMMENT ON TABLE console_operation.operation IS 'State changes require compare-and-set on state_version by constrained functions';
+COMMENT ON TABLE console_operation.verification_receipt IS 'Idempotent verifier evidence derived from current owner state; callers cannot submit observations';
 COMMENT ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
   boolean, text, text, text, text, jsonb
@@ -1225,6 +1453,9 @@ COMMENT ON FUNCTION console_operation.accept_operation(
 COMMENT ON FUNCTION console_operation.approve_operation(
   uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
 ) IS 'Atomically revalidates an independent aal2 approver and advances a Planned operation by compare-and-set';
+COMMENT ON FUNCTION console_operation.verify_extension_revocation(
+  uuid, uuid, bigint, bigint, uuid, bigint, text, text
+) IS 'Revalidates verifier authority and derives Verified only from a matching C_EXT row and fenced Applied receipt';
 COMMENT ON FUNCTION console_operation.claim_owner_operation(uuid, text, text[], integer)
   IS 'Claims one ready owner operation with skip-locked selection, bounded lease and monotonic fencing epoch';
 COMMENT ON FUNCTION console_operation.renew_owner_claim(uuid, bigint, bigint, integer)

@@ -21,6 +21,14 @@ const APPROVE_SQL = [
   ')',
 ].join(' ');
 
+const VERIFY_SQL = [
+  'SELECT operation_record, replayed',
+  'FROM console_operation.verify_extension_revocation(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid, $6::bigint,',
+  '$7::text, $8::text',
+  ')',
+].join(' ');
+
 const RESOLVE_SESSION_SQL = [
   'SELECT console_identity.resolve_browser_session(',
   '$1::bytea, $2::bytea, $3::boolean',
@@ -39,7 +47,8 @@ function databaseError(error) {
     'ValidationFailed', 'ReasonRequired', 'SessionInvalid', 'StaleAuthorityRevision',
     'PermissionDenied', 'StepUpRequired', 'IdempotencyMismatch', 'CsrfRejected',
     'SelfApprovalDenied', 'ApprovalNotRequired', 'StaleRevision',
-    'StaleOperationVersion', 'InvalidOperationState', 'NotFound',
+    'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
+    'ObservationMismatch', 'NotFound',
   ]);
   const mapped = known.has(code) ? code : 'AuthorityUnavailable';
   const status = {
@@ -57,6 +66,8 @@ function databaseError(error) {
     StaleRevision: 409,
     StaleOperationVersion: 409,
     InvalidOperationState: 409,
+    ObservationMissing: 409,
+    ObservationMismatch: 409,
     NotFound: 404,
   }[mapped];
   const messages = {
@@ -73,7 +84,9 @@ function databaseError(error) {
     ApprovalNotRequired: 'operation does not require approval',
     StaleRevision: 'approval policy revision is stale',
     StaleOperationVersion: 'operation state version changed',
-    InvalidOperationState: 'operation is not awaiting approval',
+    InvalidOperationState: 'operation is not in the required state',
+    ObservationMissing: 'required owner observation is missing',
+    ObservationMismatch: 'owner observation does not match the operation',
     NotFound: 'operation was not found',
   };
   return Object.assign(new Error(messages[mapped]), {
@@ -157,6 +170,26 @@ export function createPostgresOperationStore({ query }) {
         ]);
         const row = result?.rows?.[0];
         if (!row?.operation_record) throw new Error('approve_operation returned no receipt');
+        return { operationRecord: row.operation_record, replayed: row.replayed };
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async verify(input) {
+      try {
+        const result = await query(VERIFY_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.operationId,
+          input.expectedStateVersion,
+          input.idempotencyKey,
+          input.correlationId,
+        ]);
+        const row = result?.rows?.[0];
+        if (!row?.operation_record) throw new Error('verify_extension_revocation returned no receipt');
         return { operationRecord: row.operation_record, replayed: row.replayed };
       } catch (error) {
         throw databaseError(error);

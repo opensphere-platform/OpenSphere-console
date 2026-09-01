@@ -137,6 +137,21 @@ function approval(operationId, candidateBody, candidateHeaders = {}) {
   });
 }
 
+function verification(operationId, candidateBody, candidateHeaders = {}) {
+  return fetch(origin + '/api/platform/operations/' + operationId + '/verification', {
+    method: 'POST',
+    headers: {
+      cookie: headers.cookie,
+      'x-csrf-token': csrf,
+      'idempotency-key': 'integration-verification-operation-0001',
+      'x-correlation-id': 'integration-verification-correlation-0001',
+      'content-type': 'application/json',
+      ...candidateHeaders,
+    },
+    body: JSON.stringify(candidateBody),
+  });
+}
+
 try {
   await waitForReady();
   const accepted = await mutation();
@@ -298,6 +313,45 @@ try {
     true,
   );
 
+  const verified = await verification(plannedRevocation.operationId, { expectedStateVersion: 4 });
+  assert.equal(verified.status, 200);
+  assert.equal(verified.headers.get('x-idempotent-replay'), 'false');
+  const verifiedReceipt = await verified.json();
+  assert.equal(verifiedReceipt.state, 'Verified');
+  assert.equal(verifiedReceipt.stateVersion, 5);
+  assert.equal(verifiedReceipt.observedPostcondition.authority, 'ConsoleExtensionRevocation');
+
+  const verificationReplay = await verification(plannedRevocation.operationId, { expectedStateVersion: 4 });
+  assert.equal(verificationReplay.status, 200);
+  assert.equal(verificationReplay.headers.get('x-idempotent-replay'), 'true');
+  assert.equal((await verificationReplay.json()).state, 'Verified');
+
+  const verificationMismatch = await verification(
+    plannedRevocation.operationId,
+    { expectedStateVersion: 5 },
+  );
+  assert.equal(verificationMismatch.status, 409);
+  assert.equal((await verificationMismatch.json()).code, 'IdempotencyMismatch');
+
+  const verificationEvidence = await admin.query(
+    [
+      'SELECT',
+      '(SELECT state FROM console_operation.operation WHERE operation_id = $1) AS state,',
+      '(SELECT state_version::int FROM console_operation.operation WHERE operation_id = $1) AS state_version,',
+      '(SELECT count(*)::int FROM console_operation.verification_receipt WHERE operation_id = $1) AS verifications,',
+      '(SELECT count(*)::int FROM console_operation.execution_receipt WHERE operation_id = $1) AS owner_receipts,',
+      '(SELECT count(*)::int FROM console_audit.event WHERE operation_id = $1) AS audit_events'
+    ].join(' '),
+    [plannedRevocation.operationId],
+  );
+  assert.deepEqual(verificationEvidence.rows[0], {
+    state: 'Verified',
+    state_version: 5,
+    verifications: 1,
+    owner_receipts: 1,
+    audit_events: 5,
+  });
+
   await admin.query(
     [
       'UPDATE console_identity.browser_session',
@@ -321,6 +375,7 @@ try {
     revokedApprovalDenied: true,
     extensionExecution: executionEvidence,
     revocationProjection: true,
+    verification: verificationEvidence.rows[0],
     revokeDenied: true,
   }) + '\n');
 } finally {

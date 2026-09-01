@@ -26,7 +26,7 @@ const session = {
   authorityFresh: true,
   permissions: [
     'console.registry.manage', 'console.extension.revoke', 'console.extension.install',
-    'console.operation.approve',
+    'console.operation.approve', 'console.operation.verify',
   ],
   permissionRevision: '7',
   revokeEpoch: '2',
@@ -67,6 +67,7 @@ function record(input) {
 function fixture() {
   const accepted = [];
   const approved = [];
+  const verified = [];
   const store = {
     async accept(input) {
       accepted.push(input);
@@ -82,6 +83,14 @@ function fixture() {
       operationRecord.state_version = 1;
       operationRecord.approval_revision = input.approvalRevision;
       return { operationRecord, replayed: approved.length > 1 };
+    },
+    async verify(input) {
+      verified.push(input);
+      const operationRecord = record(accepted[0]);
+      operationRecord.state = 'Verified';
+      operationRecord.state_version = input.expectedStateVersion + 1;
+      operationRecord.observed_postcondition = { authority: 'ConsoleExtensionRevocation' };
+      return { operationRecord, replayed: verified.length > 1 };
     },
     async listRevocations(input) {
       return {
@@ -101,7 +110,7 @@ function fixture() {
     policyRevision: policyCatalog.policyRevision,
     projectionStore: store,
   });
-  return { accepted, approved, operationService, registryOperations };
+  return { accepted, approved, verified, operationService, registryOperations };
 }
 
 test('Registry credential mutation persists only a digest after current policy authorization', async () => {
@@ -207,6 +216,55 @@ test('approval request rejects unknown fields and invalid state versions before 
     expectedStateVersion: 0, approverRef: actorRef,
   }), { code: 'ValidationFailed' });
   assert.equal(approved.length, 0);
+});
+
+test('verification requires current authority and carries only compare-and-set state', async () => {
+  const { verified, operationService, registryOperations } = fixture();
+  const image = 'ghcr.io/opensphere-platform/console@sha256:' + '9'.repeat(64);
+  const planned = await registryOperations.createRevocation({
+    session,
+    body: { image, reason: 'verify revoked image', confirmation: 'REVOKE ' + image },
+    idempotencyKey: 'verification-source-operation-0001',
+    correlationId: 'verification-source-correlation-0001',
+  });
+  const result = await operationService.verify({
+    session,
+    operationId: planned.receipt.operationId,
+    request: { expectedStateVersion: 4 },
+    idempotencyKey: 'verification-operation-0001',
+    correlationId: 'verification-correlation-0001',
+  });
+  assert.equal(result.receipt.state, 'Verified');
+  assert.equal(result.receipt.stateVersion, 5);
+  assert.deepEqual(Object.keys(verified[0]).sort(), [
+    'actorRef', 'correlationId', 'expectedPermissionRevision', 'expectedRevokeEpoch',
+    'expectedStateVersion', 'idempotencyKey', 'operationId', 'sessionId',
+  ]);
+  assert.equal(verified[0].expectedPermissionRevision, 7);
+  assert.equal(verified[0].expectedRevokeEpoch, 2);
+
+  await assert.rejects(operationService.verify({
+    session: { ...session, permissions: session.permissions.filter((permission) => permission !== 'console.operation.verify') },
+    operationId: planned.receipt.operationId,
+    request: { expectedStateVersion: 4 },
+    idempotencyKey: 'verification-operation-0002',
+    correlationId: 'verification-correlation-0002',
+  }), { code: 'PermissionDenied' });
+  assert.equal(verified.length, 1);
+});
+
+test('verification rejects unknown observations and invalid state versions before storage', async () => {
+  const { verified, operationService } = fixture();
+  const invoke = (request) => operationService.verify({
+    session,
+    operationId,
+    request,
+    idempotencyKey: 'verification-validation-0001',
+    correlationId: 'verification-validation-correlation-0001',
+  });
+  await assert.rejects(invoke({ expectedStateVersion: -1 }), { code: 'ValidationFailed' });
+  await assert.rejects(invoke({ expectedStateVersion: 4, observedPostcondition: { claimed: true } }), { code: 'ValidationFailed' });
+  assert.equal(verified.length, 0);
 });
 
 test('unknown action, risk downgrade, stale policy, revoked session, and missing permission fail before storage', async () => {
@@ -394,6 +452,48 @@ test('HTTP approval route requires CSRF and returns the Authorized receipt', asy
   assert.equal(response.status, 202);
   assert.equal(receipt.state, 'Authorized');
   assert.equal(receipt.stateVersion, 1);
+  assert.equal(response.headers.get('location'), '/api/platform/operations/' + planned.receipt.operationId);
+  assert.equal(resolverCalls[0].requireCsrf, true);
+});
+
+test('HTTP verification route requires CSRF and returns the Verified receipt', async (t) => {
+  const { registryOperations, operationService } = fixture();
+  const image = 'ghcr.io/opensphere-platform/console@sha256:' + '8'.repeat(64);
+  const planned = await registryOperations.createRevocation({
+    session,
+    body: { image, reason: 'verify HTTP revocation', confirmation: 'REVOKE ' + image },
+    idempotencyKey: 'http-verification-source-operation-0001',
+    correlationId: 'http-verification-source-correlation-0001',
+  });
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) {
+      resolverCalls.push(options);
+      return session;
+    },
+    operationService,
+    registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const response = await fetch(
+    'http://127.0.0.1:' + address.port + '/api/platform/operations/' + planned.receipt.operationId + '/verification',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'http-verification-operation-0001',
+        'x-correlation-id': 'http-verification-correlation-0001',
+        'x-csrf-token': 'validated-by-session-resolver',
+      },
+      body: JSON.stringify({ expectedStateVersion: 4 }),
+    },
+  );
+  const receipt = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(receipt.state, 'Verified');
+  assert.equal(receipt.stateVersion, 5);
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + planned.receipt.operationId);
   assert.equal(resolverCalls[0].requireCsrf, true);
 });

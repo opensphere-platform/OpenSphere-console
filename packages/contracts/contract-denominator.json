@@ -15,6 +15,7 @@
     "createOperation",
     "getOperation",
     "approveOperation",
+    "verifyOperation",
     "getRegistryConnection",
     "replaceRegistryCredential",
     "deleteRegistryConnection",

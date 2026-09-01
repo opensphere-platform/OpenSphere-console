@@ -88,6 +88,10 @@ export async function verifyContracts(repoRoot = process.cwd()) {
   assert(approvalSchema?.required?.includes('expectedStateVersion'), 'approveOperation must require compare-and-set state version');
   assert(approvalSchema?.required?.includes('approvalRevision'), 'approveOperation must bind approval policy revision');
 
+  const verificationOperation = entries.find(({ operation }) => operation.operationId === 'verifyOperation')?.operation;
+  const verificationSchema = verificationOperation?.requestBody?.content?.['application/json']?.schema;
+  assert(verificationSchema?.required?.includes('expectedStateVersion'), 'verifyOperation must require compare-and-set state version');
+
   const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
   for (const actionPolicyId of actionPolicyIds) {
     assert(referencedActions.includes(actionPolicyId), actionPolicyId + ' is not referenced by OpenAPI');

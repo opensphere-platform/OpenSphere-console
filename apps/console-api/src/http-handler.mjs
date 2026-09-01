@@ -93,6 +93,21 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           'x-idempotent-replay': String(result.replayed),
         });
       }
+      const verificationMatch = url.pathname.match(/^\/api\/platform\/operations\/([0-9a-f-]{36})\/verification$/);
+      if (verificationMatch && request.method === 'POST') {
+        const session = await resolveSession(request, { requireCsrf: true });
+        const result = await operationService.verify({
+          session,
+          operationId: verificationMatch[1],
+          request: await jsonBody(request),
+          idempotencyKey: header(request, 'idempotency-key', 8),
+          correlationId,
+        });
+        return send(response, 200, result.receipt, {
+          location: '/api/platform/operations/' + result.receipt.operationId,
+          'x-idempotent-replay': String(result.replayed),
+        });
+      }
       if (url.pathname === '/api/platform/operations' && request.method === 'POST') {
         const session = await resolveSession(request, { requireCsrf: true });
         const result = await operationService.accept({

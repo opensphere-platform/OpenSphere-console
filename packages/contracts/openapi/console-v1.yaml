@@ -177,10 +177,51 @@ paths:
             application/json:
               schema:
                 $ref: "../schemas/operation-receipt.schema.json"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
         "409":
           $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/platform/operations/{operationId}/verification:
+    parameters:
+      - $ref: "#/components/parameters/OperationId"
+    post:
+      operationId: verifyOperation
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: required
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedStateVersion]
+              properties:
+                expectedStateVersion: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Owner observation and Applied receipt matched; operation is durably Verified
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/operation-receipt.schema.json"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/admin/extensions/registry-connections/opensphere-ghcr:
     get:
       operationId: getRegistryConnection

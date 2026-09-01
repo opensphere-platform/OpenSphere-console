@@ -81,6 +81,15 @@ export function validateApprovalRequest(request) {
   };
 }
 
+export function validateVerificationRequest(request) {
+  exactObject(request, new Set(['expectedStateVersion']), 'verification request');
+  const expectedStateVersion = Number(request.expectedStateVersion);
+  if (!Number.isSafeInteger(expectedStateVersion) || expectedStateVersion < 0) {
+    fail('ValidationFailed', 'expectedStateVersion must be a non-negative safe integer', 400);
+  }
+  return { expectedStateVersion };
+}
+
 function receipt(record) {
   if (!record) return null;
   return Object.freeze({
@@ -115,8 +124,8 @@ function receipt(record) {
 }
 
 export function createOperationService({ store, policyCatalog, clock = () => new Date() }) {
-  if (!store?.accept || !store?.approve || !store?.get) {
-    throw new TypeError('operation store accept/approve/get is required');
+  if (!store?.accept || !store?.approve || !store?.verify || !store?.get) {
+    throw new TypeError('operation store accept/approve/verify/get is required');
   }
   const policies = indexActionPolicies(policyCatalog);
 
@@ -201,6 +210,35 @@ export function createOperationService({ store, policyCatalog, clock = () => new
         correlationId: text(correlationId, 'correlationId', 8, 128),
       });
       return Object.freeze({ receipt: receipt(approved.operationRecord), replayed: Boolean(approved.replayed) });
+    },
+
+    async verify({ session, operationId, request, idempotencyKey, correlationId }) {
+      const validated = validateVerificationRequest(request);
+      const authorization = authorizeOperation({
+        session,
+        permission: 'console.operation.verify',
+        risk: 'R0',
+        reason: '',
+        now: clock(),
+      });
+      if (!session.sessionId) fail('AuthenticationRequired', 'opaque session id is required', 401);
+      const permissionRevision = Number(authorization.permissionRevision);
+      const revokeEpoch = Number(session.revokeEpoch);
+      if (!Number.isSafeInteger(permissionRevision) || permissionRevision < 0
+          || !Number.isSafeInteger(revokeEpoch) || revokeEpoch < 0) {
+        fail('AuthenticationRequired', 'session authority revision is invalid', 401);
+      }
+      const verified = await store.verify({
+        sessionId: session.sessionId,
+        actorRef: authorization.actorRef,
+        expectedPermissionRevision: permissionRevision,
+        expectedRevokeEpoch: revokeEpoch,
+        operationId: text(operationId, 'operationId', 1, 128),
+        expectedStateVersion: validated.expectedStateVersion,
+        idempotencyKey: text(idempotencyKey, 'Idempotency-Key', 8, 256),
+        correlationId: text(correlationId, 'correlationId', 8, 128),
+      });
+      return Object.freeze({ receipt: receipt(verified.operationRecord), replayed: Boolean(verified.replayed) });
     },
 
     async get({ session, operationId }) {

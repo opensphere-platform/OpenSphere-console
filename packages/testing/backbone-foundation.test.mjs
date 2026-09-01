@@ -56,6 +56,10 @@ test('baseline migration declares separated authority schemas, RLS and append-on
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.approve_operation/i);
   assert.match(sql, /DETAIL = 'SelfApprovalDenied'/i);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION console_operation\.approve_operation/i);
+  assert.match(sql, /CREATE TABLE console_operation\.verification_receipt/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.verify_extension_revocation/i);
+  assert.match(sql, /DETAIL = 'ObservationMismatch'/i);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION console_operation\.verify_extension_revocation/i);
   assert.match(sql, /CREATE ROLE console_extension_controller NOLOGIN NOINHERIT NOBYPASSRLS/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.claim_owner_operation/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.renew_owner_claim/i);
