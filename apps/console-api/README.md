@@ -22,6 +22,8 @@ Implemented routes are `GET/DELETE /api/identity/session`, `GET /api/identity/me
 
 `deploy.yaml` is the component-owned target manifest. It creates only the C_API ServiceAccount, Deployment, ClusterIP Service, and its ingress/egress boundary. It does not create a database login or a Secret. Before applying it, the installation owner must provision `opensphere-console/opensphere-console-api-runtime` with key `database-url`; the URL must authenticate a LOGIN role that inherits only the baseline's NOLOGIN `console_api` role. Absence of that input is a deployment blocker, not a reason to reuse the Supabase owner password.
 
+After the exact fresh migration prefix is applied, `scripts/Install-ConsoleApiRuntime.ps1` provisions that one LOGIN/Secret pair through the existing Supabase PostgreSQL pod. It refuses a role-only or Secret-only state, validates an already-provisioned login instead of rotating it, keeps generated credentials on stdin, and rolls back the pair if first-time verification fails. The script does not apply the C_API Deployment or copy the Supabase owner, JWT, or service-role credentials.
+
 The image placeholder `__OPENSPHERE_CONSOLE_API_IMAGE__` must be rendered to an exact `ghcr.io/opensphere-platform/opensphere-console-api@sha256:<digest>` reference from the candidate BOM. Network egress is limited to cluster DNS, Supabase PostgreSQL/Auth/PostgREST/Storage, and C_REG. Ingress is limited to the Console Web pod label. No Kubernetes API token is mounted.
 
 The Web proxy sends only the routes listed above to C_API. Other `/api/admin/*`, `/api/platform/*`, and `/api/identity/*` routes are explicit legacy migration exceptions. Consequently this manifest and route wiring do not make the component boundary release-ready.

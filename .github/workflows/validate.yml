@@ -64,7 +64,9 @@ jobs:
           npm run manual:seed
           git diff --exit-code -- backend/opensphere-console-osaa-gateway/manual-seeds/opensphere-core-manuals.json
       - name: Test Console contracts and legacy behavior
-        run: npm test
+        run: |
+          npm run test:contracts
+          npm test
       - name: Build production Web
         run: npm run build -- --configuration production
       - name: Build target Console API image

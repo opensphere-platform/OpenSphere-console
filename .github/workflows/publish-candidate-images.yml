@@ -39,7 +39,9 @@ jobs:
         run: npm run verify:contracts
       - name: Console contract tests
         working-directory: OpenSphere-console
-        run: npm test
+        run: |
+          npm run test:contracts
+          npm test
       - name: OSAA dialogue-state focused contracts
         working-directory: OpenSphere-console
         run: npm run test:osaa-dialogue
