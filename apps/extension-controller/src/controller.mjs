@@ -3,6 +3,9 @@ const INSTALL_ACTION = 'console.extension.install';
 const REVOCATION_ACTION = 'console.extension.revocation.create';
 const IMAGE = /^ghcr\.io\/opensphere-platform\/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const SOURCE_REVISION = /^[0-9a-f]{40}$/;
+const SEMVER = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/;
 
 function claimField(claim, field) {
   const value = claim?.[field];
@@ -24,9 +27,43 @@ function installPlan(claim) {
   return plan;
 }
 
+function observationCoordinates(claim, plan) {
+  const value = claim?.dispatchPayload;
+  const fields = [
+    'schemaVersion', 'eventType', 'operationId', 'descriptorId', 'image',
+    'packageResourceVersion', 'packageGeneration', 'manifestDigest', 'sourceRevision',
+    'compatibilityVersion', 'keyId', 'registrationName', 'registrationUid', 'appliedReceiptDigest',
+  ];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).length !== fields.length || Object.keys(value).some((key) => !fields.includes(key))
+      || value.schemaVersion !== '1.0' || value.eventType !== 'ExtensionInstallObservationRequested'
+      || value.operationId !== claim.operationId || value.descriptorId !== plan.descriptorId
+      || value.image !== plan.image || !RESOURCE_VERSION.test(String(value.packageResourceVersion || ''))
+      || !Number.isSafeInteger(value.packageGeneration) || value.packageGeneration < 1
+      || !DIGEST.test(String(value.manifestDigest || '')) || !SOURCE_REVISION.test(String(value.sourceRevision || ''))
+      || !SEMVER.test(String(value.compatibilityVersion || ''))
+      || typeof value.keyId !== 'string' || value.keyId.length < 1 || value.keyId.length > 256
+      || value.registrationName !== plan.descriptorId.slice('extension.'.length)
+      || typeof value.registrationUid !== 'string' || value.registrationUid.length < 1 || value.registrationUid.length > 128
+      || !DIGEST.test(String(value.appliedReceiptDigest || ''))) {
+    throw Object.assign(new Error('install observation claim lacks exact applied coordinates'), { code: 'ClaimBindingMismatch' });
+  }
+  const digest = plan.image.slice(plan.image.lastIndexOf('@') + 1);
+  return Object.freeze({
+    candidate: Object.freeze({
+      id: value.registrationName, descriptorId: value.descriptorId, kind: 'extension', image: value.image,
+      digest, channel: 'edge', sourceRevision: value.sourceRevision, manifestDigest: value.manifestDigest,
+      compatibilityVersion: value.compatibilityVersion, keyId: value.keyId,
+      packageResourceVersion: value.packageResourceVersion, packageGeneration: value.packageGeneration,
+    }),
+    registrationUid: value.registrationUid,
+    appliedReceiptDigest: value.appliedReceiptDigest,
+  });
+}
+
 export function createExtensionController({ store, registryResolver, registrationWriter, workerId, leaseSeconds = 30 }) {
-  if (!store?.claim || !store?.renew || !store?.applyRevocation || !store?.applyInstall) {
-    throw new TypeError('Extension Controller store claim/renew/apply methods are required');
+  if (!store?.claim || !store?.renew || !store?.applyRevocation || !store?.applyInstall || !store?.recordInstallObservation) {
+    throw new TypeError('Extension Controller store claim/renew/apply/observe methods are required');
   }
   if (!/^[0-9a-f-]{36}$/.test(String(workerId || ''))) throw new TypeError('workerId must be a UUID');
   if (!Number.isInteger(leaseSeconds) || leaseSeconds < 5 || leaseSeconds > 300) {
@@ -64,6 +101,37 @@ export function createExtensionController({ store, registryResolver, registratio
       };
       if (!Number.isSafeInteger(input.outboxId) || !Number.isSafeInteger(input.claimEpoch)) {
         throw Object.assign(new Error('claim fencing coordinates are invalid'), { code: 'ClaimBindingMismatch' });
+      }
+
+      const dispatchPhase = String(claim.dispatchPhase || 'apply');
+      if (!['apply', 'observe'].includes(dispatchPhase)
+          || (dispatchPhase === 'observe' && claim.actionId !== INSTALL_ACTION)) {
+        throw Object.assign(new Error('claimed operation has an invalid dispatch phase'), { code: 'ClaimBindingMismatch' });
+      }
+
+      if (claim.actionId === INSTALL_ACTION && dispatchPhase === 'observe') {
+        if (!registrationWriter?.observeInstall) {
+          throw Object.assign(new Error('Extension observation dependency is unavailable'), { code: 'AuthorityUnavailable' });
+        }
+        const plan = installPlan(claim);
+        const coordinates = observationCoordinates(claim, plan);
+        await store.renew({ ...input, leaseSeconds });
+        const result = await registrationWriter.observeInstall(coordinates);
+        if (result.state !== 'Ready') {
+          return Object.freeze({
+            state: 'Pending', actionId: INSTALL_ACTION, operationId: input.operationId,
+            claimEpoch: input.claimEpoch, reason: result.reason || 'RegistrationNotReady',
+          });
+        }
+        const receipt = await store.recordInstallObservation({
+          ...input, appliedReceiptDigest: coordinates.appliedReceiptDigest,
+          observation: result.observation,
+        });
+        return Object.freeze({
+          state: 'Observed', actionId: INSTALL_ACTION, operationId: input.operationId,
+          claimEpoch: input.claimEpoch, evidenceDigest: receipt.evidenceDigest,
+          postcondition: 'InstallReady',
+        });
       }
 
       if (claim.actionId === INSTALL_ACTION) {

@@ -19,7 +19,14 @@ const APPLY_REVOCATION_SQL = [
 const APPLY_INSTALL_SQL = [
   'SELECT console_extension.apply_install_registration(',
   '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text,',
-  '$7::jsonb, $8::text, $9::text, $10::text, $11::text, $12::bigint, $13::boolean',
+  '$7::jsonb, $8::text, $9::text, $10::text, $11::text, $12::bigint, $13::boolean,',
+  '$14::text, $15::text, $16::text, $17::text',
+  ') AS execution_record',
+].join(' ');
+
+const RECORD_INSTALL_OBSERVATION_SQL = [
+  'SELECT console_extension.record_install_observation(',
+  '$1::uuid, $2::bigint, $3::bigint, $4::uuid, $5::text, $6::text, $7::text, $8::jsonb',
   ') AS execution_record',
 ].join(' ');
 
@@ -91,15 +98,34 @@ export function createExtensionPostgresStore({ query }) {
       workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest, executionPlan,
       registrationName, registrationUid, registrationResourceVersion,
       packageResourceVersion, packageGeneration, created,
+      manifestDigest, sourceRevision, compatibilityVersion, keyId,
     }) {
       try {
         const result = await query(APPLY_INSTALL_SQL, [
           workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
           JSON.stringify(executionPlan), registrationName, registrationUid,
           registrationResourceVersion, packageResourceVersion, packageGeneration, created,
+          manifestDigest, sourceRevision, compatibilityVersion, keyId,
         ]);
         const record = result?.rows?.[0]?.execution_record;
         if (!record) throw new Error('apply_install_registration returned no execution receipt');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async recordInstallObservation({
+      workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+      appliedReceiptDigest, observation,
+    }) {
+      try {
+        const result = await query(RECORD_INSTALL_OBSERVATION_SQL, [
+          workerId, outboxId, claimEpoch, operationId, targetRef, payloadDigest,
+          appliedReceiptDigest, JSON.stringify(observation),
+        ]);
+        const record = result?.rows?.[0]?.execution_record;
+        if (!record) throw new Error('record_install_observation returned no execution receipt');
         return record;
       } catch (error) {
         throw databaseError(error);

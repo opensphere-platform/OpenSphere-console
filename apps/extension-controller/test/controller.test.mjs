@@ -19,7 +19,7 @@ const candidate = {
   verification: { catalog: 'Verified', manifest: 'Verified', signature: 'Verified', permissions: 'Approved' },
 };
 
-function fixture(claim) {
+function fixture(claim, observationResult = null) {
   const calls = [];
   const store = {
     async claim(input) { calls.push({ method: 'claim', input }); return claim; },
@@ -30,6 +30,10 @@ function fixture(claim) {
     },
     async applyInstall(input) {
       calls.push({ method: 'applyInstall', input });
+      return { evidenceDigest: digest };
+    },
+    async recordInstallObservation(input) {
+      calls.push({ method: 'recordInstallObservation', input });
       return { evidenceDigest: digest };
     },
   };
@@ -43,6 +47,19 @@ function fixture(claim) {
         registrationName: 'workspace', registrationUid: 'registration-uid',
         registrationResourceVersion: '18', packageResourceVersion: '17',
         packageGeneration: 1, created: true,
+        manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+        compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+      };
+    },
+    async observeInstall(input) {
+      calls.push({ method: 'observeRegistration', input });
+      return observationResult || {
+        state: 'Ready',
+        observation: {
+          package: { name: 'workspace' }, registration: { name: 'workspace' },
+          workload: { phase: 'Ready' }, verification: { manifest: 'Verified' },
+          serving: { phase: 'Current' }, revalidation: { phase: 'Passed' },
+        },
       };
     },
   };
@@ -107,6 +124,58 @@ test('install plan or C_REG drift fails before lease renewal and Kubernetes writ
   }
 });
 
+test('install observation preserves Applied until exact Kubernetes readiness is recorded', async () => {
+  const dispatchPayload = {
+    schemaVersion: '1.0', eventType: 'ExtensionInstallObservationRequested', operationId,
+    descriptorId: 'extension.workspace', image: installImage, packageResourceVersion: '17',
+    packageGeneration: 1, manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+    compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+    registrationName: 'workspace', registrationUid: 'registration-uid', appliedReceiptDigest: digest,
+  };
+  const { calls, controller } = fixture({
+    outboxId: 20, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
+    targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
+    dispatchPhase: 'observe', dispatchPayload,
+    executionPlan: {
+      schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+      catalogRevision, image: installImage,
+    },
+  });
+  const result = await controller.runOnce();
+  assert.equal(result.state, 'Observed');
+  assert.equal(result.postcondition, 'InstallReady');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'claim', 'renew', 'observeRegistration', 'recordInstallObservation',
+  ]);
+  assert.equal(calls[2].input.registrationUid, 'registration-uid');
+  assert.equal(calls[3].input.appliedReceiptDigest, digest);
+});
+
+test('pending install observation does not record readiness or change operation state', async () => {
+  const dispatchPayload = {
+    schemaVersion: '1.0', eventType: 'ExtensionInstallObservationRequested', operationId,
+    descriptorId: 'extension.workspace', image: installImage, packageResourceVersion: '17',
+    packageGeneration: 1, manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+    compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+    registrationName: 'workspace', registrationUid: 'registration-uid', appliedReceiptDigest: digest,
+  };
+  const { calls, controller } = fixture({
+    outboxId: 20, operationId, actionId: 'console.extension.install', actionVersion: '1.0',
+    targetRef: installImage, payloadDigest: digest, ownerRef: 'C_EXT', claimEpoch: 1,
+    dispatchPhase: 'observe', dispatchPayload,
+    executionPlan: {
+      schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: 'extension.workspace',
+      catalogRevision, image: installImage,
+    },
+  }, { state: 'Pending', reason: 'RegistrationNotReady' });
+  const result = await controller.runOnce();
+  assert.deepEqual(result, {
+    state: 'Pending', actionId: 'console.extension.install', operationId,
+    claimEpoch: 1, reason: 'RegistrationNotReady',
+  });
+  assert.deepEqual(calls.map((call) => call.method), ['claim', 'renew', 'observeRegistration']);
+});
+
 test('owner, action, target and digest substitution fail before apply', async () => {
   for (const patch of [
     { ownerRef: 'C_API' },
@@ -132,6 +201,7 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
       if (sql.includes('claim_owner_operation')) return { rows: [{ claim_record: null }] };
       if (sql.includes('renew_owner_claim')) return { rows: [{ lease_expires_at: new Date() }] };
       if (sql.includes('record_execution_failure')) return { rows: [{ operation_record: { state: 'Failed' } }] };
+      if (sql.includes('record_install_observation')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
       if (sql.includes('apply_install_registration')) return { rows: [{ execution_record: { evidenceDigest: digest } }] };
       return { rows: [{ execution_record: { evidenceDigest: digest, inserted: true } }] };
     },
@@ -143,6 +213,12 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
     workerId, outboxId: 19, claimEpoch: 5, operationId, targetRef: installImage, payloadDigest: digest,
     executionPlan: { schemaVersion: '1.0' }, registrationName: 'workspace', registrationUid: 'registration-uid',
     registrationResourceVersion: '18', packageResourceVersion: '17', packageGeneration: 1, created: true,
+    manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+    compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+  });
+  await store.recordInstallObservation({
+    workerId, outboxId: 20, claimEpoch: 1, operationId, targetRef: installImage,
+    payloadDigest: digest, appliedReceiptDigest: digest, observation: { package: {} },
   });
   await store.recordFailure({
     workerId, outboxId: 18, claimEpoch: 5, operationId,
@@ -154,7 +230,9 @@ test('PostgreSQL store binds claim, renewal and execution coordinates', async ()
   assert.match(calls[2].sql, /apply_revocation/);
   assert.equal(calls[2].values.length, 6);
   assert.match(calls[3].sql, /apply_install_registration/);
-  assert.equal(calls[3].values.length, 13);
-  assert.match(calls[4].sql, /record_execution_failure/);
-  assert.equal(calls[4].values.length, 7);
+  assert.equal(calls[3].values.length, 17);
+  assert.match(calls[4].sql, /record_install_observation/);
+  assert.equal(calls[4].values.length, 8);
+  assert.match(calls[5].sql, /record_execution_failure/);
+  assert.equal(calls[5].values.length, 7);
 });

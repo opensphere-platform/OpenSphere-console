@@ -796,6 +796,8 @@ async function setStatus(name, status, reg, pkg) {
       phase: ['Ready', 'Activated', 'Degraded'].includes(phase) ? 'Current' : 'Unavailable',
       reason: failed ? String(status.reason || '') : '',
       observedAt: now,
+      digest: verified ? currentDigest : '',
+      manifestSha256: verified ? currentManifestSha256 : '',
     },
     revalidation: status.revalidation || {
       phase: verified ? 'Passed' : failed ? 'Failed' : 'Pending',

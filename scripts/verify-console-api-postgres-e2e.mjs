@@ -86,7 +86,16 @@ const authorityServer = createServer(async (request, response) => {
   if (request.url?.endsWith('/uipluginregistrations') && request.method === 'POST') {
     registration = {
       ...requestBody,
-      metadata: { ...requestBody.metadata, uid: 'integration-registration-uid', resourceVersion: '18' },
+      metadata: { ...requestBody.metadata, uid: 'integration-registration-uid', resourceVersion: '18', generation: 3 },
+      status: {
+        observedGeneration: 3, phase: 'Ready', currentDigest: installDigest,
+        currentManifestSha256: 'd'.repeat(64), currentRevision: 'a'.repeat(40),
+        currentCompatibilityVersion: '1.0.0', currentSignatureIdentity: 'integration-release-key',
+        workload: { phase: 'Ready' },
+        verification: { manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified', permissions: 'Approved' },
+        serving: { phase: 'Current', digest: installDigest, manifestSha256: 'd'.repeat(64) },
+        revalidation: { phase: 'Passed' },
+      },
     };
     response.writeHead(201, { 'content-type': 'application/json' });
     response.end(JSON.stringify(registration));
@@ -522,18 +531,46 @@ try {
       ].join(' '),
       [installReceipt.operationId],
     );
-    if (observed.rows[0].state === 'Applied') {
+    if (observed.rows[0].state === 'Applied' && observed.rows[0].receipts === 2) {
       installExecution = observed.rows[0];
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.deepEqual(installExecution, {
-    state: 'Applied', state_version: 4, postcondition: 'RegistrationPresent', receipts: 1, delivered_outbox: 1,
+    state: 'Applied', state_version: 4, postcondition: 'RegistrationPresent', receipts: 2, delivered_outbox: 2,
   });
   assert.equal(registration?.spec?.packageRef?.name, 'workspace');
   assert.equal(registration?.spec?.desiredState, 'Installed');
   assert.equal(registration?.spec?.installation?.operationId, installReceipt.operationId);
+
+  const verifiedInstall = await verification(
+    installReceipt.operationId,
+    { expectedStateVersion: 4 },
+    {
+      'idempotency-key': 'integration-install-verification-operation-0001',
+      'x-correlation-id': 'integration-install-verification-correlation-0001',
+    },
+  );
+  assert.equal(verifiedInstall.status, 200);
+  const verifiedInstallReceipt = await verifiedInstall.json();
+  assert.equal(verifiedInstallReceipt.state, 'Verified');
+  assert.equal(verifiedInstallReceipt.stateVersion, 5);
+  assert.equal(verifiedInstallReceipt.observedPostcondition.authority, 'KubernetesUIPluginRegistration');
+  assert.equal(verifiedInstallReceipt.observedPostcondition.postcondition, 'InstallReady');
+  const installVerificationEvidence = await admin.query(
+    [
+      'SELECT o.state, o.state_version::int AS state_version,',
+      "o.observed_postcondition->>'postcondition' AS postcondition,",
+      '(SELECT count(*)::int FROM console_operation.verification_receipt v WHERE v.operation_id = o.operation_id) AS verifications,',
+      '(SELECT count(*)::int FROM console_operation.execution_receipt x WHERE x.operation_id = o.operation_id) AS owner_receipts',
+      'FROM console_operation.operation o WHERE o.operation_id = $1',
+    ].join(' '),
+    [installReceipt.operationId],
+  );
+  assert.deepEqual(installVerificationEvidence.rows[0], {
+    state: 'Verified', state_version: 5, postcondition: 'InstallReady', verifications: 1, owner_receipts: 2,
+  });
 
   const supabaseStatusResponse = await fetch(origin + '/api/identity/supabase/status', {
     headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-supabase-status-0001' },
@@ -595,6 +632,7 @@ try {
     verification: verificationEvidence.rows[0],
     auditProjection: true,
     extensionInstallExecution: installExecution,
+    extensionInstallVerification: installVerificationEvidence.rows[0],
     supabaseStatusProjection: true,
     identityProjection: true,
     sessionSelfRevoke: true,

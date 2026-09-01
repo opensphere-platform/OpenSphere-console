@@ -70,6 +70,68 @@ function assertCurrentPackage(pkg, candidate) {
       || !['plugin', 'subShell'].includes(actual.kind)) {
     throw fault('UIPluginPackage changed after Registry resolution', 'StaleAuthorityRevision');
   }
+  return actual;
+}
+
+function readyRegistration(registration, candidate, expectedUid) {
+  const metadata = registration?.metadata || {};
+  const spec = registration?.spec || {};
+  const status = registration?.status || {};
+  const manifest = candidate.manifestDigest.slice('sha256:'.length);
+  if (metadata.name !== candidate.id || String(metadata.uid || '') !== expectedUid
+      || !RESOURCE_VERSION.test(String(metadata.resourceVersion || ''))
+      || !Number.isSafeInteger(Number(metadata.generation)) || Number(metadata.generation) < 1
+      || spec.packageRef?.name !== candidate.id || !['Installed', 'Enabled'].includes(spec.desiredState)) {
+    throw fault('UIPluginRegistration identity changed after application', 'ObservationMismatch');
+  }
+  if (['Failed', 'Removed'].includes(status.phase)) {
+    throw fault('UIPluginRegistration reported a terminal installation failure', 'OwnerRejected');
+  }
+  const desiredReady = (spec.desiredState === 'Installed' && status.phase === 'Ready')
+    || (spec.desiredState === 'Enabled' && status.phase === 'Activated');
+  const complete = desiredReady
+    && Number(status.observedGeneration) >= Number(metadata.generation)
+    && status.workload?.phase === 'Ready'
+    && status.verification?.manifest === 'Verified'
+    && status.verification?.signature === 'Verified'
+    && status.verification?.entryDigest === 'Verified'
+    && status.verification?.permissions === 'Approved'
+    && status.currentDigest === candidate.digest
+    && status.currentManifestSha256 === manifest
+    && status.currentRevision === candidate.sourceRevision
+    && status.currentCompatibilityVersion === candidate.compatibilityVersion
+    && status.currentSignatureIdentity === candidate.keyId
+    && status.serving?.phase === 'Current'
+    && status.serving?.digest === candidate.digest
+    && status.serving?.manifestSha256 === manifest
+    && status.revalidation?.phase === 'Passed';
+  if (!complete) return Object.freeze({ state: 'Pending', reason: 'RegistrationNotReady' });
+  return Object.freeze({
+    state: 'Ready',
+    observation: Object.freeze({
+      package: Object.freeze({
+        name: candidate.id, resourceVersion: candidate.packageResourceVersion,
+        generation: candidate.packageGeneration, digest: candidate.digest,
+        manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+        compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId,
+      }),
+      registration: Object.freeze({
+        name: metadata.name, uid: String(metadata.uid), resourceVersion: String(metadata.resourceVersion),
+        generation: Number(metadata.generation), observedGeneration: Number(status.observedGeneration),
+        desiredState: spec.desiredState, phase: status.phase,
+      }),
+      workload: Object.freeze({ phase: status.workload.phase }),
+      verification: Object.freeze({
+        manifest: status.verification.manifest, signature: status.verification.signature,
+        entryDigest: status.verification.entryDigest, permissions: status.verification.permissions,
+      }),
+      serving: Object.freeze({
+        phase: status.serving.phase, digest: status.serving.digest,
+        manifestDigest: 'sha256:' + status.serving.manifestSha256,
+      }),
+      revalidation: Object.freeze({ phase: status.revalidation.phase }),
+    }),
+  });
 }
 
 export function createKubernetesRegistrationWriter({
@@ -153,8 +215,21 @@ export function createKubernetesRegistrationWriter({
       return Object.freeze({
         registrationName: id, registrationUid: uid, registrationResourceVersion: resourceVersion,
         packageResourceVersion: candidate.packageResourceVersion, packageGeneration: candidate.packageGeneration,
-        created,
+        manifestDigest: candidate.manifestDigest, sourceRevision: candidate.sourceRevision,
+        compatibilityVersion: candidate.compatibilityVersion, keyId: candidate.keyId, created,
       });
+    },
+
+    async observeInstall({ candidate, registrationUid }) {
+      if (!EXTENSION_ID.test(String(candidate?.id || '')) || !RESOURCE_VERSION.test(String(candidate?.packageResourceVersion || ''))
+          || !Number.isSafeInteger(candidate?.packageGeneration) || candidate.packageGeneration < 1
+          || typeof registrationUid !== 'string' || registrationUid.length < 1 || registrationUid.length > 128) {
+        throw fault('install observation lacks immutable coordinates', 'ClaimBindingMismatch');
+      }
+      const pkg = await request('GET', `${packages}/${candidate.id}`);
+      assertCurrentPackage(pkg, candidate);
+      const registration = await request('GET', `${collection}/${candidate.id}`);
+      return readyRegistration(registration, candidate, registrationUid);
     },
   });
 }

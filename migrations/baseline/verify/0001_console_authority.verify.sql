@@ -752,7 +752,7 @@ SET ROLE console_api;
 DO $$
 BEGIN
   BEGIN
-    PERFORM console_operation.verify_extension_revocation(
+    PERFORM console_operation.verify_extension_operation(
       '66666666-6666-4666-8666-666666666666',
       '55555555-5555-4555-8555-555555555555',
       3, 0, current_setting('verification.approval_operation_id')::uuid, 4,
@@ -762,7 +762,7 @@ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
   BEGIN
-    PERFORM console_operation.verify_extension_revocation(
+    PERFORM console_operation.verify_extension_operation(
       '22222222-2222-4222-8222-222222222222',
       '11111111-1111-4111-8111-111111111111',
       7, 2, current_setting('verification.approval_operation_id')::uuid, 3,
@@ -823,7 +823,7 @@ BEGIN
     UPDATE console_extension.revocation
       SET payload_digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
       WHERE operation_id = current_setting('verification.approval_operation_id')::uuid;
-    PERFORM console_operation.verify_extension_revocation(
+    PERFORM console_operation.verify_extension_operation(
       '22222222-2222-4222-8222-222222222222',
       '11111111-1111-4111-8111-111111111111',
       7, 2, current_setting('verification.approval_operation_id')::uuid, 4,
@@ -836,13 +836,13 @@ END;
 $$;
 
 SET ROLE console_api;
-SELECT * FROM console_operation.verify_extension_revocation(
+SELECT * FROM console_operation.verify_extension_operation(
   '22222222-2222-4222-8222-222222222222',
   '11111111-1111-4111-8111-111111111111',
   7, 2, current_setting('verification.approval_operation_id')::uuid, 4,
   'verification-operation-0001', 'correlation-verification-operation-0001'
 );
-SELECT * FROM console_operation.verify_extension_revocation(
+SELECT * FROM console_operation.verify_extension_operation(
   '22222222-2222-4222-8222-222222222222',
   '11111111-1111-4111-8111-111111111111',
   7, 2, current_setting('verification.approval_operation_id')::uuid, 4,
@@ -851,7 +851,7 @@ SELECT * FROM console_operation.verify_extension_revocation(
 DO $$
 BEGIN
   BEGIN
-    PERFORM console_operation.verify_extension_revocation(
+    PERFORM console_operation.verify_extension_operation(
       '22222222-2222-4222-8222-222222222222',
       '11111111-1111-4111-8111-111111111111',
       7, 2, current_setting('verification.approval_operation_id')::uuid, 5,
@@ -949,7 +949,7 @@ BEGIN
     UPDATE console_operation.operation
       SET state = 'Applied', state_version = 4
       WHERE operation_id = current_setting('verification.failure_operation_id')::uuid;
-    PERFORM console_operation.verify_extension_revocation(
+    PERFORM console_operation.verify_extension_operation(
       '22222222-2222-4222-8222-222222222222',
       '11111111-1111-4111-8111-111111111111',
       7, 2, current_setting('verification.failure_operation_id')::uuid, 4,
@@ -1099,7 +1099,9 @@ BEGIN
       'eeeeeeee-1111-4111-8111-111111111111',
       (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
       (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
-      v_claim->'executionPlan', 'workspace', 'registration-uid-0001', '18', '17', NULL, NULL
+      v_claim->'executionPlan', 'workspace', 'registration-uid-0001', '18', '17', NULL, NULL,
+      'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '1.0.0', 'verification-key'
     );
     RAISE EXCEPTION 'nullable install evidence was accepted';
   EXCEPTION WHEN invalid_parameter_value THEN NULL;
@@ -1111,7 +1113,9 @@ BEGIN
       (v_claim->>'operationId')::uuid,
       'ghcr.io/opensphere-platform/opensphere-plugin-other@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       v_claim->>'payloadDigest', v_claim->'executionPlan',
-      'workspace', 'registration-uid-0001', '18', '17', 2, true
+      'workspace', 'registration-uid-0001', '18', '17', 2, true,
+      'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '1.0.0', 'verification-key'
     );
     RAISE EXCEPTION 'install target substitution was accepted';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
@@ -1120,7 +1124,9 @@ BEGIN
     'eeeeeeee-1111-4111-8111-111111111111',
     (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
     (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
-    v_claim->'executionPlan', 'workspace', 'registration-uid-0001', '18', '17', 2, true
+    v_claim->'executionPlan', 'workspace', 'registration-uid-0001', '18', '17', 2, true,
+    'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '1.0.0', 'verification-key'
   );
   IF v_execution->>'registrationName' <> 'workspace'
       OR NOT (v_execution->>'created')::boolean
@@ -1138,6 +1144,126 @@ BEGIN
       OR (SELECT count(*) FROM console_operation.execution_receipt WHERE operation_id = current_setting('verification.install_operation_id')::uuid AND phase = 'Applied') <> 1
       OR (SELECT count(*) FROM console_operation.outbox WHERE operation_id = current_setting('verification.install_operation_id')::uuid AND delivered_at IS NOT NULL) <> 1 THEN
     RAISE EXCEPTION 'Extension install did not close as one fenced Registration application';
+  END IF;
+END;
+$$;
+
+SET ROLE console_api;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM console_operation.verify_extension_operation(
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      7, 2, current_setting('verification.install_operation_id')::uuid, 4,
+      'install-verification-before-observation-0001',
+      'correlation-install-verification-before-observation-0001'
+    );
+    RAISE EXCEPTION 'install verification succeeded before owner readiness observation';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+SET ROLE console_extension_controller;
+SELECT set_config(
+  'verification.install_observation_claim',
+  console_operation.claim_owner_operation(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.install', 'console.extension.revocation.create'], 30
+  )::text,
+  false
+);
+
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.install_observation_claim')::jsonb;
+  v_observation jsonb := jsonb_build_object(
+    'package', jsonb_build_object(
+      'name', 'workspace', 'resourceVersion', '17', 'generation', 2,
+      'digest', 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      'manifestDigest', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      'sourceRevision', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'compatibilityVersion', '1.0.0', 'keyId', 'verification-key'
+    ),
+    'registration', jsonb_build_object(
+      'name', 'workspace', 'uid', 'registration-uid-0001', 'resourceVersion', '19',
+      'generation', 3, 'observedGeneration', 3, 'desiredState', 'Installed', 'phase', 'Ready'
+    ),
+    'workload', jsonb_build_object('phase', 'Ready'),
+    'verification', jsonb_build_object(
+      'manifest', 'Verified', 'signature', 'Verified',
+      'entryDigest', 'Verified', 'permissions', 'Approved'
+    ),
+    'serving', jsonb_build_object(
+      'phase', 'Current',
+      'digest', 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      'manifestDigest', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+    ),
+    'revalidation', jsonb_build_object('phase', 'Passed')
+  );
+  v_execution jsonb;
+BEGIN
+  IF v_claim->>'dispatchPhase' <> 'observe'
+      OR v_claim->>'actionId' <> 'console.extension.install'
+      OR v_claim->'dispatchPayload'->>'registrationUid' <> 'registration-uid-0001'
+      OR v_claim->'dispatchPayload'->>'appliedReceiptDigest' !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'install observation claim lost its Applied coordinates';
+  END IF;
+  BEGIN
+    PERFORM console_extension.record_install_observation(
+      'eeeeeeee-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+      v_claim->'dispatchPayload'->>'appliedReceiptDigest',
+      jsonb_set(v_observation, '{serving,digest}', '"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"')
+    );
+    RAISE EXCEPTION 'mismatched serving digest was accepted as install-ready';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  v_execution := console_extension.record_install_observation(
+    'eeeeeeee-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint, (v_claim->>'claimEpoch')::bigint,
+    (v_claim->>'operationId')::uuid, v_claim->>'targetRef', v_claim->>'payloadDigest',
+    v_claim->'dispatchPayload'->>'appliedReceiptDigest', v_observation
+  );
+  IF v_execution->>'postcondition' <> 'InstallReady'
+      OR v_execution->>'evidenceDigest' !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'install-ready observation receipt is incomplete';
+  END IF;
+END;
+$$;
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 'Applied'
+      OR (SELECT count(*) FROM console_operation.execution_receipt WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 2
+      OR (SELECT count(*) FROM console_operation.execution_receipt WHERE operation_id = current_setting('verification.install_operation_id')::uuid AND phase = 'Verified') <> 1
+      OR (SELECT count(*) FROM console_operation.outbox WHERE operation_id = current_setting('verification.install_operation_id')::uuid AND delivered_at IS NOT NULL) <> 2 THEN
+    RAISE EXCEPTION 'owner observation changed verifier state or lost its fenced receipt';
+  END IF;
+END;
+$$;
+
+SET ROLE console_api;
+SELECT * FROM console_operation.verify_extension_operation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, current_setting('verification.install_operation_id')::uuid, 4,
+  'install-verification-operation-0001', 'correlation-install-verification-operation-0001'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 'Verified'
+      OR (SELECT state_version FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 5
+      OR (SELECT observed_postcondition->>'authority' FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 'KubernetesUIPluginRegistration'
+      OR (SELECT observed_postcondition->>'postcondition' FROM console_operation.operation WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 'InstallReady'
+      OR (SELECT count(*) FROM console_operation.verification_receipt WHERE operation_id = current_setting('verification.install_operation_id')::uuid) <> 1 THEN
+    RAISE EXCEPTION 'Extension install was not independently verified from matching owner evidence';
   END IF;
 END;
 $$;

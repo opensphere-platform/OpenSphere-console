@@ -23,7 +23,7 @@ const APPROVE_SQL = [
 
 const VERIFY_SQL = [
   'SELECT operation_record, replayed',
-  'FROM console_operation.verify_extension_revocation(',
+  'FROM console_operation.verify_extension_operation(',
   '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid, $6::bigint,',
   '$7::text, $8::text',
   ')',
@@ -214,7 +214,7 @@ export function createPostgresOperationStore({ query }) {
           input.correlationId,
         ]);
         const row = result?.rows?.[0];
-        if (!row?.operation_record) throw new Error('verify_extension_revocation returned no receipt');
+        if (!row?.operation_record) throw new Error('verify_extension_operation returned no receipt');
         return { operationRecord: row.operation_record, replayed: row.replayed };
       } catch (error) {
         throw databaseError(error);

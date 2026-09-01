@@ -6,7 +6,7 @@ const digest = 'sha256:' + 'a'.repeat(64);
 const candidate = {
   id: 'workspace', descriptorId: 'extension.workspace', kind: 'extension',
   image: 'ghcr.io/opensphere-platform/opensphere-plugin-workspace@' + digest,
-  channel: 'edge', sourceRevision: 'b'.repeat(40), compatibilityVersion: '1.0.0',
+  digest, channel: 'edge', sourceRevision: 'b'.repeat(40), compatibilityVersion: '1.0.0',
   manifestDigest: 'sha256:' + 'c'.repeat(64), keyId: 'release-key',
   packageResourceVersion: '17', packageGeneration: 2,
 };
@@ -28,6 +28,23 @@ function packageObject(patch = {}) {
 
 function json(status, value) {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+}
+
+function readyRegistration(patch = {}) {
+  return {
+    metadata: { name: 'workspace', uid: 'registration-uid', resourceVersion: '19', generation: 3 },
+    spec: { packageRef: { name: 'workspace' }, desiredState: 'Installed' },
+    status: {
+      observedGeneration: 3, phase: 'Ready', currentDigest: digest,
+      currentManifestSha256: 'c'.repeat(64), currentRevision: 'b'.repeat(40),
+      currentCompatibilityVersion: '1.0.0', currentSignatureIdentity: 'release-key',
+      workload: { phase: 'Ready' },
+      verification: { manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified', permissions: 'Approved' },
+      serving: { phase: 'Current', digest, manifestSha256: 'c'.repeat(64) },
+      revalidation: { phase: 'Passed' },
+    },
+    ...patch,
+  };
 }
 
 test('Kubernetes writer verifies Package coordinates before creating one Registration', async () => {
@@ -87,6 +104,44 @@ test('Package drift and conflicting Registration fail closed', async () => {
     }),
   });
   await assert.rejects(conflict.applyInstall({ candidate, operationId: 'op', requestedBy: 'actor', reason: 'reason' }), { code: 'OwnerRejected' });
+});
+
+test('install observation accepts only generation-current exact release readiness', async () => {
+  const writer = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async (url) => url.endsWith('/uipluginpackages/workspace')
+      ? json(200, packageObject()) : json(200, readyRegistration()),
+  });
+  const result = await writer.observeInstall({ candidate, registrationUid: 'registration-uid' });
+  assert.equal(result.state, 'Ready');
+  assert.equal(result.observation.registration.observedGeneration, 3);
+  assert.equal(result.observation.serving.digest, digest);
+
+  const pending = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async (url) => url.endsWith('/uipluginpackages/workspace')
+      ? json(200, packageObject())
+      : json(200, readyRegistration({ status: { ...readyRegistration().status, observedGeneration: 2 } })),
+  });
+  assert.deepEqual(
+    await pending.observeInstall({ candidate, registrationUid: 'registration-uid' }),
+    { state: 'Pending', reason: 'RegistrationNotReady' },
+  );
+});
+
+test('install observation rejects Package replacement and Registration UID substitution', async () => {
+  const packageDrift = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async () => json(200, packageObject({ metadata: { name: 'workspace', resourceVersion: '20', generation: 3 } })),
+  });
+  await assert.rejects(packageDrift.observeInstall({ candidate, registrationUid: 'registration-uid' }), { code: 'StaleAuthorityRevision' });
+
+  const uidDrift = createKubernetesRegistrationWriter({
+    baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+    fetchImpl: async (url) => url.endsWith('/uipluginpackages/workspace')
+      ? json(200, packageObject()) : json(200, readyRegistration({ metadata: { name: 'workspace', uid: 'other-uid', resourceVersion: '19', generation: 3 } })),
+  });
+  await assert.rejects(uidDrift.observeInstall({ candidate, registrationUid: 'registration-uid' }), { code: 'ObservationMismatch' });
 });
 
 test('Kubernetes writer rejects remote cleartext and malformed credentials', () => {
