@@ -190,6 +190,43 @@ test('Registry revocation requires an exact digest and canonical confirmation', 
   assert.equal(accepted.length, 1);
 });
 
+test('Extension install intake binds immutable image and descriptor execution revisions', async () => {
+  const { accepted, registryOperations } = fixture();
+  const image = 'ghcr.io/opensphere-platform/workspace@sha256:' + 'e'.repeat(64);
+  const request = {
+    image,
+    descriptorRevision: 'a'.repeat(40),
+    executionRevision: 'b'.repeat(64),
+    reason: 'install reviewed extension candidate',
+  };
+  for (const invalid of [
+    { ...request, image: 'ghcr.io/opensphere-platform/workspace:latest' },
+    { ...request, descriptorRevision: null },
+    { ...request, executionRevision: 'short' },
+    { ...request, extra: true },
+  ]) {
+    await assert.rejects(registryOperations.installCandidate({
+      session,
+      body: invalid,
+      idempotencyKey: 'extension-install-invalid-0001',
+      correlationId: 'extension-install-invalid-correlation-0001',
+    }), { code: 'ValidationFailed' });
+  }
+  assert.equal(accepted.length, 0);
+  const result = await registryOperations.installCandidate({
+    session,
+    body: request,
+    idempotencyKey: 'extension-install-operation-0001',
+    correlationId: 'extension-install-correlation-0001',
+  });
+  assert.equal(result.receipt.actionId, 'console.extension.install');
+  assert.equal(result.receipt.requiredPermission, 'console.extension.install');
+  assert.equal(result.receipt.targetRef, image);
+  assert.equal(result.receipt.state, 'Planned');
+  assert.equal(result.receipt.approvalRequired, true);
+  assert.equal(accepted.length, 1);
+});
+
 test('approval requires current aal2 approval authority and carries compare-and-set state', async () => {
   const { approved, operationService, registryOperations } = fixture();
   const image = 'ghcr.io/opensphere-platform/console@sha256:' + 'd'.repeat(64);
@@ -463,6 +500,40 @@ test('HTTP Registry mutation returns a durable operation URL and no submitted cr
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
   assert.equal(resolverCalls[0].requireCsrf, true);
   assert.doesNotMatch(body, new RegExp(credential));
+});
+
+test('HTTP Extension install returns only a Planned exact-revision operation', async (t) => {
+  const { registryOperations, operationService } = fixture();
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) { resolverCalls.push(options); return session; },
+    operationService,
+    registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const image = 'ghcr.io/opensphere-platform/workspace@sha256:' + 'e'.repeat(64);
+  const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/admin/extensions/install', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': 'http-extension-install-0001',
+      'x-correlation-id': 'http-extension-install-correlation-0001',
+      'x-csrf-token': 'validated-by-session-resolver',
+    },
+    body: JSON.stringify({
+      image,
+      descriptorRevision: 'a'.repeat(40),
+      executionRevision: 'b'.repeat(64),
+      reason: 'install reviewed extension candidate',
+    }),
+  });
+  assert.equal(response.status, 202);
+  const receipt = await response.json();
+  assert.equal(receipt.state, 'Planned');
+  assert.equal(receipt.targetRef, image);
+  assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
+  assert.deepEqual(resolverCalls, [{ requireCsrf: true }]);
 });
 
 test('HTTP Registry connection read is session-revalidated and no-secret', async (t) => {

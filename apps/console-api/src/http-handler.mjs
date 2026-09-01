@@ -197,6 +197,19 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const session = await resolveSession(request, { requireCsrf: false });
         return send(response, 200, await registryOperations.listRevocations({ session, correlationId }));
       }
+      if (url.pathname === '/api/admin/extensions/install' && request.method === 'POST') {
+        const session = await resolveSession(request, { requireCsrf: true });
+        const result = await registryOperations.installCandidate({
+          session,
+          body: await jsonBody(request),
+          idempotencyKey: header(request, 'idempotency-key', 8),
+          correlationId,
+        });
+        return send(response, 202, result.receipt, {
+          location: '/api/platform/operations/' + result.receipt.operationId,
+          'x-idempotent-replay': String(result.replayed),
+        });
+      }
       return send(response, 404, errorEnvelope(Object.assign(new Error('route was not found'), { code: 'NotFound' }), correlationId));
     } catch (error) {
       return send(response, Number(error?.status) || 503, errorEnvelope(error, correlationId));

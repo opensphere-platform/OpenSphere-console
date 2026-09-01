@@ -110,6 +110,11 @@ export async function verifyContracts(repoRoot = process.cwd()) {
   const supabaseStatus = entries.find(({ operation }) => operation.operationId === 'getSupabaseStatus')?.operation;
   assert(supabaseStatus?.['x-opensphere-authority'] === 'Supabase', 'getSupabaseStatus must declare Supabase authority');
   assert(supabaseStatus?.['x-opensphere-permission'] === 'console.data_identity.read', 'getSupabaseStatus must declare its read permission');
+  const installOperation = entries.find(({ operation }) => operation.operationId === 'installExtensionCandidate')?.operation;
+  assert(
+    installOperation?.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/extension-install-request.schema.json',
+    'installExtensionCandidate must require the exact-revision install schema',
+  );
 
   const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
   for (const actionPolicyId of actionPolicyIds) {

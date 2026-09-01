@@ -1,5 +1,6 @@
 const REGISTRY_TARGET = 'registry-connection:opensphere-ghcr';
 const IMAGE = /^ghcr\.io\/opensphere-platform\/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$/;
+const REVISION = /^[0-9a-f]{40,64}$/;
 
 function fail(message) {
   throw Object.assign(new Error(message), { code: 'ValidationFailed', status: 400 });
@@ -98,6 +99,33 @@ export function createRegistryOperations({ operationService, policyRevision, pro
           targetRef: image,
           payload: { image, confirmation: body.confirmation },
           reason: String(body.reason || '').trim(),
+          risk: 'R2',
+          planRevision: policyRevision,
+        },
+      });
+    },
+
+    async installCandidate({ session, body, idempotencyKey, correlationId }) {
+      exact(body, ['image', 'descriptorRevision', 'executionRevision', 'reason'], 'extension install request');
+      const image = String(body.image || '').trim();
+      const descriptorRevision = String(body.descriptorRevision || '').trim();
+      const executionRevision = String(body.executionRevision || '').trim();
+      const reason = String(body.reason || '').trim();
+      if (!IMAGE.test(image)) fail('exact OpenSphere GHCR digest is required');
+      if (!REVISION.test(descriptorRevision)) fail('exact descriptor revision is required');
+      if (!REVISION.test(executionRevision)) fail('exact execution revision is required');
+      if (reason.length < 3 || reason.length > 500) fail('extension install reason is required');
+      return operationService.accept({
+        session,
+        idempotencyKey,
+        correlationId,
+        request: {
+          schemaVersion: '1.0',
+          actionId: 'console.extension.install',
+          actionVersion: '1.0',
+          targetRef: image,
+          payload: { image, descriptorRevision, executionRevision },
+          reason,
           risk: 'R2',
           planRevision: policyRevision,
         },

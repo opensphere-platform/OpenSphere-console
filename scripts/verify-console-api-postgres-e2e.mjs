@@ -387,6 +387,43 @@ try {
     true,
   );
 
+  const installImage = 'ghcr.io/opensphere-platform/workspace@sha256:' + 'e'.repeat(64);
+  const installResponse = await fetch(origin + '/api/admin/extensions/install', {
+    method: 'POST',
+    headers: {
+      cookie: headers.cookie,
+      'x-csrf-token': csrf,
+      'content-type': 'application/json',
+      'idempotency-key': 'integration-extension-install-0001',
+      'x-correlation-id': 'integration-extension-install-correlation-0001',
+    },
+    body: JSON.stringify({
+      image: installImage,
+      descriptorRevision: 'a'.repeat(40),
+      executionRevision: 'b'.repeat(64),
+      reason: 'verify exact revision install intake',
+    }),
+  });
+  assert.equal(installResponse.status, 202);
+  const installReceipt = await installResponse.json();
+  assert.equal(installReceipt.state, 'Planned');
+  assert.equal(installReceipt.approvalRequired, true);
+  assert.equal(installReceipt.targetRef, installImage);
+  const installEvidence = await admin.query(
+    [
+      'SELECT o.state, o.state_version::int AS state_version,',
+      '(SELECT count(*)::int FROM console_operation.outbox x WHERE x.operation_id = o.operation_id) AS outbox_events,',
+      "(SELECT count(*)::int FROM console_operation.outbox x WHERE x.operation_id = o.operation_id AND x.event_type = 'OperationAwaitingApproval') AS awaiting_events,",
+      "(SELECT count(*)::int FROM console_operation.outbox x WHERE x.operation_id = o.operation_id AND x.event_type = 'OperationReadyForDispatch') AS ready_events,",
+      '(SELECT count(*)::int FROM console_audit.event a WHERE a.operation_id = o.operation_id) AS audit_events',
+      'FROM console_operation.operation o WHERE o.operation_id = $1',
+    ].join(' '),
+    [installReceipt.operationId],
+  );
+  assert.deepEqual(installEvidence.rows[0], {
+    state: 'Planned', state_version: 0, outbox_events: 1, awaiting_events: 1, ready_events: 0, audit_events: 1,
+  });
+
   const supabaseStatusResponse = await fetch(origin + '/api/identity/supabase/status', {
     headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-supabase-status-0001' },
   });
@@ -446,6 +483,7 @@ try {
     revocationProjection: true,
     verification: verificationEvidence.rows[0],
     auditProjection: true,
+    extensionInstallIntake: true,
     supabaseStatusProjection: true,
     identityProjection: true,
     sessionSelfRevoke: true,

@@ -381,7 +381,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "../schemas/extension-candidate-request.schema.json" }
+            schema: { $ref: "../schemas/extension-install-request.schema.json" }
       responses:
         "202":
           description: Exact-revision install operation durably accepted

@@ -38,7 +38,8 @@
     "read-envelope.schema.json",
     "registry-credential-write.schema.json",
     "registry-revocation-request.schema.json",
-    "extension-candidate-request.schema.json"
+    "extension-candidate-request.schema.json",
+    "extension-install-request.schema.json"
   ],
   "remaining": {
     "legacyProductionApiLiterals": 277,
