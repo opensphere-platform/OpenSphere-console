@@ -196,6 +196,14 @@ export function migrationTransactionSql(root, entry) {
   ].join('\n');
 }
 
+export function renderMigration({ root = repositoryRoot, manifestPath = defaultManifestPath, globalId } = {}) {
+  const manifest = verifyMigrationManifest({ root, manifestPath });
+  if (!globalIdPattern.test(String(globalId || ''))) throw new Error('render globalId is invalid');
+  const entry = manifest.migrations.find((migration) => migration.globalId === globalId);
+  if (!entry) throw new Error('render globalId is absent from the verified manifest');
+  return migrationTransactionSql(root, entry);
+}
+
 export function applyMigrations({ root = repositoryRoot, manifestPath = defaultManifestPath, databaseUrl } = {}) {
   const manifest = verifyMigrationManifest({ root, manifestPath });
   const environment = psqlEnvironment(databaseUrl || process.env.CONSOLE_MIGRATION_DATABASE_URL || '');
@@ -222,7 +230,12 @@ function main() {
     process.stdout.write(JSON.stringify(applyMigrations(), null, 2) + '\n');
     return;
   }
-  throw new Error('usage: node scripts/console-migrations.mjs <verify|apply>');
+  if (mode === 'render') {
+    if (process.argv.length !== 4) throw new Error('render requires exactly one globalId');
+    process.stdout.write(renderMigration({ globalId: process.argv[3] }));
+    return;
+  }
+  throw new Error('usage: node scripts/console-migrations.mjs <verify|apply|render globalId>');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

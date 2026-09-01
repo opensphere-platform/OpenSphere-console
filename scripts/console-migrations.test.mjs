@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
-import { migrationTransactionSql, verifyMigrationManifest } from './console-migrations.mjs';
+import { migrationTransactionSql, renderMigration, verifyMigrationManifest } from './console-migrations.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -16,6 +16,19 @@ test('fresh migration manifest binds the exact source revision and ordered SQL i
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
   assert.match(transaction, /opensphere-console\/20260902\/0001/);
+});
+
+test('migration renderer emits only a manifest-bound transaction body', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0001' });
+  assert.match(sql, /CREATE SCHEMA console_migration;/);
+  assert.match(sql, /INSERT INTO console_migration[.]applied_migration/);
+  assert.match(sql, /opensphere-console\/20260902\/0001/);
+  assert.doesNotMatch(sql, /^BEGIN;|^COMMIT;/m);
+  assert.throws(
+    () => renderMigration({ root, globalId: 'opensphere-console/20260902/9999' }),
+    /absent from the verified manifest/,
+  );
+  assert.throws(() => renderMigration({ root, globalId: '../untrusted.sql' }), /globalId is invalid/);
 });
 
 test('migration verification rejects SQL content drift before database access', (t) => {

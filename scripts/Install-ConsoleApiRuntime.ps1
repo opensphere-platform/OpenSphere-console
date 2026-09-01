@@ -1,30 +1,33 @@
 param(
-  [string]$DataNamespace = 'opensphere-console-data',
-  [string]$RuntimeNamespace = 'opensphere-console',
+  [Parameter(Mandatory = $true)]
+  [string]$ConsoleApiImage,
   [string]$KubeContext = ''
 )
 
 $ErrorActionPreference = 'Stop'
+$DataNamespace = 'opensphere-console-data'
+$RuntimeNamespace = 'opensphere-console'
 $roleName = 'opensphere_console_api_runtime'
 $authorityRole = 'console_api'
 $secretName = 'opensphere-console-api-runtime'
 $secretKey = 'database-url'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $repositoryRoot 'migrations\manifest.json'
+$deploymentPath = Join-Path $repositoryRoot 'apps\console-api\deploy.yaml'
 
-foreach ($namespace in @($DataNamespace, $RuntimeNamespace)) {
-  if ($namespace -notmatch '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$') {
-    throw "Invalid Kubernetes namespace: $namespace"
-  }
+if ($ConsoleApiImage -notmatch '^ghcr[.]io/opensphere-platform/opensphere-console-api@sha256:[a-f0-9]{64}$') {
+  throw 'ConsoleApiImage must be the exact official C_API GHCR digest'
 }
 if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { throw 'kubectl is required' }
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'node is required' }
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Missing fresh migration manifest: $manifestPath" }
+if (-not (Test-Path -LiteralPath $deploymentPath)) { throw "Missing C_API deployment manifest: $deploymentPath" }
 
 $migrationManifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 if ($migrationManifest.schemaVersion -ne 1 -or
     [string]$migrationManifest.latestGlobalId -notmatch '^opensphere-console/[0-9]{8}/[0-9]{4}$' -or
     [string]$migrationManifest.setDigest -notmatch '^sha256:[a-f0-9]{64}$' -or
-    [int]$migrationManifest.migrationCount -lt 1) {
+    [int]$migrationManifest.migrationCount -ne 1) {
   throw 'Fresh migration manifest identity is invalid'
 }
 
@@ -42,6 +45,33 @@ $runtimeNamespaceObject = Invoke-Kubectl @('get', 'namespace', $RuntimeNamespace
 if (($runtimeNamespaceObject -join '').Trim() -ne "namespace/$RuntimeNamespace") {
   throw "Runtime namespace is unavailable: $RuntimeNamespace"
 }
+$dataNamespaceObject = Invoke-Kubectl @('get', 'namespace', $DataNamespace, '-o', 'name')
+if (($dataNamespaceObject -join '').Trim() -ne "namespace/$DataNamespace") {
+  throw "Data namespace is unavailable: $DataNamespace"
+}
+foreach ($secretRef in @(
+  @{ Namespace = $DataNamespace; Name = 'opensphere-supabase-secrets' },
+  @{ Namespace = $RuntimeNamespace; Name = 'opensphere-ghcr-pull' }
+)) {
+  $secretObject = Invoke-Kubectl @('-n', $secretRef.Namespace, 'get', 'secret', $secretRef.Name, '-o', 'name')
+  if (($secretObject -join '').Trim() -ne "secret/$($secretRef.Name)") {
+    throw "Required install input Secret is unavailable: $($secretRef.Namespace)/$($secretRef.Name)"
+  }
+}
+
+$dataWorkloads = @(
+  @{ Resource = 'statefulset/opensphere-supabase-postgres'; Artifact = 'opensphere-console-supabase-postgres' },
+  @{ Resource = 'deployment/opensphere-supabase-auth'; Artifact = 'opensphere-console-supabase-auth' },
+  @{ Resource = 'deployment/opensphere-supabase-rest'; Artifact = 'opensphere-console-supabase-rest' },
+  @{ Resource = 'deployment/opensphere-supabase-storage'; Artifact = 'opensphere-console-supabase-storage' }
+)
+foreach ($workload in $dataWorkloads) {
+  $image = ((Invoke-Kubectl @('-n', $DataNamespace, 'get', $workload.Resource, '-o', 'jsonpath={.spec.template.spec.containers[0].image}')) -join '').Trim()
+  $expectedImage = '^ghcr[.]io/opensphere-platform/' + [regex]::Escape($workload.Artifact) + '@sha256:[a-f0-9]{64}$'
+  if ($image -notmatch $expectedImage) {
+    throw "Supabase workload is not an exact official target image: $($workload.Resource)"
+  }
+}
 
 $postgresPods = (Invoke-Kubectl @('-n', $DataNamespace, 'get', 'pod', '-l', 'app=opensphere-supabase-postgres', '-o', 'json') | Out-String) | ConvertFrom-Json
 $readyPods = @($postgresPods.items | Where-Object {
@@ -55,6 +85,25 @@ function Invoke-OwnerSql([string]$Sql) {
   $command = 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -X -h 127.0.0.1 -U supabase_admin -d postgres -tA -v ON_ERROR_STOP=1'
   return @((Invoke-Kubectl @('-n', $DataNamespace, 'exec', '-i', $postgresPod, '--', 'sh', '-ec', $command) $Sql) |
     ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+}
+
+function Invoke-OwnerMigrationSql([string]$Sql) {
+  $command = 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -X -h 127.0.0.1 -U supabase_admin -d postgres -v ON_ERROR_STOP=1 --single-transaction'
+  Invoke-Kubectl @('-n', $DataNamespace, 'exec', '-i', $postgresPod, '--', 'sh', '-ec', $command) $Sql | Out-Null
+}
+
+$ledgerExists = Invoke-OwnerSql "SELECT CASE WHEN to_regclass('console_migration.applied_migration') IS NULL THEN 'absent' ELSE 'present' END;"
+if ($ledgerExists.Count -ne 1 -or $ledgerExists[0] -notin @('absent', 'present')) {
+  throw 'Unable to establish fresh migration ledger state'
+}
+$migrationStatus = 'existing'
+if ($ledgerExists[0] -eq 'absent') {
+  $migrationTool = Join-Path $PSScriptRoot 'console-migrations.mjs'
+  $migrationSql = (& node $migrationTool render ([string]$migrationManifest.latestGlobalId) | Out-String)
+  if ($LASTEXITCODE -ne 0 -or -not $migrationSql.Trim()) { throw 'Fresh migration renderer failed' }
+  Invoke-OwnerMigrationSql $migrationSql
+  $migrationSql = $null
+  $migrationStatus = 'applied'
 }
 
 $expectedLedger = "$($migrationManifest.migrationCount)|$($migrationManifest.latestGlobalId)|$($migrationManifest.setDigest)"
@@ -125,12 +174,11 @@ FROM pg_roles child WHERE child.rolname='$roleName';
 if (($roleState[0] -eq 'present') -ne $secretPresent) {
   throw 'Console API runtime role and Secret are in a split provisioning state; no implicit repair or rotation was attempted'
 }
+$runtimeStatus = 'already-provisioned'
 if ($secretPresent) {
   Test-RuntimeRoleContract
   Test-RuntimeLogin (Get-RuntimePasswordFromSecret $secretJson)
-  Write-Output (@{ status = 'already-provisioned'; role = $roleName; secret = "$RuntimeNamespace/$secretName" } | ConvertTo-Json -Compress)
-  exit 0
-}
+} else {
 
 $passwordBuffer = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Fill($passwordBuffer)
@@ -204,5 +252,26 @@ try {
   [Array]::Clear($passwordBuffer, 0, $passwordBuffer.Length)
   [Array]::Clear($passwordChars, 0, $passwordChars.Length)
 }
+$runtimeStatus = 'provisioned'
+}
 
-Write-Output (@{ status = 'provisioned'; role = $roleName; secret = "$RuntimeNamespace/$secretName" } | ConvertTo-Json -Compress)
+$deploymentTemplate = Get-Content -Raw -LiteralPath $deploymentPath
+if ([regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_API_IMAGE__')).Count -ne 1) {
+  throw 'C_API deployment image placeholder contract is invalid'
+}
+$renderedDeployment = $deploymentTemplate.Replace('__OPENSPHERE_CONSOLE_API_IMAGE__', $ConsoleApiImage)
+if ($renderedDeployment -match '__OPENSPHERE_[A-Z0-9_]+__') { throw 'C_API deployment has unresolved placeholders' }
+Invoke-Kubectl @('apply', '-f', '-') $renderedDeployment | Out-Null
+Invoke-Kubectl @('-n', $RuntimeNamespace, 'rollout', 'status', 'deployment/opensphere-console-api', '--timeout=5m') | Out-Null
+$installedImage = ((Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'deployment/opensphere-console-api', '-o', 'jsonpath={.spec.template.spec.containers[0].image}')) -join '').Trim()
+if ($installedImage -ne $ConsoleApiImage) { throw 'Installed C_API image differs from the requested exact digest' }
+
+Write-Output (@{
+  status = 'passed'
+  migration = $migrationStatus
+  runtimeCredential = $runtimeStatus
+  role = $roleName
+  secret = "$RuntimeNamespace/$secretName"
+  deployment = "$RuntimeNamespace/opensphere-console-api"
+  image = $ConsoleApiImage
+} | ConvertTo-Json -Compress)
