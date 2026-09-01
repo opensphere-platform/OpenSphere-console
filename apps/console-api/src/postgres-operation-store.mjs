@@ -85,6 +85,16 @@ const REVOKE_RECOVERED_SUBJECT_SESSIONS_SQL = [
   ') AS revocation_record',
 ].join(' ');
 
+const GET_INITIAL_ADMINISTRATOR_BOOTSTRAP_STATUS_SQL = [
+  'SELECT console_identity.get_initial_administrator_bootstrap_status() AS bootstrap_record',
+].join(' ');
+
+const CLAIM_INITIAL_ADMINISTRATOR_SQL = [
+  'SELECT console_identity.claim_initial_administrator(',
+  '$1::uuid, $2::text',
+  ') AS bootstrap_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -165,7 +175,7 @@ function databaseError(error) {
     'PermissionDenied', 'StepUpRequired', 'IdempotencyMismatch', 'CsrfRejected',
     'SelfApprovalDenied', 'ApprovalNotRequired', 'StaleRevision',
     'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
-    'ObservationMismatch', 'NotFound', 'RefreshNotRequired',
+    'ObservationMismatch', 'NotFound', 'RefreshNotRequired', 'BootstrapComplete',
   ]);
   const mapped = known.has(code) ? code : 'AuthorityUnavailable';
   const status = {
@@ -188,6 +198,7 @@ function databaseError(error) {
     ObservationMismatch: 409,
     NotFound: 404,
     RefreshNotRequired: 409,
+    BootstrapComplete: 409,
   }[mapped];
   const messages = {
     ValidationFailed: 'operation request failed database validation',
@@ -209,6 +220,7 @@ function databaseError(error) {
     ObservationMismatch: 'owner observation does not match the operation',
     NotFound: 'operation was not found',
     RefreshNotRequired: 'browser session access credential does not require refresh',
+    BootstrapComplete: 'initial administrator bootstrap is already complete',
   };
   return Object.assign(new Error(messages[mapped]), {
     code: mapped,
@@ -417,6 +429,30 @@ export function createPostgresOperationStore({ query }) {
         const record = result?.rows?.[0]?.revocation_record;
         if (!record?.subjectId || !Number.isInteger(record?.revokedCount)) {
           throw new Error('revoke_browser_sessions_after_password_recovery returned no record');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getInitialAdministratorBootstrapStatus() {
+      try {
+        const result = await query(GET_INITIAL_ADMINISTRATOR_BOOTSTRAP_STATUS_SQL);
+        const record = result?.rows?.[0]?.bootstrap_record;
+        if (!record?.state) throw new Error('get_initial_administrator_bootstrap_status returned no record');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async claimInitialAdministrator(input) {
+      try {
+        const result = await query(CLAIM_INITIAL_ADMINISTRATOR_SQL, [input.subjectId, input.correlationId]);
+        const record = result?.rows?.[0]?.bootstrap_record;
+        if (!record?.subjectId || record?.state !== 'complete') {
+          throw new Error('claim_initial_administrator returned no record');
         }
         return record;
       } catch (error) {

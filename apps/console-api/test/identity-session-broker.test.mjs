@@ -229,6 +229,112 @@ test('Supabase password recovery accepts only a recovery AMR, changes the same s
   assert.equal(called, false);
 });
 
+test('Supabase initial administrator client confines the service credential to Auth admin create and cleanup', async () => {
+  const serviceRoleKey = 'service-role-key-' + 's'.repeat(64);
+  const calls = [];
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', serviceRoleKey, now: () => now,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      assert.equal(init.headers.apikey, serviceRoleKey);
+      assert.equal(init.headers.authorization, 'Bearer ' + serviceRoleKey);
+      if (url.endsWith('/admin/users') && init.method === 'POST') {
+        assert.deepEqual(JSON.parse(init.body), {
+          email: 'admin@example.test',
+          password: 'initial-password-value',
+          email_confirm: true,
+          user_metadata: { preferred_username: 'opensphere-admin', display_name: 'OpenSphere Administrator' },
+        });
+        return jsonResponse({ id: subjectId });
+      }
+      if (url.endsWith('/admin/users/' + subjectId) && init.method === 'DELETE') return jsonResponse({ id: subjectId });
+      return jsonResponse({}, 404);
+    },
+  });
+  assert.deepEqual(await client.createInitialAdministrator({
+    username: 'opensphere-admin', displayName: 'OpenSphere Administrator',
+    email: 'admin@example.test', password: 'initial-password-value',
+  }), { subjectId });
+  await client.deleteInitialAdministrator(subjectId);
+  assert.equal(calls.length, 2);
+
+  const unavailable = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl() { throw new Error('must not call Auth without administrator authority'); },
+  });
+  await assert.rejects(unavailable.createInitialAdministrator({
+    username: 'opensphere-admin', displayName: 'OpenSphere Administrator',
+    email: 'admin@example.test', password: 'initial-password-value',
+  }), { code: 'AuthorityUnavailable' });
+});
+
+test('initial administrator bootstrap creates Auth identity before one atomic Console authority claim', async () => {
+  const calls = [];
+  const store = {
+    async resolveSession() { throw new Error('session resolution must not run during bootstrap'); },
+    async issueSession() { throw new Error('login must not run during bootstrap'); },
+    async getPendingMfa() { throw new Error('MFA must not run during bootstrap'); },
+    async activateMfa() { throw new Error('MFA must not run during bootstrap'); },
+    async getRefreshCredentials() { throw new Error('refresh must not run during bootstrap'); },
+    async rotateCredentials() { throw new Error('refresh must not run during bootstrap'); },
+    async rejectRefresh() { throw new Error('refresh must not run during bootstrap'); },
+    async touchActivity() { throw new Error('activity touch must not run during bootstrap'); },
+    ...unusedOwnedSessionMethods(),
+    async getInitialAdministratorBootstrapStatus() { return { state: 'required' }; },
+    async claimInitialAdministrator(input) {
+      calls.push(['claim', input]);
+      return { state: 'complete', subjectId, permissionRevision: 1, permissionCount: 8 };
+    },
+  };
+  const authClient = {
+    async authenticatePassword() { throw new Error('login must not run during bootstrap'); },
+    async completeTotp() { throw new Error('MFA must not run during bootstrap'); },
+    async refreshSession() { throw new Error('refresh must not run during bootstrap'); },
+    async logout() {},
+    async createInitialAdministrator(input) { calls.push(['create', input]); return { subjectId }; },
+    async deleteInitialAdministrator(value) { calls.push(['delete', value]); },
+  };
+  const broker = createIdentitySessionBroker({
+    store, authClient,
+    credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 12) }),
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  assert.deepEqual(await broker.initialAdministratorStatus(), { state: 'required' });
+  assert.deepEqual(await broker.bootstrapInitialAdministrator({
+    body: {
+      username: 'OpenSphere-Admin', displayName: 'OpenSphere Administrator',
+      email: 'ADMIN@example.test', password: 'initial-password-value', passwordConfirm: 'initial-password-value',
+    },
+    requestOrigin: 'https://console.example.test',
+    correlationId: 'initial-administrator-bootstrap-0001',
+  }), { state: 'complete' });
+  assert.deepEqual(calls.map(([name]) => name), ['create', 'claim']);
+  assert.deepEqual(calls[0][1], {
+    username: 'opensphere-admin', displayName: 'OpenSphere Administrator',
+    email: 'admin@example.test', password: 'initial-password-value',
+  });
+  assert.deepEqual(calls[1][1], { subjectId, correlationId: 'initial-administrator-bootstrap-0001' });
+
+  store.claimInitialAdministrator = async () => {
+    throw Object.assign(new Error('already complete'), { code: 'BootstrapComplete', status: 409 });
+  };
+  await assert.rejects(broker.bootstrapInitialAdministrator({
+    body: {
+      username: 'other-admin', displayName: 'Other Administrator', email: 'other@example.test',
+      password: 'another-password-value', passwordConfirm: 'another-password-value',
+    },
+    requestOrigin: 'https://console.example.test', correlationId: 'initial-administrator-bootstrap-0002',
+  }), { code: 'BootstrapComplete' });
+  assert.deepEqual(calls.at(-1), ['delete', subjectId]);
+  await assert.rejects(broker.bootstrapInitialAdministrator({
+    body: {
+      username: 'other-admin', displayName: 'Other Administrator', email: 'other@example.test',
+      password: 'another-password-value', passwordConfirm: 'another-password-value',
+    },
+    requestOrigin: 'https://attacker.example.test', correlationId: 'initial-administrator-bootstrap-0003',
+  }), { code: 'PermissionDenied' });
+});
+
 test('password recovery revokes the verified subject Console sessions before closing the recovery session', async () => {
   const calls = [];
   const recoveryAccessToken = token({ amr: [{ method: 'recovery', timestamp: 1 }] });
@@ -924,6 +1030,41 @@ test('HTTP password recovery uses the target C_API route and clears stale Consol
   assert.equal(calls[0].requestOrigin, 'https://console.example.test');
   assert.equal(calls[0].body.password, 'new-password-value');
   assert.equal(calls[0].correlationId, 'password-recovery-http-0001');
+});
+
+test('HTTP initial administrator routes expose safe status and forward only the closed bootstrap body', async (t) => {
+  const calls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('session resolution must not run during bootstrap'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async initialAdministratorStatus() { return { state: 'required' }; },
+      async bootstrapInitialAdministrator(input) { calls.push(input); return { state: 'complete' }; },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = 'http://127.0.0.1:' + server.address().port + '/api/identity/bootstrap';
+  const status = await fetch(base + '/status');
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), { state: 'required' });
+  const body = {
+    username: 'opensphere-admin', displayName: 'OpenSphere Administrator', email: 'admin@example.test',
+    password: 'initial-password-value', passwordConfirm: 'initial-password-value',
+  };
+  const response = await fetch(base, {
+    method: 'POST',
+    headers: {
+      origin: 'https://console.example.test', 'content-type': 'application/json',
+      'x-correlation-id': 'initial-administrator-http-0001',
+    },
+    body: JSON.stringify(body),
+  });
+  assert.equal(response.status, 201);
+  assert.deepEqual(await response.json(), { state: 'complete' });
+  assert.deepEqual(calls[0], {
+    body, requestOrigin: 'https://console.example.test', correlationId: 'initial-administrator-http-0001',
+  });
 });
 
 test('HTTP MFA completion preserves the request proof and returns refreshed cookies', async (t) => {

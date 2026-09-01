@@ -49,6 +49,7 @@ const identitySessionBroker = createIdentitySessionBroker({
   store,
   authClient: createSupabaseAuthClient({
     baseUrl: supabaseAuthUrl,
+    serviceRoleKey: String(process.env.CONSOLE_SUPABASE_SERVICE_ROLE_KEY || ''),
     timeoutMs: positiveInteger('CONSOLE_SUPABASE_AUTH_TIMEOUT_MS', 5000, 30000),
     maximumResponseBytes: positiveInteger('CONSOLE_SUPABASE_AUTH_MAX_RESPONSE_BYTES', 65536, 1024 * 1024),
   }),

@@ -49,6 +49,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/supabase-test-prerequisites.sql
           node scripts/console-migrations.mjs apply
           node scripts/console-migrations.mjs apply
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0011_initial_administrator_bootstrap.verify.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/0001_console_authority.verify.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0002_browser_session_credential_envelope.verify.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0003_browser_session_mfa_activation.verify.sql
@@ -61,12 +62,18 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0010_password_recovery_session_revocation.verify.sql
       - name: Verify Console API through PostgreSQL
         env:
+          PGPASSWORD: console-test
           CONSOLE_DATABASE_URL: postgresql://console_api_runtime:console-runtime-test@localhost:5432/postgres
           CONSOLE_TEST_ADMIN_DATABASE_URL: postgresql://postgres:console-test@localhost:5432/postgres
           CONSOLE_EXTENSION_DATABASE_URL: postgresql://console_extension_runtime:console-extension-runtime-test@localhost:5432/postgres
         run: |
           npm ci --prefix apps/console-api --no-audit --no-fund
           npm ci --prefix apps/extension-controller --no-audit --no-fund
+          createdb -h localhost -U postgres opensphere_console_bootstrap_test
+          trap 'dropdb --if-exists -h localhost -U postgres opensphere_console_bootstrap_test' EXIT
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d opensphere_console_bootstrap_test -f migrations/baseline/verify/supabase-test-database-prerequisites.sql
+          CONSOLE_MIGRATION_DATABASE_URL=postgresql://postgres:console-test@localhost:5432/opensphere_console_bootstrap_test node scripts/console-migrations.mjs apply
+          CONSOLE_DATABASE_URL=postgresql://console_api_runtime:console-runtime-test@localhost:5432/opensphere_console_bootstrap_test CONSOLE_TEST_ADMIN_DATABASE_URL=postgresql://postgres:console-test@localhost:5432/opensphere_console_bootstrap_test node scripts/verify-console-api-bootstrap-postgres-e2e.mjs
           node scripts/verify-console-api-postgres-e2e.mjs
       - name: Verify deterministic Manual seed
         run: |

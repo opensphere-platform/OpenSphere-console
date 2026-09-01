@@ -7,6 +7,8 @@
   "supplementEvidence": "731f4d1e3301f076cc8c6b63b7916c8a2f57fccf",
   "requirements": ["CON-FR-001", "CON-FR-002", "CON-FR-007", "CON-FR-008", "CON-FR-009", "CON-FR-010", "CON-FR-017"],
   "operations": [
+    "getInitialAdministratorBootstrapStatus",
+    "bootstrapInitialAdministrator",
     "loginSession",
     "completeSessionMfa",
     "beginSessionTotpEnrollment",
@@ -44,6 +46,8 @@
     "console.extension.remove@1.0"
   ],
   "requiredSchemas": [
+    "initial-administrator-bootstrap-request.schema.json",
+    "initial-administrator-bootstrap-response.schema.json",
     "error-envelope.schema.json",
     "operation-receipt.schema.json",
     "operation-request.schema.json",

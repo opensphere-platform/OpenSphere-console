@@ -5,6 +5,8 @@ import { AuthService } from '../core/auth.service';
 
 interface BeginResponse {
   state?: 'complete';
+  code?: string;
+  message?: string;
   error?: string;
 }
 
@@ -153,7 +155,7 @@ export class InitialSetup implements OnDestroy {
         body: JSON.stringify({ username: this.username, displayName: this.displayName, email: this.email, password: this.password, passwordConfirm: this.passwordConfirm })
       });
       const body = await response.json() as BeginResponse;
-      if (!response.ok) throw new Error(this.message(body.error));
+      if (!response.ok) throw new Error(this.message(body.code || body.error, body.message));
       const bootstrapPassword = this.password;
       await this.auth.login(this.email, bootstrapPassword);
       if (this.auth.mfaRequired()) throw new Error('새 관리자에 예상하지 않은 기존 MFA factor가 연결되어 있습니다.');
@@ -176,13 +178,15 @@ export class InitialSetup implements OnDestroy {
     finally { this.working.set(false); }
   }
 
-  private message(code?: string): string {
+  private message(code?: string, detail?: string): string {
     const messages: Record<string, string> = {
       invalid_username: '관리자 ID 형식을 확인하세요.', invalid_display_name: '표시 이름을 입력하세요.', invalid_email: '올바른 이메일을 입력하세요.',
       password_policy: '인증 정책을 만족하는 더 강한 비밀번호를 입력하세요.', password_mismatch: '비밀번호 확인이 일치하지 않습니다.',
       setup_busy: '다른 브라우저에서 관리자 설정을 진행하고 있습니다.', setup_complete: '관리자 설정이 이미 완료되었습니다.',
+      BootstrapComplete: '관리자 설정이 이미 완료되었습니다.', BootstrapRejected: '계정 정보 또는 비밀번호 정책을 확인하세요.',
+      ValidationFailed: '입력한 관리자 정보를 확인하세요.', PermissionDenied: '허용된 Console 주소에서 다시 시도하세요.',
       invalid_totp: '현재 6자리 인증 코드가 일치하지 않습니다.', setup_session_expired: '설정 시간이 만료되었습니다. 처음부터 다시 시도하세요.'
     };
-    return messages[code || ''] || '관리자 구성을 완료하지 못했습니다. 잠시 후 다시 시도하세요.';
+    return messages[code || ''] || detail || '관리자 구성을 완료하지 못했습니다. 잠시 후 다시 시도하세요.';
   }
 }

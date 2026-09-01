@@ -15,6 +15,58 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /api/identity/bootstrap/status:
+    get:
+      operationId: getInitialAdministratorBootstrapStatus
+      tags: [Identity]
+      security: []
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuth
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      responses:
+        "200":
+          description: Public-safe projection of whether the first Console authority still needs to be claimed
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/initial-administrator-bootstrap-response.schema.json"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/bootstrap:
+    post:
+      operationId: bootstrapInitialAdministrator
+      tags: [Identity]
+      security: []
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuth
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: single-winner-authority-claim
+      parameters:
+        - $ref: "#/components/parameters/LoginOrigin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/initial-administrator-bootstrap-request.schema.json"
+      responses:
+        "201":
+          description: Supabase account created and atomically claimed as the first Console administrator
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/initial-administrator-bootstrap-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/identity/session/login:
     post:
       operationId: loginSession

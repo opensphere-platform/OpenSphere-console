@@ -9,15 +9,15 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 28,
+    operations: 30,
     actionPolicies: 5,
-    schemas: 22,
+    schemas: 24,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 25,
+    consoleApiDatabaseFunctions: 27,
     browserApiPatterns: 122,
     browserApiFamilies: 15,
-    targetBrowserSessionReady: false,
+    targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: false,
   });
 });
@@ -41,7 +41,8 @@ test('Console API authority verification rejects missing grants and direct table
   const stepUpSource = await readFile(new URL('../migrations/versions/0008_browser_session_step_up.sql', import.meta.url), 'utf8');
   const recentAal2Source = await readFile(new URL('../migrations/versions/0009_recent_aal2_enforcement.sql', import.meta.url), 'utf8');
   const passwordRecoverySource = await readFile(new URL('../migrations/versions/0010_password_recovery_session_revocation.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource].join('\n');
+  const bootstrapSource = await readFile(new URL('../migrations/versions/0011_initial_administrator_bootstrap.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',
@@ -79,6 +80,6 @@ test('Console API deployment verification rejects credential ownership and prema
         'opensphere-console-api.opensphere-console.svc.cluster.local',
       ),
     }),
-    /Authenticated Web routes must not cut over before the target browser-session authority is complete/,
+    /Authenticated Web routes must not cut over before the all-family routing gate is complete/,
   );
 });

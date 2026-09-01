@@ -11,11 +11,13 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_extension.get_registry_connection',
   'console_extension.list_revocations',
   'console_identity.activate_browser_session_mfa',
+  'console_identity.claim_initial_administrator',
   'console_identity.complete_browser_session_step_up',
   'console_identity.complete_browser_session_totp_enrollment',
   'console_identity.get_browser_session_refresh_credentials',
   'console_identity.get_browser_session_step_up_credentials',
   'console_identity.get_browser_session_totp_enrollment_credentials',
+  'console_identity.get_initial_administrator_bootstrap_status',
   'console_identity.get_pending_browser_session_mfa',
   'console_identity.get_supabase_status',
   'console_identity.issue_browser_session',
@@ -119,6 +121,10 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   assert(sessionKeyEnv?.value === undefined, 'C_API session encryption key must not be a literal value');
   assert(sessionKeyEnv?.valueFrom?.secretKeyRef?.name === 'opensphere-console-api-runtime', 'C_API session encryption Secret name differs from the install contract');
   assert(sessionKeyEnv?.valueFrom?.secretKeyRef?.key === 'session-encryption-key', 'C_API session encryption Secret key differs from the install contract');
+  const serviceRoleEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_SUPABASE_SERVICE_ROLE_KEY');
+  assert(serviceRoleEnv?.value === undefined, 'C_API Supabase administrator credential must not be a literal value');
+  assert(serviceRoleEnv?.valueFrom?.secretKeyRef?.name === 'opensphere-console-api-runtime', 'C_API Supabase administrator Secret name differs from the install contract');
+  assert(serviceRoleEnv?.valueFrom?.secretKeyRef?.key === 'supabase-service-role-key', 'C_API Supabase administrator Secret key differs from the install contract');
   const publicOriginEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_PUBLIC_ORIGIN');
   assert(publicOriginEnv?.value === '__OPENSPHERE_CONSOLE_URL__', 'C_API public origin must remain an installer-validated render input');
   assert(service.spec?.type === 'ClusterIP', 'C_API Service must remain cluster-internal');
@@ -134,7 +140,7 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
 
   assert(
     !nginxSource.includes('opensphere-console-api.opensphere-console.svc.cluster.local'),
-    'Authenticated Web routes must not cut over before the target browser-session authority is complete',
+    'Authenticated Web routes must not cut over before the all-family routing gate is complete',
   );
   const legacyPlatform = between(nginxSource, '# Temporary migration exception: /api/platform routes', '# Minimal module lifecycle receipts');
   const legacyAdmin = between(nginxSource, '# Reconstructed Extension routes remain direct-test-only', '# The target identity projection is direct-test-only');
@@ -212,6 +218,13 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
         assert(
           operation.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/password-recovery-request.schema.json',
           'completePasswordRecovery must use the closed recovery-proof schema',
+        );
+      } else if (operation.operationId === 'bootstrapInitialAdministrator') {
+        assert(Array.isArray(operation.security) && operation.security.length === 0, 'bootstrapInitialAdministrator must be explicitly unauthenticated');
+        assert(parameters.some((entry) => entry.$ref === '#/components/parameters/LoginOrigin'), 'bootstrapInitialAdministrator has no exact-origin contract');
+        assert(
+          operation.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/initial-administrator-bootstrap-request.schema.json',
+          'bootstrapInitialAdministrator must use the closed bootstrap schema',
         );
       } else {
         assert(

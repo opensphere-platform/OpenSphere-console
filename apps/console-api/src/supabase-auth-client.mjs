@@ -59,6 +59,7 @@ function jwtClaims(token, now) {
 
 export function createSupabaseAuthClient({
   baseUrl,
+  serviceRoleKey = '',
   fetchImpl = globalThis.fetch,
   timeoutMs = 5000,
   maximumResponseBytes = 64 * 1024,
@@ -70,9 +71,13 @@ export function createSupabaseAuthClient({
     throw new TypeError('Supabase Auth response limit is invalid');
   }
   const origin = configuredOrigin(baseUrl);
+  const adminKey = String(serviceRoleKey || '');
+  if (adminKey && (adminKey.length < 32 || adminKey.length > 8192 || /[\r\n]/u.test(adminKey))) {
+    throw new TypeError('Supabase service role key is invalid');
+  }
 
   async function request(path, {
-    method = 'GET', body, token,
+    method = 'GET', body, token, apiKey,
     rejectedCode = 'AuthenticationRequired',
     rejectedMessage = 'email or password is invalid',
     rejectedStatus = 401,
@@ -86,6 +91,7 @@ export function createSupabaseAuthClient({
         headers: {
           accept: 'application/json',
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(apiKey ? { apikey: apiKey } : {}),
           ...(token ? { authorization: 'Bearer ' + token } : {}),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -111,6 +117,39 @@ export function createSupabaseAuthClient({
   }
 
   return Object.freeze({
+    async createInitialAdministrator({ username, displayName, email, password }) {
+      if (!adminKey) fail('AuthorityUnavailable', 'Supabase administrator authority is unavailable', 503);
+      const created = await request('/admin/users', {
+        method: 'POST', token: adminKey, apiKey: adminKey,
+        body: {
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { preferred_username: username, display_name: displayName },
+        },
+        rejectedCode: 'BootstrapRejected',
+        rejectedMessage: 'initial administrator account was rejected',
+        rejectedStatus: 400,
+        rejectedStatuses: [400, 409, 422],
+      });
+      const subjectId = String(created?.id || '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(subjectId)) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned no initial administrator subject', 503);
+      }
+      return Object.freeze({ subjectId });
+    },
+
+    async deleteInitialAdministrator(subjectId) {
+      if (!adminKey) return;
+      await request(`/admin/users/${encodeURIComponent(String(subjectId))}`, {
+        method: 'DELETE', token: adminKey, apiKey: adminKey,
+        rejectedCode: 'BootstrapCleanupRejected',
+        rejectedMessage: 'unclaimed initial administrator cleanup was rejected',
+        rejectedStatus: 503,
+        rejectedStatuses: [400, 401, 403, 404, 409, 422],
+      });
+    },
+
     async authenticatePassword({ email, password }) {
       const session = await request('/token?grant_type=password', { method: 'POST', body: { email, password } });
       if (!session?.access_token || !session?.refresh_token) {

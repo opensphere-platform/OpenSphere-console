@@ -23,7 +23,7 @@
     { "id": "password-recovery", "status": "implemented-and-verified" },
     { "id": "active-session-inventory", "status": "implemented-and-verified" },
     { "id": "other-session-revocation", "status": "implemented-and-verified" },
-    { "id": "initial-admin-bootstrap", "status": "missing" }
+    { "id": "initial-admin-bootstrap", "status": "implemented-and-verified" }
   ],
   "families": [
     { "id": "identity", "prefix": "/api/identity", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },

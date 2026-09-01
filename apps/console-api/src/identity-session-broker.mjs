@@ -52,6 +52,26 @@ function passwordRecoveryInput(body) {
   return { recoveryAccessToken, password };
 }
 
+function initialAdministratorInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    fail('ValidationFailed', 'initial administrator body must be an object', 400);
+  }
+  const allowed = ['username', 'displayName', 'email', 'password', 'passwordConfirm'];
+  const unknown = Object.keys(body).filter((key) => !allowed.includes(key));
+  const username = String(body.username || '').trim().toLowerCase();
+  const displayName = String(body.displayName || '').trim();
+  const email = String(body.email || '').trim().toLowerCase();
+  const password = String(body.password || '');
+  const passwordConfirm = String(body.passwordConfirm || '');
+  if (unknown.length || !/^[a-z][a-z0-9._-]{1,31}$/u.test(username)
+      || displayName.length < 1 || displayName.length > 128
+      || email.length < 3 || email.length > 254 || !/^[^@\s]+@[^@\s]+[.][^@\s]+$/u.test(email)
+      || password.length < 12 || password.length > 1024 || password !== passwordConfirm) {
+    fail('ValidationFailed', 'initial administrator input is invalid', 400);
+  }
+  return { username, displayName, email, password };
+}
+
 function cookie(name, value, maxAge, httpOnly = false, persistent = true) {
   return [
     `${name}=${encodeURIComponent(value)}`,
@@ -114,6 +134,41 @@ export function createIdentitySessionBroker({
   }
 
   const broker = {
+    async initialAdministratorStatus() {
+      if (!store?.getInitialAdministratorBootstrapStatus) {
+        fail('AuthorityUnavailable', 'initial administrator status authority is unavailable', 503);
+      }
+      const status = await store.getInitialAdministratorBootstrapStatus();
+      if (!['required', 'complete'].includes(status?.state)) {
+        fail('AuthorityUnavailable', 'initial administrator status authority returned an invalid state', 503);
+      }
+      return Object.freeze({ state: status.state });
+    },
+
+    async bootstrapInitialAdministrator({ body, requestOrigin, correlationId }) {
+      if (String(requestOrigin || '') !== origin) fail('PermissionDenied', 'initial administrator origin is not allowed', 403);
+      if (!store?.claimInitialAdministrator || !authClient?.createInitialAdministrator
+          || !authClient?.deleteInitialAdministrator) {
+        fail('AuthorityUnavailable', 'initial administrator authority is unavailable', 503);
+      }
+      const input = initialAdministratorInput(body);
+      const created = await authClient.createInitialAdministrator(input);
+      try {
+        const claimed = await store.claimInitialAdministrator({
+          subjectId: created.subjectId,
+          correlationId,
+        });
+        if (claimed?.state !== 'complete' || String(claimed?.subjectId || '') !== created.subjectId
+            || Number(claimed?.permissionRevision) !== 1 || Number(claimed?.permissionCount) !== 8) {
+          fail('AuthorityUnavailable', 'initial administrator authority returned an invalid receipt', 503);
+        }
+        return Object.freeze({ state: 'complete' });
+      } catch (error) {
+        await authClient.deleteInitialAdministrator(created.subjectId).catch(() => {});
+        throw error;
+      }
+    },
+
     async completePasswordRecovery({ body, requestOrigin, correlationId }) {
       if (String(requestOrigin || '') !== origin) fail('PermissionDenied', 'password recovery origin is not allowed', 403);
       if (!store?.revokeRecoveredSubjectSessions

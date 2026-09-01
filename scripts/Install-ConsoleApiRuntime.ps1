@@ -23,6 +23,7 @@ $authorityRole = 'console_api'
 $secretName = 'opensphere-console-api-runtime'
 $secretKey = 'database-url'
 $sessionEncryptionSecretKey = 'session-encryption-key'
+$supabaseServiceRoleSecretKey = 'supabase-service-role-key'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $repositoryRoot 'migrations\manifest.json'
 $deploymentPath = Join-Path $repositoryRoot 'apps\console-api\deploy.yaml'
@@ -158,6 +159,7 @@ foreach ($secretKeyName in $requiredServerSecretKeys) {
 $jwtSecretBytes = [Convert]::FromBase64String([string]$serverSecret.data.'jwt-secret')
 $anonKeyBytes = [Convert]::FromBase64String([string]$serverSecret.data.'anon-key')
 $serviceRoleKeyBytes = [Convert]::FromBase64String([string]$serverSecret.data.'service-role-key')
+$serviceRoleCredential = [Text.Encoding]::UTF8.GetString($serviceRoleKeyBytes)
 try {
   if ($jwtSecretBytes.Length -lt 32) { throw 'Supabase JWT secret must contain at least 32 bytes' }
   Test-SupabaseServiceJwt ([Text.Encoding]::UTF8.GetString($anonKeyBytes)) 'anon' $jwtSecretBytes
@@ -237,9 +239,9 @@ function Invoke-OwnerMigrationSql([string]$Sql) {
 function Get-RuntimePasswordFromSecret([string]$Json) {
   $secret = $Json | ConvertFrom-Json
   $actualKeys = @($secret.data.PSObject.Properties.Name | Sort-Object)
-  $expectedKeys = @($secretKey, $sessionEncryptionSecretKey) | Sort-Object
+  $expectedKeys = @($secretKey, $sessionEncryptionSecretKey, $supabaseServiceRoleSecretKey) | Sort-Object
   if ($secret.type -ne 'Opaque' -or (Compare-Object $expectedKeys $actualKeys)) {
-    throw 'Runtime Secret must be the exact database URL and session encryption key contract'
+    throw 'Runtime Secret must match the exact C_API credential contract'
   }
   $property = $secret.data.PSObject.Properties[$secretKey]
   if (-not $property) { throw "Runtime Secret is missing $secretKey" }
@@ -263,6 +265,13 @@ function Get-RuntimePasswordFromSecret([string]$Json) {
   } finally {
     [Array]::Clear($sessionKeyBytes, 0, $sessionKeyBytes.Length)
   }
+  $runtimeServiceRole = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String([string]$secret.data.$supabaseServiceRoleSecretKey)
+  )
+  if ($runtimeServiceRole -cne $serviceRoleCredential) {
+    throw 'Runtime Secret Supabase Auth administrator credential differs from the fresh server authority'
+  }
+  $runtimeServiceRole = $null
   return [Uri]::UnescapeDataString($userinfo[1])
 }
 
@@ -516,6 +525,7 @@ $secretManifest = @{
   stringData = @{
     $secretKey = $databaseUrl
     $sessionEncryptionSecretKey = $sessionEncryptionKey
+    $supabaseServiceRoleSecretKey = $serviceRoleCredential
   }
 } | ConvertTo-Json -Depth 8 -Compress
 
@@ -540,6 +550,7 @@ try {
   $encodedPassword = $null
   $databaseUrl = $null
   $sessionEncryptionKey = $null
+  $serviceRoleCredential = $null
   $secretManifest = $null
   [Array]::Clear($passwordBuffer, 0, $passwordBuffer.Length)
   [Array]::Clear($sessionKeyBuffer, 0, $sessionKeyBuffer.Length)

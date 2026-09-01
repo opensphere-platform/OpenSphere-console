@@ -83,6 +83,22 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           authority: 'SupabasePostgreSQL',
         });
       }
+      if (url.pathname === '/api/identity/bootstrap/status' && request.method === 'GET') {
+        if (!identitySessionBroker?.initialAdministratorStatus) {
+          throw Object.assign(new Error('initial administrator status is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return send(response, 200, await identitySessionBroker.initialAdministratorStatus());
+      }
+      if (url.pathname === '/api/identity/bootstrap' && request.method === 'POST') {
+        if (!identitySessionBroker?.bootstrapInitialAdministrator) {
+          throw Object.assign(new Error('initial administrator bootstrap is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return send(response, 201, await identitySessionBroker.bootstrapInitialAdministrator({
+          body: await jsonBody(request),
+          requestOrigin: request.headers.origin,
+          correlationId,
+        }));
+      }
       if (url.pathname === '/api/identity/session/login' && request.method === 'POST') {
         if (!identitySessionBroker?.login) throw Object.assign(new Error('target session login is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         const result = await identitySessionBroker.login({

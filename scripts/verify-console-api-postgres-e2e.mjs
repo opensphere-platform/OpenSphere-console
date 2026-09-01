@@ -453,6 +453,9 @@ function verification(operationId, candidateBody, candidateHeaders = {}) {
 
 try {
   await waitForReady();
+  const bootstrapStatusResponse = await fetch(origin + '/api/identity/bootstrap/status');
+  assert.equal(bootstrapStatusResponse.status, 200);
+  assert.deepEqual(await bootstrapStatusResponse.json(), { state: 'complete' });
   const loginResponse = await fetch(origin + '/api/identity/session/login', {
     method: 'POST',
     headers: {
@@ -1438,6 +1441,7 @@ try {
     supabaseStatusProjection: true,
     supabaseLiveProbes: true,
     migrationLineage: true,
+    initialAdministratorBootstrapStatus: true,
     passwordLoginSessionLifecycle: true,
     refreshRotationLifecycle: true,
     activityTouchLifecycle: true,

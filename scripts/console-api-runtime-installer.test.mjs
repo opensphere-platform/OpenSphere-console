@@ -70,10 +70,13 @@ test('C_API runtime login remains a one-role one-secret fresh-lineage boundary',
   assert.match(source, /\$secretName = 'opensphere-console-api-runtime'/);
   assert.match(source, /\$secretKey = 'database-url'/);
   assert.match(source, /\$sessionEncryptionSecretKey = 'session-encryption-key'/);
+  assert.match(source, /\$supabaseServiceRoleSecretKey = 'supabase-service-role-key'/);
   assert.match(source, /session encryption key must be canonical base64 for exactly 32 bytes/);
   assert.match(source, /'opensphere[.]io\/secret-scope' = 'console-api-only'/);
   assert.match(source, /\$secretKey = \$databaseUrl/);
   assert.match(source, /\$sessionEncryptionSecretKey = \$sessionEncryptionKey/);
+  assert.match(source, /\$supabaseServiceRoleSecretKey = \$serviceRoleCredential/);
+  assert.match(source, /Supabase Auth administrator credential differs from the fresh server authority/);
   assert.match(source, /Write-Output -NoEnumerate \$rows/);
   assert.doesNotMatch(source, /New-ServiceJwt|backend-password|osaa-gateway-password/);
   assert.doesNotMatch(source, /kind\s*=\s*'?(?:Deployment|StatefulSet|Role|ClusterRole)'?/);
