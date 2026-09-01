@@ -9,12 +9,12 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 26,
+    operations: 27,
     actionPolicies: 5,
-    schemas: 20,
+    schemas: 21,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 22,
+    consoleApiDatabaseFunctions: 24,
     browserApiPatterns: 121,
     browserApiFamilies: 15,
     targetBrowserSessionReady: false,
@@ -38,7 +38,8 @@ test('Console API authority verification rejects missing grants and direct table
   const activitySource = await readFile(new URL('../migrations/versions/0005_browser_session_activity_expiry.sql', import.meta.url), 'utf8');
   const inventorySource = await readFile(new URL('../migrations/versions/0006_browser_session_inventory_revocation.sql', import.meta.url), 'utf8');
   const enrollmentSource = await readFile(new URL('../migrations/versions/0007_browser_session_totp_enrollment.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource].join('\n');
+  const stepUpSource = await readFile(new URL('../migrations/versions/0008_browser_session_step_up.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

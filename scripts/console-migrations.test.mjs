@@ -9,8 +9,8 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 7);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0007');
+  assert.equal(manifest.migrationCount, 8);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0008');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
   assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   assert.equal(manifest.migrations[2].sourceRevision, 'd7c5d09ecdcfbeed01b32fd13a447c15b5692116');
@@ -18,6 +18,7 @@ test('fresh migration manifest binds the exact source revision and ordered SQL i
   assert.equal(manifest.migrations[4].sourceRevision, '188d23ae76ebdddea467efd0b7e5926f0dcd20e2');
   assert.equal(manifest.migrations[5].sourceRevision, 'c74661efdcb9ebf31f8b997a70954704168d989d');
   assert.equal(manifest.migrations[6].sourceRevision, 'd94f8e039d3a11bb7cd014f37ae260078f802a91');
+  assert.equal(manifest.migrations[7].sourceRevision, '8634da0f007e9e5b6e715e3fde921058f199d073');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
@@ -67,6 +68,12 @@ test('browser-session TOTP enrollment successor is independently renderable', ()
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]complete_browser_session_totp_enrollment/);
   assert.match(sql, /opensphere-console\/20260902\/0007/);
   assert.doesNotMatch(sql, /CREATE TABLE console_identity[.]browser_session/);
+});
+
+test('browser-session step-up successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0008' });
+  assert.match(sql, /ADD COLUMN last_reauthenticated_at/);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]complete_browser_session_step_up/);
 });
 
 test('migration renderer emits only a manifest-bound transaction body', () => {

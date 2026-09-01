@@ -117,6 +117,12 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           correlationId,
         }));
       }
+      if (url.pathname === '/api/identity/session/step-up' && request.method === 'POST') {
+        if (!identitySessionBroker?.stepUp) throw Object.assign(new Error('target session step-up is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        return send(response, 200, await identitySessionBroker.stepUp({
+          request, body: await jsonBody(request), correlationId,
+        }));
+      }
       if (url.pathname === '/api/identity/session/touch' && request.method === 'POST') {
         if (!identitySessionBroker?.touchActivity) throw Object.assign(new Error('target session activity is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         const body = await jsonBody(request);

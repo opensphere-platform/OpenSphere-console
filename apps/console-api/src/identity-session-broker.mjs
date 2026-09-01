@@ -295,6 +295,50 @@ export function createIdentitySessionBroker({
       return Object.freeze({ assurance: 'aal2', sessionId: activated.sessionId });
     },
 
+    async stepUp({ request, body, correlationId }) {
+      if (!store?.getStepUpCredentials || !store?.completeStepUp) {
+        fail('AuthorityUnavailable', 'session step-up authority is unavailable', 503);
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+          || Object.keys(body).some((key) => key !== 'code')
+          || !/^\d{6}$/u.test(String(body.code || ''))) {
+        fail('ValidationFailed', 'current 6-digit authentication code is required', 400);
+      }
+      await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const current = await store.getStepUpCredentials({
+        tokenDigest: proof.tokenDigest, csrfTokenDigest: proof.csrfTokenDigest,
+      });
+      if (!current?.sessionId || !current?.subjectId || !current?.accessTokenCiphertext) {
+        fail('AuthorityUnavailable', 'session step-up authority returned an invalid record', 503);
+      }
+      const completed = await authClient.completeTotp({
+        accessToken: credentialCipher.decrypt(current.accessTokenCiphertext),
+        code: String(body.code), expectedSubjectId: current.subjectId,
+      });
+      let steppedUp;
+      try {
+        steppedUp = await store.completeStepUp({
+          sessionId: current.sessionId, subjectId: current.subjectId,
+          expectedAccessCiphertextDigest: digest(current.accessTokenCiphertext),
+          accessTokenCiphertext: credentialCipher.encrypt(completed.accessToken),
+          refreshTokenCiphertext: credentialCipher.encrypt(completed.refreshToken),
+          authSessionRef: completed.authSessionRef,
+          accessTokenExpiresAt: completed.accessTokenExpiresAt,
+          correlationId,
+        });
+      } catch (error) {
+        await authClient.logout(completed.accessToken);
+        throw error;
+      }
+      if (steppedUp?.sessionId !== current.sessionId || steppedUp?.subjectId !== current.subjectId
+          || steppedUp?.state !== 'active' || steppedUp?.aal !== 'aal2' || !steppedUp?.reauthenticatedAt) {
+        await authClient.logout(completed.accessToken);
+        fail('AuthorityUnavailable', 'session step-up authority returned an invalid completion', 503);
+      }
+      return Object.freeze({ assurance: 'aal2', reauthenticatedAt: steppedUp.reauthenticatedAt });
+    },
+
     async touchActivity(request) {
       const proof = readBrowserSessionProof(request, { requireCsrf: true });
       const session = await store.touchActivity({

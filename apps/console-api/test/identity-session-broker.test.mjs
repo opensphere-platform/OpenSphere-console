@@ -505,6 +505,48 @@ test('active-session TOTP enrollment keeps setup material out of the store and p
   assert.equal(Object.hasOwn(completions[0], 'secret'), false);
 });
 
+test('privileged-action step-up records fresh aal2 on the same session by access-CAS', async () => {
+  const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 14) });
+  const accessTokenCiphertext = cipher.encrypt('step-up-aal1-access');
+  let completion;
+  const broker = createIdentitySessionBroker({
+    store: {
+      async resolveSession() { return {
+        sessionId, subjectId, aal: 'aal1', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
+        idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+        persistence: '24h', authorityFresh: true, permissions: [],
+      }; },
+      async issueSession() { throw new Error('unused'); }, async getPendingMfa() { throw new Error('unused'); },
+      async activateMfa() { throw new Error('unused'); }, async getRefreshCredentials() { throw new Error('unused'); },
+      async rotateCredentials() { throw new Error('unused'); }, async rejectRefresh() { throw new Error('unused'); },
+      async touchActivity() { throw new Error('unused'); }, ...unusedOwnedSessionMethods(),
+      async getStepUpCredentials() { return { sessionId, subjectId, accessTokenCiphertext }; },
+      async completeStepUp(input) {
+        completion = input;
+        return { sessionId, subjectId, state: 'active', aal: 'aal2', reauthenticatedAt: now.toISOString() };
+      },
+    },
+    authClient: {
+      async authenticatePassword() { throw new Error('unused'); },
+      async completeTotp(input) {
+        assert.deepEqual(input, { accessToken: 'step-up-aal1-access', code: '123456', expectedSubjectId: subjectId });
+        return { subjectId, accessToken: 'step-up-aal2-access', refreshToken: 'step-up-aal2-refresh',
+          authSessionRef: 'auth-step-up-2', aal: 'aal2', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z' };
+      },
+      async refreshSession() { throw new Error('unused'); }, async logout() { throw new Error('unused'); },
+    },
+    credentialCipher: cipher, publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const result = await broker.stepUp({
+    request: { headers: { cookie: '__Host-opensphere-session=opaque-step-up-session-handle-long',
+      'x-os-csrf-token': 'opaque-step-up-csrf-proof' } },
+    body: { code: '123456' }, correlationId: 'step-up-correlation-0001',
+  });
+  assert.deepEqual(result, { assurance: 'aal2', reauthenticatedAt: now.toISOString() });
+  assert.equal(completion.expectedAccessCiphertextDigest.length, 32);
+  assert.equal(cipher.decrypt(completion.accessTokenCiphertext), 'step-up-aal2-access');
+});
+
 function refreshBrokerFixture({ refreshResult, wait } = {}) {
   const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 4) });
   const record = {
