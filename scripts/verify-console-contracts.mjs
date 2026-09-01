@@ -58,6 +58,10 @@ export async function verifyContracts(repoRoot = process.cwd()) {
     assert(policy.permission, `${policy.actionId} has no permission`);
     assert(['R0', 'R1', 'R2', 'R3'].includes(policy.risk), `${policy.actionId} has invalid risk`);
     assert(typeof policy.approvalRequired === 'boolean', `${policy.actionId} has no approval rule`);
+    assert(
+      ['fenced-outbox', 'credential-broker-required'].includes(policy.dispatchMode),
+      `${policy.actionId} has no closed dispatch mode`,
+    );
     assert(policy.ownerRef, `${policy.actionId} has no owner`);
     assert(policy.targetPattern, `${policy.actionId} has no target boundary`);
   }

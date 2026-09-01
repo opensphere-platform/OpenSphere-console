@@ -8,16 +8,21 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'console_api') THEN
     CREATE ROLE console_api NOLOGIN NOINHERIT NOBYPASSRLS;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'console_extension_controller') THEN
+    CREATE ROLE console_extension_controller NOLOGIN NOINHERIT NOBYPASSRLS;
+  END IF;
 END;
 $$;
 
 CREATE SCHEMA console_identity;
 CREATE SCHEMA console_operation;
 CREATE SCHEMA console_audit;
+CREATE SCHEMA console_extension;
 
-REVOKE ALL ON SCHEMA console_identity, console_operation, console_audit FROM PUBLIC;
+REVOKE ALL ON SCHEMA console_identity, console_operation, console_audit, console_extension FROM PUBLIC;
 GRANT USAGE ON SCHEMA console_identity, console_operation TO authenticated;
 GRANT USAGE ON SCHEMA console_identity, console_operation TO console_api;
+GRANT USAGE ON SCHEMA console_operation, console_extension TO console_extension_controller;
 
 CREATE TABLE console_identity.subject_authority (
   subject_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE RESTRICT,
@@ -125,6 +130,9 @@ CREATE TABLE console_operation.outbox (
   payload_digest text NOT NULL CHECK (payload_digest ~ '^sha256:[0-9a-f]{64}$'),
   created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
   claimed_at timestamptz,
+  claim_owner uuid,
+  claim_epoch bigint NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+  lease_expires_at timestamptz,
   delivered_at timestamptz,
   attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
   UNIQUE (operation_id, event_type, payload_digest)
@@ -148,12 +156,40 @@ CREATE TABLE console_operation.approval (
   UNIQUE (operation_id, actor_ref)
 );
 
+CREATE TABLE console_operation.execution_receipt (
+  execution_receipt_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  operation_id uuid NOT NULL REFERENCES console_operation.operation(operation_id) ON DELETE RESTRICT,
+  owner_ref text NOT NULL CHECK (length(owner_ref) BETWEEN 1 AND 128),
+  worker_id uuid NOT NULL,
+  claim_epoch bigint NOT NULL CHECK (claim_epoch > 0),
+  phase text NOT NULL CHECK (phase IN ('Reconciling', 'Applied', 'Verified', 'Failed', 'Unknown')),
+  evidence jsonb NOT NULL,
+  evidence_digest text NOT NULL CHECK (evidence_digest ~ '^sha256:[0-9a-f]{64}$'),
+  created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+  UNIQUE (operation_id, claim_epoch, phase)
+);
+
+CREATE TABLE console_extension.revocation (
+  image_ref text PRIMARY KEY CHECK (
+    image_ref ~ '^ghcr\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$'
+  ),
+  operation_id uuid NOT NULL UNIQUE REFERENCES console_operation.operation(operation_id) ON DELETE RESTRICT,
+  payload_digest text NOT NULL CHECK (payload_digest ~ '^sha256:[0-9a-f]{64}$'),
+  action_version text NOT NULL CHECK (action_version ~ '^[0-9]+\.[0-9]+$'),
+  claim_epoch bigint NOT NULL CHECK (claim_epoch > 0),
+  revoked_at timestamptz NOT NULL DEFAULT statement_timestamp()
+);
+
 ALTER TABLE console_operation.operation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.operation FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.outbox FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.approval ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.approval FORCE ROW LEVEL SECURITY;
+ALTER TABLE console_operation.execution_receipt ENABLE ROW LEVEL SECURITY;
+ALTER TABLE console_operation.execution_receipt FORCE ROW LEVEL SECURITY;
+ALTER TABLE console_extension.revocation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE console_extension.revocation FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY operation_actor_read
   ON console_operation.operation
@@ -165,7 +201,17 @@ CREATE POLICY approval_actor_read
   FOR SELECT TO authenticated
   USING (actor_ref = auth.uid());
 
-GRANT SELECT ON console_operation.operation, console_operation.approval TO authenticated;
+CREATE POLICY execution_receipt_initiator_read
+  ON console_operation.execution_receipt
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM console_operation.operation operation_record
+    WHERE operation_record.operation_id = execution_receipt.operation_id
+      AND operation_record.actor_ref = auth.uid()
+  ));
+
+GRANT SELECT ON console_operation.operation, console_operation.approval,
+  console_operation.execution_receipt TO authenticated;
 
 CREATE TABLE console_audit.event (
   sequence_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -351,6 +397,7 @@ DECLARE
   v_operation console_operation.operation;
   v_request_digest text;
   v_outbox_payload jsonb;
+  v_outbox_event_type text;
 BEGIN
   IF p_payload_digest !~ '^sha256:[0-9a-f]{64}$' THEN
     RAISE EXCEPTION 'invalid payload digest' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
@@ -433,12 +480,17 @@ BEGIN
     p_payload_digest, v_request_digest, p_risk, COALESCE(p_reason, ''), v_session.aal,
     v_authority.permission_revision, p_plan_revision, p_approval_required,
     p_idempotency_key, p_correlation_id, p_source_revision, p_owner_ref,
-    'Planned', p_expected_postcondition
+    CASE WHEN p_approval_required THEN 'Planned' ELSE 'Authorized' END,
+    p_expected_postcondition
   ) RETURNING * INTO v_operation;
 
+  v_outbox_event_type := CASE
+    WHEN v_operation.approval_required THEN 'OperationAwaitingApproval'
+    ELSE 'OperationReadyForDispatch'
+  END;
   v_outbox_payload := jsonb_build_object(
     'schemaVersion', '1.0',
-    'eventType', 'OperationPlanned',
+    'eventType', v_outbox_event_type,
     'operationId', v_operation.operation_id,
     'actionId', v_operation.action_id,
     'actionVersion', v_operation.action_version,
@@ -449,7 +501,7 @@ BEGIN
     'correlationId', v_operation.correlation_id
   );
   INSERT INTO console_operation.outbox(operation_id, event_type, payload, payload_digest)
-  VALUES (v_operation.operation_id, 'OperationPlanned', v_outbox_payload, v_operation.payload_digest);
+  VALUES (v_operation.operation_id, v_outbox_event_type, v_outbox_payload, v_operation.payload_digest);
 
   PERFORM console_audit.append_event_internal(
     v_operation.operation_id,
@@ -628,7 +680,7 @@ BEGIN
 
   v_outbox_payload := jsonb_build_object(
     'schemaVersion', '1.0',
-    'eventType', 'ApprovalRecorded',
+    'eventType', 'OperationReadyForDispatch',
     'operationId', v_operation.operation_id,
     'approvalId', v_approval.approval_id,
     'approverRef', v_approval.actor_ref,
@@ -638,7 +690,7 @@ BEGIN
     'correlationId', p_correlation_id
   );
   INSERT INTO console_operation.outbox(operation_id, event_type, payload, payload_digest)
-  VALUES (v_operation.operation_id, 'ApprovalRecorded', v_outbox_payload, v_request_digest);
+  VALUES (v_operation.operation_id, 'OperationReadyForDispatch', v_outbox_payload, v_request_digest);
 
   PERFORM console_audit.append_event_internal(
     v_operation.operation_id,
@@ -675,6 +727,379 @@ REVOKE ALL ON FUNCTION console_operation.approve_operation(
 GRANT EXECUTE ON FUNCTION console_operation.approve_operation(
   uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
 ) TO console_api;
+
+CREATE OR REPLACE FUNCTION console_operation.claim_owner_operation(
+  p_worker_id uuid,
+  p_owner_ref text,
+  p_supported_actions text[],
+  p_lease_seconds integer
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation, console_audit
+AS $$
+DECLARE
+  v_outbox console_operation.outbox;
+  v_operation console_operation.operation;
+  v_initial_state text;
+BEGIN
+  IF p_worker_id IS NULL OR length(btrim(COALESCE(p_owner_ref, ''))) < 1
+      OR COALESCE(array_length(p_supported_actions, 1), 0) < 1
+      OR p_lease_seconds NOT BETWEEN 5 AND 300 THEN
+    RAISE EXCEPTION 'invalid owner claim request' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+  IF p_owner_ref <> 'C_EXT'
+      OR p_supported_actions <> ARRAY['console.extension.revocation.create']::text[] THEN
+    RAISE EXCEPTION 'worker role is outside its typed owner capability'
+      USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  SELECT dispatch.* INTO v_outbox
+    FROM console_operation.outbox dispatch
+    JOIN console_operation.operation operation_record USING (operation_id)
+    WHERE dispatch.event_type = 'OperationReadyForDispatch'
+      AND dispatch.delivered_at IS NULL
+      AND (dispatch.lease_expires_at IS NULL OR dispatch.lease_expires_at <= statement_timestamp())
+      AND operation_record.owner_ref = p_owner_ref
+      AND operation_record.action_id = ANY(p_supported_actions)
+      AND operation_record.state IN ('Authorized', 'Submitted', 'Reconciling', 'Unknown')
+    ORDER BY dispatch.outbox_id
+    FOR UPDATE OF dispatch SKIP LOCKED
+    LIMIT 1;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = v_outbox.operation_id
+    FOR UPDATE;
+  v_initial_state := v_operation.state;
+
+  UPDATE console_operation.outbox
+    SET claim_owner = p_worker_id,
+        claim_epoch = claim_epoch + 1,
+        claimed_at = statement_timestamp(),
+        lease_expires_at = statement_timestamp() + make_interval(secs => p_lease_seconds),
+        attempt_count = attempt_count + 1
+    WHERE outbox_id = v_outbox.outbox_id
+    RETURNING * INTO v_outbox;
+
+  IF v_operation.state = 'Authorized' THEN
+    UPDATE console_operation.operation
+      SET state = 'Submitted', state_version = state_version + 1,
+          updated_at = statement_timestamp()
+      WHERE operation_id = v_operation.operation_id
+      RETURNING * INTO v_operation;
+  END IF;
+
+  PERFORM console_audit.append_event_internal(
+    v_operation.operation_id,
+    v_operation.correlation_id,
+    p_worker_id::text,
+    'console.operation.dispatch.claim',
+    v_operation.target_ref,
+    'accepted',
+    '',
+    jsonb_build_object(
+      'ownerRef', p_owner_ref,
+      'outboxId', v_outbox.outbox_id,
+      'claimEpoch', v_outbox.claim_epoch,
+      'attemptCount', v_outbox.attempt_count,
+      'leaseExpiresAt', v_outbox.lease_expires_at,
+      'resumeMode', CASE WHEN v_initial_state = 'Authorized' THEN 'apply' ELSE 'reconcile' END
+    )
+  );
+
+  RETURN jsonb_build_object(
+    'schemaVersion', '1.0',
+    'outboxId', v_outbox.outbox_id,
+    'operationId', v_operation.operation_id,
+    'actionId', v_operation.action_id,
+    'actionVersion', v_operation.action_version,
+    'targetRef', v_operation.target_ref,
+    'payloadDigest', v_operation.payload_digest,
+    'ownerRef', v_operation.owner_ref,
+    'claimEpoch', v_outbox.claim_epoch,
+    'leaseExpiresAt', v_outbox.lease_expires_at,
+    'attemptCount', v_outbox.attempt_count,
+    'resumeMode', CASE WHEN v_initial_state = 'Authorized' THEN 'apply' ELSE 'reconcile' END,
+    'state', v_operation.state,
+    'stateVersion', v_operation.state_version,
+    'correlationId', v_operation.correlation_id
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION console_operation.renew_owner_claim(
+  p_worker_id uuid,
+  p_outbox_id bigint,
+  p_claim_epoch bigint,
+  p_lease_seconds integer
+)
+RETURNS timestamptz
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation
+AS $$
+DECLARE
+  v_lease_expires_at timestamptz;
+BEGIN
+  IF p_lease_seconds NOT BETWEEN 5 AND 300 THEN
+    RAISE EXCEPTION 'invalid owner lease duration' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+  UPDATE console_operation.outbox
+    SET lease_expires_at = statement_timestamp() + make_interval(secs => p_lease_seconds)
+    WHERE outbox_id = p_outbox_id
+      AND claim_owner = p_worker_id
+      AND claim_epoch = p_claim_epoch
+      AND delivered_at IS NULL
+      AND lease_expires_at > statement_timestamp()
+      AND EXISTS (
+        SELECT 1 FROM console_operation.operation operation_record
+        WHERE operation_record.operation_id = outbox.operation_id
+          AND operation_record.owner_ref = 'C_EXT'
+          AND operation_record.action_id = 'console.extension.revocation.create'
+      )
+    RETURNING lease_expires_at INTO v_lease_expires_at;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'owner claim is stale or expired' USING ERRCODE = '40001', DETAIL = 'StaleClaim';
+  END IF;
+  RETURN v_lease_expires_at;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_operation.claim_owner_operation(uuid, text, text[], integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_operation.claim_owner_operation(uuid, text, text[], integer)
+  TO console_extension_controller;
+REVOKE ALL ON FUNCTION console_operation.renew_owner_claim(uuid, bigint, bigint, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_operation.renew_owner_claim(uuid, bigint, bigint, integer)
+  TO console_extension_controller;
+
+CREATE OR REPLACE FUNCTION console_extension.apply_revocation(
+  p_worker_id uuid,
+  p_outbox_id bigint,
+  p_claim_epoch bigint,
+  p_operation_id uuid,
+  p_target_ref text,
+  p_payload_digest text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation, console_extension, console_audit
+AS $$
+DECLARE
+  v_outbox console_operation.outbox;
+  v_operation console_operation.operation;
+  v_evidence jsonb;
+  v_evidence_digest text;
+  v_inserted boolean;
+  v_row_count bigint;
+BEGIN
+  SELECT * INTO v_outbox
+    FROM console_operation.outbox
+    WHERE outbox_id = p_outbox_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_outbox.operation_id <> p_operation_id
+      OR v_outbox.event_type <> 'OperationReadyForDispatch'
+      OR v_outbox.claim_owner <> p_worker_id
+      OR v_outbox.claim_epoch <> p_claim_epoch
+      OR v_outbox.delivered_at IS NOT NULL
+      OR v_outbox.lease_expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'owner claim is stale or expired' USING ERRCODE = '40001', DETAIL = 'StaleClaim';
+  END IF;
+
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
+      OR v_operation.action_id <> 'console.extension.revocation.create'
+      OR v_operation.action_version <> '1.0'
+      OR v_operation.target_ref <> p_target_ref
+      OR v_operation.payload_digest <> p_payload_digest
+      OR v_operation.state NOT IN ('Submitted', 'Reconciling', 'Unknown') THEN
+    RAISE EXCEPTION 'claim does not match the typed Extension action'
+      USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  IF v_operation.state <> 'Reconciling' THEN
+    UPDATE console_operation.operation
+      SET state = 'Reconciling', state_version = state_version + 1,
+          updated_at = statement_timestamp()
+      WHERE operation_id = v_operation.operation_id
+      RETURNING * INTO v_operation;
+  END IF;
+
+  INSERT INTO console_extension.revocation(
+    image_ref, operation_id, payload_digest, action_version, claim_epoch
+  ) VALUES (
+    v_operation.target_ref, v_operation.operation_id, v_operation.payload_digest,
+    v_operation.action_version, p_claim_epoch
+  ) ON CONFLICT (image_ref) DO NOTHING;
+  GET DIAGNOSTICS v_row_count = ROW_COUNT;
+  v_inserted := v_row_count = 1;
+
+  v_evidence := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'authority', 'ConsoleExtensionRevocation',
+    'imageRef', v_operation.target_ref,
+    'operationId', v_operation.operation_id,
+    'claimEpoch', p_claim_epoch,
+    'inserted', v_inserted,
+    'postcondition', 'RevocationPresent'
+  );
+  v_evidence_digest := 'sha256:' || encode(sha256(convert_to(v_evidence::text, 'UTF8')), 'hex');
+
+  INSERT INTO console_operation.execution_receipt(
+    operation_id, owner_ref, worker_id, claim_epoch, phase, evidence, evidence_digest
+  ) VALUES (
+    v_operation.operation_id, 'C_EXT', p_worker_id, p_claim_epoch,
+    'Applied', v_evidence, v_evidence_digest
+  );
+
+  UPDATE console_operation.operation
+    SET state = 'Applied', state_version = state_version + 1,
+        observed_postcondition = v_evidence,
+        updated_at = statement_timestamp()
+    WHERE operation_id = v_operation.operation_id
+    RETURNING * INTO v_operation;
+
+  UPDATE console_operation.outbox
+    SET delivered_at = statement_timestamp()
+    WHERE outbox_id = v_outbox.outbox_id;
+
+  PERFORM console_audit.append_event_internal(
+    v_operation.operation_id,
+    v_operation.correlation_id,
+    p_worker_id::text,
+    v_operation.action_id,
+    v_operation.target_ref,
+    'succeeded',
+    '',
+    jsonb_build_object(
+      'ownerRef', 'C_EXT',
+      'claimEpoch', p_claim_epoch,
+      'state', v_operation.state,
+      'stateVersion', v_operation.state_version,
+      'evidenceDigest', v_evidence_digest
+    )
+  );
+
+  RETURN jsonb_build_object(
+    'operationRecord', to_jsonb(v_operation),
+    'evidenceDigest', v_evidence_digest,
+    'inserted', v_inserted
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uuid, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uuid, text, text)
+  TO console_extension_controller;
+
+CREATE OR REPLACE FUNCTION console_extension.record_execution_failure(
+  p_worker_id uuid,
+  p_outbox_id bigint,
+  p_claim_epoch bigint,
+  p_operation_id uuid,
+  p_error_code text,
+  p_error_digest text,
+  p_side_effect_unknown boolean
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_operation, console_extension, console_audit
+AS $$
+DECLARE
+  v_outbox console_operation.outbox;
+  v_operation console_operation.operation;
+  v_phase text := CASE WHEN p_side_effect_unknown THEN 'Unknown' ELSE 'Failed' END;
+  v_evidence jsonb;
+BEGIN
+  IF COALESCE(p_error_code, '') !~ '^[A-Z][A-Za-z0-9]{2,63}$'
+      OR COALESCE(p_error_digest, '') !~ '^sha256:[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'invalid typed execution failure' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+  SELECT * INTO v_outbox
+    FROM console_operation.outbox
+    WHERE outbox_id = p_outbox_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_outbox.operation_id <> p_operation_id
+      OR v_outbox.event_type <> 'OperationReadyForDispatch'
+      OR v_outbox.claim_owner <> p_worker_id
+      OR v_outbox.claim_epoch <> p_claim_epoch
+      OR v_outbox.delivered_at IS NOT NULL
+      OR v_outbox.lease_expires_at <= statement_timestamp() THEN
+    RAISE EXCEPTION 'owner claim is stale or expired' USING ERRCODE = '40001', DETAIL = 'StaleClaim';
+  END IF;
+  SELECT * INTO v_operation
+    FROM console_operation.operation
+    WHERE operation_id = p_operation_id
+    FOR UPDATE;
+  IF NOT FOUND OR v_operation.owner_ref <> 'C_EXT'
+      OR v_operation.action_id <> 'console.extension.revocation.create'
+      OR v_operation.state NOT IN ('Submitted', 'Reconciling') THEN
+    RAISE EXCEPTION 'failure receipt does not match the typed Extension action'
+      USING ERRCODE = '42501', DETAIL = 'ClaimBindingMismatch';
+  END IF;
+
+  v_evidence := jsonb_build_object(
+    'schemaVersion', '1.0',
+    'ownerRef', 'C_EXT',
+    'operationId', v_operation.operation_id,
+    'claimEpoch', p_claim_epoch,
+    'errorCode', p_error_code,
+    'errorDigest', p_error_digest,
+    'sideEffect', CASE WHEN p_side_effect_unknown THEN 'unknown' ELSE 'none' END
+  );
+  INSERT INTO console_operation.execution_receipt(
+    operation_id, owner_ref, worker_id, claim_epoch, phase, evidence, evidence_digest
+  ) VALUES (
+    v_operation.operation_id, 'C_EXT', p_worker_id, p_claim_epoch,
+    v_phase, v_evidence,
+    'sha256:' || encode(sha256(convert_to(v_evidence::text, 'UTF8')), 'hex')
+  );
+  UPDATE console_operation.operation
+    SET state = v_phase, state_version = state_version + 1,
+        error = jsonb_build_object(
+          'code', p_error_code,
+          'digest', p_error_digest,
+          'sideEffect', CASE WHEN p_side_effect_unknown THEN 'unknown' ELSE 'none' END
+        ),
+        updated_at = statement_timestamp()
+    WHERE operation_id = v_operation.operation_id
+    RETURNING * INTO v_operation;
+  UPDATE console_operation.outbox
+    SET delivered_at = statement_timestamp()
+    WHERE outbox_id = v_outbox.outbox_id;
+  PERFORM console_audit.append_event_internal(
+    v_operation.operation_id,
+    v_operation.correlation_id,
+    p_worker_id::text,
+    v_operation.action_id,
+    v_operation.target_ref,
+    CASE WHEN p_side_effect_unknown THEN 'unknown' ELSE 'failed' END,
+    '',
+    jsonb_build_object(
+      'ownerRef', 'C_EXT',
+      'claimEpoch', p_claim_epoch,
+      'state', v_phase,
+      'errorCode', p_error_code,
+      'errorDigest', p_error_digest
+    )
+  );
+  RETURN to_jsonb(v_operation);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.record_execution_failure(
+  uuid, bigint, bigint, uuid, text, text, boolean
+) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.record_execution_failure(
+  uuid, bigint, bigint, uuid, text, text, boolean
+) TO console_extension_controller;
 
 CREATE OR REPLACE FUNCTION console_operation.get_operation(
   p_session_id uuid,
@@ -718,6 +1143,7 @@ GRANT EXECUTE ON FUNCTION console_operation.get_operation(uuid, uuid, uuid) TO c
 COMMENT ON SCHEMA console_identity IS 'Supabase-backed Console identity projections and opaque sessions';
 COMMENT ON SCHEMA console_operation IS 'Durable intent, idempotency and external-effect outbox authority';
 COMMENT ON SCHEMA console_audit IS 'Append-only Console security and operation evidence';
+COMMENT ON SCHEMA console_extension IS 'Extension Controller-owned package, registration and revocation authority';
 COMMENT ON TABLE console_operation.operation IS 'State changes require compare-and-set on state_version by constrained functions';
 COMMENT ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
@@ -726,5 +1152,13 @@ COMMENT ON FUNCTION console_operation.accept_operation(
 COMMENT ON FUNCTION console_operation.approve_operation(
   uuid, uuid, bigint, bigint, uuid, bigint, text, text, text, text, text
 ) IS 'Atomically revalidates an independent aal2 approver and advances a Planned operation by compare-and-set';
+COMMENT ON FUNCTION console_operation.claim_owner_operation(uuid, text, text[], integer)
+  IS 'Claims one ready owner operation with skip-locked selection, bounded lease and monotonic fencing epoch';
+COMMENT ON FUNCTION console_operation.renew_owner_claim(uuid, bigint, bigint, integer)
+  IS 'Renews only the current unexpired owner claim fence';
+COMMENT ON FUNCTION console_extension.apply_revocation(uuid, bigint, bigint, uuid, text, text)
+  IS 'Applies one exact-digest Extension revocation under the current claim fence and appends execution evidence';
+COMMENT ON FUNCTION console_extension.record_execution_failure(uuid, bigint, bigint, uuid, text, text, boolean)
+  IS 'Records a typed Failed or Unknown owner result under the current claim fence without raw error material';
 
 COMMIT;

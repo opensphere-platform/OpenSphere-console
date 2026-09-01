@@ -89,6 +89,8 @@ RESET ROLE;
 
 CREATE ROLE console_api_runtime LOGIN PASSWORD 'console-runtime-test' INHERIT;
 GRANT console_api TO console_api_runtime;
+CREATE ROLE console_extension_runtime LOGIN PASSWORD 'console-extension-runtime-test' INHERIT;
+GRANT console_extension_controller TO console_extension_runtime;
 
 SET ROLE console_api;
 SELECT * FROM console_operation.accept_operation(
@@ -120,6 +122,8 @@ BEGIN
   END IF;
 END;
 $$;
+
+
 
 SELECT set_config(
   'verification.operation_id',
@@ -382,9 +386,10 @@ BEGIN
   IF (SELECT count(*) FROM pg_class WHERE relrowsecurity AND relnamespace IN (
     'console_identity'::regnamespace,
     'console_operation'::regnamespace,
-    'console_audit'::regnamespace
-  )) <> 7 THEN
-    RAISE EXCEPTION 'expected seven RLS-protected authority tables';
+    'console_audit'::regnamespace,
+    'console_extension'::regnamespace
+  )) <> 9 THEN
+    RAISE EXCEPTION 'expected nine RLS-protected authority tables';
   END IF;
   IF EXISTS (
     SELECT 1
@@ -414,7 +419,7 @@ SELECT * FROM console_operation.accept_operation(
   '11111111-1111-4111-8111-111111111111',
   7, 2, 'console.extension.revoke',
   'console.extension.revocation.create', '1.0',
-  'image-digest:sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+  'ghcr.io/opensphere-platform/console@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
   'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
   'R2', 'revoke compromised image',
   'console-operation-policy-2026-09-01.1', true,
@@ -538,6 +543,213 @@ BEGIN
     WHERE previous_hash IS DISTINCT FROM expected_previous_hash
   ) THEN
     RAISE EXCEPTION 'audit chain linkage verification failed after approval';
+  END IF;
+END;
+$$;
+
+SET ROLE console_extension_controller;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM console_operation.claim_owner_operation(
+      'aaaaaaaa-1111-4111-8111-111111111111',
+      'C_API', ARRAY['console.registry.connection.replace'], 30
+    );
+    RAISE EXCEPTION 'Extension Controller claimed another owner capability';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM console_operation.claim_owner_operation(
+      'aaaaaaaa-1111-4111-8111-111111111111',
+      'C_EXT', ARRAY['console.registry.connection.replace'], 30
+    );
+    RAISE EXCEPTION 'Extension Controller claimed a credential-broker action';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END;
+$$;
+SELECT set_config(
+  'verification.claim_one',
+  console_operation.claim_owner_operation(
+    'aaaaaaaa-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+  )::text,
+  false
+);
+
+DO $$
+DECLARE
+  v_second_claim jsonb;
+BEGIN
+  IF (current_setting('verification.claim_one')::jsonb->>'claimEpoch')::bigint <> 1
+      OR current_setting('verification.claim_one')::jsonb->>'resumeMode' <> 'apply'
+      OR current_setting('verification.claim_one')::jsonb->>'state' <> 'Submitted' THEN
+    RAISE EXCEPTION 'initial owner claim lost fencing or state evidence';
+  END IF;
+  v_second_claim := console_operation.claim_owner_operation(
+    'bbbbbbbb-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+  );
+  IF v_second_claim IS NOT NULL THEN
+    RAISE EXCEPTION 'active owner lease was claimed concurrently';
+  END IF;
+  BEGIN
+    INSERT INTO console_extension.revocation(
+      image_ref, operation_id, payload_digest, action_version, claim_epoch
+    ) VALUES (
+      'ghcr.io/opensphere-platform/forbidden@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      current_setting('verification.approval_operation_id')::uuid,
+      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      '1.0', 1
+    );
+    RAISE EXCEPTION 'extension controller directly mutated its authority table';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END;
+$$;
+RESET ROLE;
+
+UPDATE console_operation.outbox
+SET lease_expires_at = statement_timestamp() - interval '1 second'
+WHERE outbox_id = (current_setting('verification.claim_one')::jsonb->>'outboxId')::bigint;
+
+SET ROLE console_extension_controller;
+SELECT set_config(
+  'verification.claim_two',
+  console_operation.claim_owner_operation(
+    'bbbbbbbb-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+  )::text,
+  false
+);
+
+DO $$
+DECLARE
+  v_claim jsonb := current_setting('verification.claim_two')::jsonb;
+BEGIN
+  IF (v_claim->>'claimEpoch')::bigint <> 2 OR v_claim->>'resumeMode' <> 'reconcile' THEN
+    RAISE EXCEPTION 'expired claim was not resumed with a new fence';
+  END IF;
+  BEGIN
+    PERFORM console_operation.renew_owner_claim(
+      'aaaaaaaa-1111-4111-8111-111111111111',
+      (current_setting('verification.claim_one')::jsonb->>'outboxId')::bigint,
+      1, 30
+    );
+    RAISE EXCEPTION 'stale worker renewed a replaced claim';
+  EXCEPTION WHEN serialization_failure THEN NULL;
+  END;
+  PERFORM console_operation.renew_owner_claim(
+    'bbbbbbbb-1111-4111-8111-111111111111',
+    (v_claim->>'outboxId')::bigint,
+    (v_claim->>'claimEpoch')::bigint,
+    30
+  );
+  BEGIN
+    PERFORM console_extension.apply_revocation(
+      'bbbbbbbb-1111-4111-8111-111111111111',
+      (v_claim->>'outboxId')::bigint,
+      (v_claim->>'claimEpoch')::bigint,
+      (v_claim->>'operationId')::uuid,
+      'ghcr.io/opensphere-platform/wrong@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      v_claim->>'payloadDigest'
+    );
+    RAISE EXCEPTION 'claim target substitution unexpectedly succeeded';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END;
+$$;
+
+SELECT console_extension.apply_revocation(
+  'bbbbbbbb-1111-4111-8111-111111111111',
+  (current_setting('verification.claim_two')::jsonb->>'outboxId')::bigint,
+  (current_setting('verification.claim_two')::jsonb->>'claimEpoch')::bigint,
+  (current_setting('verification.claim_two')::jsonb->>'operationId')::uuid,
+  current_setting('verification.claim_two')::jsonb->>'targetRef',
+  current_setting('verification.claim_two')::jsonb->>'payloadDigest'
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM console_extension.revocation) <> 1
+      OR (SELECT count(*) FROM console_operation.execution_receipt) <> 1
+      OR (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 'Applied'
+      OR (SELECT state_version FROM console_operation.operation WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 4
+      OR (SELECT delivered_at IS NULL FROM console_operation.outbox WHERE outbox_id = (current_setting('verification.claim_two')::jsonb->>'outboxId')::bigint)
+      OR (SELECT count(*) FROM console_audit.event WHERE operation_id = current_setting('verification.approval_operation_id')::uuid) <> 5 THEN
+    RAISE EXCEPTION 'fenced Extension execution receipt is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM (
+      SELECT sequence_id, previous_hash,
+        lag(event_hash) OVER (ORDER BY sequence_id) AS expected_previous_hash
+      FROM console_audit.event
+    ) chain
+    WHERE previous_hash IS DISTINCT FROM expected_previous_hash
+  ) THEN
+    RAISE EXCEPTION 'audit chain linkage verification failed after owner execution';
+  END IF;
+END;
+$$;
+
+SET ROLE console_api;
+SELECT * FROM console_operation.accept_operation(
+  '22222222-2222-4222-8222-222222222222',
+  '11111111-1111-4111-8111-111111111111',
+  7, 2, 'console.extension.revoke',
+  'console.extension.revocation.create', '1.0',
+  'ghcr.io/opensphere-platform/failure-fixture@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+  'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+  'R2', 'exercise unknown execution receipt',
+  'console-operation-policy-2026-09-01.1', true,
+  'failure-source-operation-0001', 'correlation-failure-source-0001',
+  NULL, 'C_EXT', NULL
+);
+RESET ROLE;
+SELECT set_config(
+  'verification.failure_operation_id',
+  (SELECT operation_id::text FROM console_operation.operation WHERE idempotency_key = 'failure-source-operation-0001'),
+  false
+);
+SET ROLE console_api;
+SELECT * FROM console_operation.approve_operation(
+  '66666666-6666-4666-8666-666666666666',
+  '55555555-5555-4555-8555-555555555555',
+  3, 0, current_setting('verification.failure_operation_id')::uuid, 0,
+  'approve failure receipt fixture', 'console-operation-policy-2026-09-01.1', NULL,
+  'failure-approval-operation-0001', 'correlation-failure-approval-0001'
+);
+RESET ROLE;
+SET ROLE console_extension_controller;
+SELECT set_config(
+  'verification.failure_claim',
+  console_operation.claim_owner_operation(
+    'dddddddd-1111-4111-8111-111111111111',
+    'C_EXT', ARRAY['console.extension.revocation.create'], 30
+  )::text,
+  false
+);
+SELECT console_extension.record_execution_failure(
+  'dddddddd-1111-4111-8111-111111111111',
+  (current_setting('verification.failure_claim')::jsonb->>'outboxId')::bigint,
+  (current_setting('verification.failure_claim')::jsonb->>'claimEpoch')::bigint,
+  current_setting('verification.failure_operation_id')::uuid,
+  'OwnerTimeout',
+  'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+  true
+);
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF (SELECT state FROM console_operation.operation WHERE operation_id = current_setting('verification.failure_operation_id')::uuid) <> 'Unknown'
+      OR (SELECT state_version FROM console_operation.operation WHERE operation_id = current_setting('verification.failure_operation_id')::uuid) <> 3
+      OR (SELECT count(*) FROM console_operation.execution_receipt
+          WHERE operation_id = current_setting('verification.failure_operation_id')::uuid AND phase = 'Unknown') <> 1
+      OR (SELECT error->>'sideEffect' FROM console_operation.operation
+          WHERE operation_id = current_setting('verification.failure_operation_id')::uuid) <> 'unknown' THEN
+    RAISE EXCEPTION 'typed Unknown execution receipt was not committed';
   END IF;
 END;
 $$;

@@ -38,6 +38,8 @@ const child = spawn(process.execPath, ['apps/console-api/src/server.mjs'], {
   env: { ...process.env, PORT: String(port), CONSOLE_DATABASE_URL: runtimeUrl },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
+let extensionChild;
+let extensionOutput = '';
 let childOutput = '';
 for (const stream of [child.stdout, child.stderr]) {
   stream.on('data', (chunk) => {
@@ -58,6 +60,39 @@ async function waitForReady() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error('Console API readiness timed out: ' + childOutput);
+}
+
+async function startExtensionController() {
+  const extensionDatabaseUrl = process.env.CONSOLE_EXTENSION_DATABASE_URL;
+  if (!extensionDatabaseUrl) throw new Error('CONSOLE_EXTENSION_DATABASE_URL is required');
+  extensionChild = spawn(process.execPath, ['apps/extension-controller/src/server.mjs'], {
+    cwd: new URL('..', import.meta.url),
+    env: {
+      ...process.env,
+      PORT: '58081',
+      CONSOLE_EXTENSION_DATABASE_URL: extensionDatabaseUrl,
+      CONSOLE_EXTENSION_WORKER_ID: 'cccccccc-1111-4111-8111-111111111111',
+      CONSOLE_EXTENSION_POLL_MS: '100',
+      CONSOLE_EXTENSION_LEASE_SECONDS: '30',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  for (const stream of [extensionChild.stdout, extensionChild.stderr]) {
+    stream.on('data', (chunk) => {
+      extensionOutput = (extensionOutput + chunk.toString('utf8')).slice(-4000);
+    });
+  }
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (extensionChild.exitCode != null) throw new Error('Extension Controller exited before readiness: ' + extensionOutput);
+    try {
+      const response = await fetch('http://127.0.0.1:58081/healthz');
+      if (response.ok && (await response.json()).state === 'Ready') return;
+    } catch {
+      // Bounded startup retry.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('Extension Controller readiness timed out: ' + extensionOutput);
 }
 
 async function mutation(candidateBody = body, candidateHeaders = headers) {
@@ -109,7 +144,7 @@ try {
   assert.equal(accepted.headers.get('x-idempotent-replay'), 'false');
   const receipt = await accepted.json();
   assert.equal(receipt.actionId, 'console.registry.connection.replace');
-  assert.equal(receipt.state, 'Planned');
+  assert.equal(receipt.state, 'Authorized');
   assert.equal(receipt.correlationId, correlationId);
   assert.doesNotMatch(JSON.stringify(receipt), new RegExp(credential));
 
@@ -219,6 +254,34 @@ try {
   assert.equal(revokedApproval.status, 401);
   assert.equal((await revokedApproval.json()).code, 'AuthenticationRequired');
 
+  await startExtensionController();
+  let executionEvidence;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const candidate = await admin.query(
+      [
+        'SELECT',
+        '(SELECT state FROM console_operation.operation WHERE operation_id = $1) AS state,',
+        '(SELECT state_version::int FROM console_operation.operation WHERE operation_id = $1) AS state_version,',
+        '(SELECT count(*)::int FROM console_operation.execution_receipt WHERE operation_id = $1) AS receipts,',
+        '(SELECT count(*)::int FROM console_extension.revocation WHERE operation_id = $1) AS revocations,',
+        '(SELECT count(*)::int FROM console_operation.outbox WHERE operation_id = $1 AND delivered_at IS NOT NULL) AS delivered_outbox'
+      ].join(' '),
+      [plannedRevocation.operationId],
+    );
+    if (candidate.rows[0].state === 'Applied') {
+      executionEvidence = candidate.rows[0];
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.deepEqual(executionEvidence, {
+    state: 'Applied',
+    state_version: 4,
+    receipts: 1,
+    revocations: 1,
+    delivered_outbox: 1,
+  });
+
   await admin.query(
     [
       'UPDATE console_identity.browser_session',
@@ -240,6 +303,7 @@ try {
     approval: approvalEvidence.rows[0],
     selfApprovalDenied: true,
     revokedApprovalDenied: true,
+    extensionExecution: executionEvidence,
     revokeDenied: true,
   }) + '\n');
 } finally {
@@ -260,6 +324,14 @@ try {
     ['66666666-6666-4666-8666-666666666666'],
   ).catch(() => {});
   await admin.end().catch(() => {});
+  if (extensionChild?.exitCode == null) extensionChild.kill('SIGTERM');
+  if (extensionChild) {
+    await Promise.race([
+      new Promise((resolve) => extensionChild.once('exit', resolve)),
+      new Promise((resolve) => setTimeout(resolve, 3000)),
+    ]);
+    if (extensionChild.exitCode == null) extensionChild.kill('SIGKILL');
+  }
   if (child.exitCode == null) child.kill('SIGTERM');
   await Promise.race([
     new Promise((resolve) => child.once('exit', resolve)),

@@ -10,6 +10,7 @@
       "permission": "console.registry.manage",
       "risk": "R2",
       "approvalRequired": false,
+      "dispatchMode": "credential-broker-required",
       "ownerRef": "C_EXT",
       "targetPattern": "^registry-connection:opensphere-ghcr$"
     },
@@ -20,6 +21,7 @@
       "permission": "console.registry.manage",
       "risk": "R2",
       "approvalRequired": false,
+      "dispatchMode": "fenced-outbox",
       "ownerRef": "C_EXT",
       "targetPattern": "^registry-connection:opensphere-ghcr$"
     },
@@ -30,6 +32,7 @@
       "permission": "console.extension.revoke",
       "risk": "R2",
       "approvalRequired": true,
+      "dispatchMode": "fenced-outbox",
       "ownerRef": "C_EXT",
       "targetPattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$"
     },
@@ -40,6 +43,7 @@
       "permission": "console.extension.install",
       "risk": "R2",
       "approvalRequired": true,
+      "dispatchMode": "fenced-outbox",
       "ownerRef": "C_EXT",
       "targetPattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$"
     }

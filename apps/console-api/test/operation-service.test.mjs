@@ -54,7 +54,7 @@ function record(input) {
     correlation_id: input.correlationId,
     source_revision: null,
     owner_ref: input.ownerRef,
-    state: 'Planned',
+    state: input.approvalRequired ? 'Planned' : 'Authorized',
     state_version: 0,
     expected_postcondition: null,
     observed_postcondition: null,
@@ -104,7 +104,7 @@ test('Registry credential mutation persists only a digest after current policy a
 
   assert.equal(result.receipt.actionId, 'console.registry.connection.replace');
   assert.equal(result.receipt.requiredPermission, 'console.registry.manage');
-  assert.equal(result.receipt.state, 'Planned');
+  assert.equal(result.receipt.state, 'Authorized');
   assert.match(result.receipt.payloadDigest, /^sha256:[0-9a-f]{64}$/);
   assert.doesNotMatch(JSON.stringify(accepted[0]), new RegExp(credential));
   assert.equal(accepted[0].expectedPermissionRevision, 7);

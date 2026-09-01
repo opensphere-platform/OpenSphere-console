@@ -50,8 +50,10 @@ jobs:
         env:
           CONSOLE_DATABASE_URL: postgresql://console_api_runtime:console-runtime-test@localhost:5432/postgres
           CONSOLE_TEST_ADMIN_DATABASE_URL: postgresql://postgres:console-test@localhost:5432/postgres
+          CONSOLE_EXTENSION_DATABASE_URL: postgresql://console_extension_runtime:console-extension-runtime-test@localhost:5432/postgres
         run: |
           npm ci --prefix apps/console-api --no-audit --no-fund
+          npm ci --prefix apps/extension-controller --no-audit --no-fund
           node scripts/verify-console-api-postgres-e2e.mjs
       - name: Verify deterministic Manual seed
         run: |
@@ -63,6 +65,8 @@ jobs:
         run: npm run build -- --configuration production
       - name: Build target Console API image
         run: docker build --file apps/console-api/Dockerfile --tag opensphere-console-api:validation .
+      - name: Build target Extension Controller image
+        run: docker build --file apps/extension-controller/Dockerfile --tag opensphere-extension-controller:validation .
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
