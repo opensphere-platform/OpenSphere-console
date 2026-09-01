@@ -35,6 +35,7 @@ function emptyResponse(status = 204) {
 function unusedOwnedSessionMethods() {
   return {
     async listOwnedSessions() { throw new Error('session inventory must not run'); },
+    async listOwnedSessionEvents() { throw new Error('session event history must not run'); },
     async revokeOwnedSession() { throw new Error('owned session revocation must not run'); },
     async revokeAllOwnedSessions() { throw new Error('all-session revocation must not run'); },
   };
@@ -448,6 +449,60 @@ test('session preference reuses the encrypted current-subject credential and per
     body: { duration: 'forever' }, correlationId: 'session-preference-update-0002',
   }), { code: 'ValidationFailed' });
   assert.equal(calls.length, 4);
+});
+
+test('session event history is current-subject scoped, bounded, and no-secret', async () => {
+  const handle = 'opaque-session-event-history-handle';
+  const calls = [];
+  const store = {
+    async resolveSession() {
+      return {
+        sessionId, subjectId, expiresAt: '2026-09-02T12:00:00.000Z',
+        idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+        persistence: '24h', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z', revokedAt: null,
+        authorityFresh: true, permissions: [], permissionRevision: 1, revokeEpoch: 0, aal: 'aal2',
+      };
+    },
+    async issueSession() { throw new Error('login must not run'); },
+    async getPendingMfa() { throw new Error('MFA must not run'); },
+    async activateMfa() { throw new Error('MFA must not run'); },
+    async getRefreshCredentials() { throw new Error('refresh must not run'); },
+    async rotateCredentials() { throw new Error('refresh must not run'); },
+    async rejectRefresh() { throw new Error('refresh must not run'); },
+    async touchActivity() { throw new Error('activity touch must not run'); },
+    ...unusedOwnedSessionMethods(),
+    async listOwnedSessionEvents(input) {
+      calls.push(input);
+      return { items: [{
+        id: 17, session_id: sessionId, event: 'refresh_rejected', result: 'rejected',
+        occurred_at: '2026-09-01T23:59:00.000Z', evidence: { token: 'must-not-project' },
+      }] };
+    },
+  };
+  const broker = createIdentitySessionBroker({
+    store,
+    authClient: {
+      async authenticatePassword() { throw new Error('login must not run'); },
+      async completeTotp() { throw new Error('MFA must not run'); },
+      async refreshSession() { throw new Error('refresh must not run'); },
+      async logout() {},
+    },
+    credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 19) }),
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const result = await broker.listSessionEvents({ headers: {
+    cookie: `__Host-opensphere-session=${handle}`,
+  } }, { limit: '2' });
+  assert.deepEqual(result, { items: [{
+    id: 17, session_id: sessionId, event: 'refresh_rejected', result: 'rejected',
+    occurred_at: '2026-09-01T23:59:00.000Z',
+  }] });
+  assert.equal(calls[0].limit, 2);
+  assert.equal(calls[0].tokenDigest.length, 32);
+  await assert.rejects(broker.listSessionEvents({ headers: {
+    cookie: `__Host-opensphere-session=${handle}`,
+  } }, { limit: '101' }), { code: 'ValidationFailed' });
+  assert.equal(calls.length, 1);
 });
 
 test('password recovery revokes the verified subject Console sessions before closing the recovery session', async () => {
@@ -1214,6 +1269,35 @@ test('HTTP session preference routes preserve the current opaque session and CSR
   assert.equal(calls[1][1].headers['x-os-csrf-token'], headers['x-os-csrf-token']);
   assert.deepEqual(calls[1][2].body, { duration: '7d' });
   assert.equal(calls[1][2].correlationId, headers['x-correlation-id']);
+});
+
+test('HTTP session event history forwards one bounded query and rejects query ambiguity', async (t) => {
+  const calls = [];
+  const projection = { items: [{
+    id: 17, session_id: sessionId, event: 'login', result: 'ok', occurred_at: now.toISOString(),
+  }] };
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('generic session resolution must not run'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async listSessionEvents(request, input) { calls.push([request, input]); return projection; },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const endpoint = 'http://127.0.0.1:' + server.address().port + '/api/identity/session/events';
+  const headers = {
+    cookie: '__Host-opensphere-session=opaque-session-events',
+    'x-correlation-id': 'session-events-http-0001',
+  };
+  const response = await fetch(endpoint + '?limit=50', { headers });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), projection);
+  assert.equal(calls[0][0].headers.cookie, headers.cookie);
+  assert.deepEqual(calls[0][1], { limit: '50', correlationId: headers['x-correlation-id'] });
+  assert.equal((await fetch(endpoint + '?limit=10&limit=20', { headers })).status, 400);
+  assert.equal((await fetch(endpoint + '?cursor=1', { headers })).status, 400);
+  assert.equal(calls.length, 1);
 });
 
 test('HTTP MFA completion preserves the request proof and returns refreshed cookies', async (t) => {

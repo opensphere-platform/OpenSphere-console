@@ -116,6 +116,29 @@ paths:
           $ref: "#/components/responses/PermissionDenied"
         "503":
           $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/session/events:
+    get:
+      operationId: listOwnedSessionEvents
+      tags: [Session]
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuditLedger
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Bounded no-secret session-security history for the current subject
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/session-event-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/identity/session/login:
     post:
       operationId: loginSession

@@ -42,6 +42,15 @@ function header(request, name, minimum = 1) {
   return value;
 }
 
+function onlyQueryParameter(url, name) {
+  const keys = [...url.searchParams.keys()];
+  const values = url.searchParams.getAll(name);
+  if (keys.some((key) => key !== name) || values.length > 1) {
+    throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+  }
+  return values[0] ?? null;
+}
+
 function errorEnvelope(error, correlationId) {
   const internalCode = error?.code || 'AuthorityUnavailable';
   const code = {
@@ -96,6 +105,15 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         return send(response, 201, await identitySessionBroker.bootstrapInitialAdministrator({
           body: await jsonBody(request),
           requestOrigin: request.headers.origin,
+          correlationId,
+        }));
+      }
+      if (url.pathname === '/api/identity/session/events' && request.method === 'GET') {
+        if (!identitySessionBroker?.listSessionEvents) {
+          throw Object.assign(new Error('session event history is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return send(response, 200, await identitySessionBroker.listSessionEvents(request, {
+          limit: onlyQueryParameter(url, 'limit'),
           correlationId,
         }));
       }

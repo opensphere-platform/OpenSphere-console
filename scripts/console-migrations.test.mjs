@@ -9,8 +9,8 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 12);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0012');
+  assert.equal(manifest.migrationCount, 13);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0013');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
   assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   assert.equal(manifest.migrations[2].sourceRevision, 'd7c5d09ecdcfbeed01b32fd13a447c15b5692116');
@@ -22,6 +22,7 @@ test('fresh migration manifest binds the exact source revision and ordered SQL i
   assert.equal(manifest.migrations[8].sourceRevision, 'b5b9815a6a0826bb7c356a63ba39d8f03f8a9940');
   assert.equal(manifest.migrations[9].sourceRevision, 'bd00f005de88e63cdae8573fa35b4e6e502c570a');
   assert.equal(manifest.migrations[10].sourceRevision, '45bec92bc352c3f0d16fdb5abf01cdaa680db139');
+  assert.equal(manifest.migrations[12].sourceRevision, 'a63368d2765f96840a17028383dd2d666e5ba6f4');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
@@ -107,6 +108,13 @@ test('browser-session preference successor is independently renderable', () => {
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]get_browser_session_preference_credentials/);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]prepare_browser_session_preference_update/);
   assert.match(sql, /opensphere-console\/20260902\/0012/);
+  assert.doesNotMatch(sql, /CREATE TABLE/);
+});
+
+test('owned browser-session event successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0013' });
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]list_owned_browser_session_events/);
+  assert.match(sql, /opensphere-console\/20260902\/0013/);
   assert.doesNotMatch(sql, /CREATE TABLE/);
 });
 

@@ -117,6 +117,12 @@ const LIST_OWNED_SESSIONS_SQL = [
   ') AS session_inventory',
 ].join(' ');
 
+const LIST_OWNED_SESSION_EVENTS_SQL = [
+  'SELECT console_identity.list_owned_browser_session_events(',
+  '$1::bytea, $2::integer',
+  ') AS session_history',
+].join(' ');
+
 const REVOKE_OWNED_SESSION_SQL = [
   'SELECT console_identity.revoke_owned_browser_session(',
   '$1::bytea, $2::bytea, $3::uuid, $4::text',
@@ -400,6 +406,17 @@ export function createPostgresOperationStore({ query }) {
         const inventory = result?.rows?.[0]?.session_inventory;
         if (!Array.isArray(inventory?.items)) throw new Error('list_owned_browser_sessions returned no inventory');
         return inventory;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listOwnedSessionEvents(input) {
+      try {
+        const result = await query(LIST_OWNED_SESSION_EVENTS_SQL, [input.tokenDigest, input.limit]);
+        const history = result?.rows?.[0]?.session_history;
+        if (!Array.isArray(history?.items)) throw new Error('list_owned_browser_session_events returned no history');
+        return history;
       } catch (error) {
         throw databaseError(error);
       }

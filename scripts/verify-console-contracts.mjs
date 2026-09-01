@@ -22,6 +22,7 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.get_pending_browser_session_mfa',
   'console_identity.get_supabase_status',
   'console_identity.issue_browser_session',
+  'console_identity.list_owned_browser_session_events',
   'console_identity.list_owned_browser_sessions',
   'console_identity.prepare_browser_session_preference_update',
   'console_identity.reject_browser_session_refresh',
@@ -259,6 +260,12 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(
     auditRead?.parameters?.find((parameter) => parameter.name === 'limit')?.schema?.maximum === 200,
     'listAuditEvents must keep a bounded page size',
+  );
+  const sessionEventRead = entries.find(({ operation }) => operation.operationId === 'listOwnedSessionEvents')?.operation;
+  assert(sessionEventRead?.['x-opensphere-authority'] === 'SupabaseAuditLedger', 'listOwnedSessionEvents must declare audit ledger authority');
+  assert(
+    sessionEventRead?.parameters?.find((parameter) => parameter.name === 'limit')?.schema?.maximum === 100,
+    'listOwnedSessionEvents must keep a bounded self-service page size',
   );
   for (const operationId of ['completeSessionMfa', 'getSession', 'deleteSession', 'getMe']) {
     const identityRead = entries.find(({ operation }) => operation.operationId === operationId)?.operation;

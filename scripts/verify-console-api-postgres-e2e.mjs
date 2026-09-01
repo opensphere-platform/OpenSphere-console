@@ -581,6 +581,22 @@ try {
   assert.match(preferenceEvidence.rows[0].evidence, /"duration":\s*"7d"/);
   assert.doesNotMatch(preferenceEvidence.rows[0].evidence, /integration-signature|supabase-refresh|apikey/i);
 
+  const sessionHistoryResponse = await fetch(origin + '/api/identity/session/events?limit=2', {
+    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-session-events-read-0001' },
+  });
+  assert.equal(sessionHistoryResponse.status, 200);
+  const sessionHistory = await sessionHistoryResponse.json();
+  assert.equal(sessionHistory.items.length, 2);
+  assert.equal(sessionHistory.items[0].event, 'refresh');
+  assert.equal(sessionHistory.items[0].result, 'ok');
+  assert.equal(sessionHistory.items[0].session_id, loginBody.session.id);
+  assert.equal(sessionHistory.items[1].event, 'login');
+  assert.deepEqual(Object.keys(sessionHistory.items[0]).sort(), ['event', 'id', 'occurred_at', 'result', 'session_id']);
+  assert.doesNotMatch(JSON.stringify(sessionHistory), /integration-signature|supabase-refresh|evidence|reason|correlation/i);
+  assert.equal((await fetch(origin + '/api/identity/session/events?limit=101', {
+    headers: { cookie: loginCookieHeader },
+  })).status, 400);
+
   await admin.query(
     [
       'UPDATE console_identity.browser_session',
@@ -1490,6 +1506,7 @@ try {
     initialAdministratorBootstrapStatus: true,
     passwordLoginSessionLifecycle: true,
     sessionPreferenceLifecycle: true,
+    sessionEventHistory: true,
     refreshRotationLifecycle: true,
     activityTouchLifecycle: true,
     sessionInventoryLifecycle: true,

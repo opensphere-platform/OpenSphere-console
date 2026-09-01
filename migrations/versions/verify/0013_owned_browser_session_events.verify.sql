@@ -63,8 +63,8 @@ BEGIN
       OR (v_events->'items'->1->>'session_id')::uuid <> v_session_id THEN
     RAISE EXCEPTION 'owned browser session event projection is incomplete or unordered';
   END IF;
-  IF jsonb_object_length(v_events->'items'->0) <> 5
-      OR jsonb_object_length(v_events->'items'->1) <> 5
+  IF (SELECT count(*) FROM jsonb_object_keys(v_events->'items'->0)) <> 5
+      OR (SELECT count(*) FROM jsonb_object_keys(v_events->'items'->1)) <> 5
       OR v_events::text LIKE '%secret-canary%'
       OR v_events::text LIKE '%correlation%'
       OR v_events::text LIKE '%evidence%'

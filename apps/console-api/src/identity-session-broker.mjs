@@ -112,6 +112,19 @@ function sessionPreferenceProjection(duration) {
   });
 }
 
+const SESSION_EVENT_NAMES = new Set([
+  'login', 'refresh', 'step_up', 'revoke', 'revoke_all', 'refresh_rejected',
+]);
+const SESSION_EVENT_RESULTS = new Set(['ok', 'pending', 'rejected', 'error']);
+
+function sessionEventLimit(value) {
+  if (value == null || value === '') return 50;
+  if (!/^[1-9][0-9]{0,2}$/u.test(String(value)) || Number(value) > 100) {
+    fail('ValidationFailed', 'session event limit must be between 1 and 100', 400);
+  }
+  return Number(value);
+}
+
 export function createIdentitySessionBroker({
   store,
   authClient,
@@ -155,6 +168,39 @@ export function createIdentitySessionBroker({
   }
 
   const broker = {
+    async listSessionEvents(request, { limit } = {}) {
+      if (!store?.listOwnedSessionEvents) {
+        fail('AuthorityUnavailable', 'session event authority is unavailable', 503);
+      }
+      const boundedLimit = sessionEventLimit(limit);
+      await broker.resolveSession(request, { requireCsrf: false });
+      const proof = readBrowserSessionProof(request, { requireCsrf: false });
+      const history = await store.listOwnedSessionEvents({
+        tokenDigest: proof.tokenDigest,
+        limit: boundedLimit,
+      });
+      if (!Array.isArray(history?.items) || history.items.length > 100) {
+        fail('AuthorityUnavailable', 'session event authority returned an invalid result', 503);
+      }
+      const items = history.items.map((event) => {
+        const occurredAt = new Date(event?.occurred_at).getTime();
+        if (!Number.isSafeInteger(Number(event?.id)) || Number(event.id) < 1
+            || (event.session_id != null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(event.session_id)))
+            || !SESSION_EVENT_NAMES.has(event?.event) || !SESSION_EVENT_RESULTS.has(event?.result)
+            || !Number.isFinite(occurredAt)) {
+          fail('AuthorityUnavailable', 'session event authority returned an invalid item', 503);
+        }
+        return Object.freeze({
+          id: Number(event.id),
+          session_id: event.session_id == null ? null : String(event.session_id),
+          event: event.event,
+          result: event.result,
+          occurred_at: new Date(occurredAt).toISOString(),
+        });
+      });
+      return Object.freeze({ items: Object.freeze(items) });
+    },
+
     async getSessionPreference(request, { correlationId } = {}) {
       if (!store?.getSessionPreferenceCredentials || !authClient?.readSessionPreference) {
         fail('AuthorityUnavailable', 'session preference authority is unavailable', 503);
