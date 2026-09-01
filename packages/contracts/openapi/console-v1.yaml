@@ -228,13 +228,14 @@ paths:
       tags: [Extensions]
       x-opensphere-requirement: CON-FR-008
       x-opensphere-risk: R0
-      x-opensphere-authority: ConsoleRegistryMetadata
+      x-opensphere-authority: ConsoleRegistryConnectionMetadata
       responses:
         "200":
           description: Redacted GHCR connection metadata and verification state; credentials are never returned
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReadEnvelope" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
     put:
       operationId: replaceRegistryCredential

@@ -391,8 +391,8 @@ BEGIN
     'console_operation'::regnamespace,
     'console_audit'::regnamespace,
     'console_extension'::regnamespace
-  )) <> 10 THEN
-    RAISE EXCEPTION 'expected ten RLS-protected authority tables';
+  )) <> 11 THEN
+    RAISE EXCEPTION 'expected eleven RLS-protected authority tables';
   END IF;
   IF EXISTS (
     SELECT 1
@@ -869,6 +869,36 @@ END;
 $$;
 
 SET ROLE console_api;
+DO $$
+DECLARE
+  v_projection jsonb;
+BEGIN
+  v_projection := console_extension.get_registry_connection(
+    '22222222-2222-4222-8222-222222222222',
+    '11111111-1111-4111-8111-111111111111',
+    'correlation-registry-read-0001'
+  );
+  IF v_projection->>'authority' <> 'ConsoleRegistryConnectionMetadata'
+      OR v_projection->>'freshness' <> 'fresh'
+      OR v_projection->'data'->>'connectionId' <> 'opensphere-ghcr'
+      OR v_projection->'data'->>'configurationState' <> 'NotConfigured'
+      OR (v_projection->'data'->>'credentialPresent')::boolean
+      OR v_projection->'data' ? 'secretRefDigest'
+      OR jsonb_array_length(v_projection->'evidenceRefs') <> 1 THEN
+    RAISE EXCEPTION 'Registry connection projection lost fixed no-secret authority semantics';
+  END IF;
+  BEGIN
+    PERFORM console_extension.get_registry_connection(
+      '66666666-6666-4666-8666-666666666666',
+      '55555555-5555-4555-8555-555555555555',
+      'correlation-forbidden-registry-read-0001'
+    );
+    RAISE EXCEPTION 'actor without Registry permission read connection metadata';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END;
+$$;
+
 DO $$
 DECLARE
   v_projection jsonb;

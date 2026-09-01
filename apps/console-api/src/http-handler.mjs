@@ -121,6 +121,10 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           'x-idempotent-replay': String(result.replayed),
         });
       }
+      if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'GET') {
+        const session = await resolveSession(request, { requireCsrf: false });
+        return send(response, 200, await registryOperations.getRegistryConnection({ session, correlationId }));
+      }
       if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'PUT') {
         const session = await resolveSession(request, { requireCsrf: true });
         const result = await registryOperations.replaceCredential({

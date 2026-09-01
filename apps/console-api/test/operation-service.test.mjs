@@ -103,6 +103,28 @@ function fixture() {
         evidenceRefs: [],
       };
     },
+    async getRegistryConnection(input) {
+      return {
+        schemaVersion: '1.0',
+        data: {
+          connectionId: 'opensphere-ghcr',
+          registryOrigin: 'ghcr.io',
+          namespace: 'opensphere-platform',
+          username: null,
+          credentialPresent: false,
+          credentialVersion: null,
+          configurationState: 'NotConfigured',
+          lastVerifiedAt: null,
+          lastVerificationCode: null,
+          updatedAt: current.toISOString(),
+        },
+        authority: 'ConsoleRegistryConnectionMetadata',
+        observedAt: current.toISOString(),
+        freshness: 'fresh',
+        correlationId: input.correlationId,
+        evidenceRefs: ['registry-connection:opensphere-ghcr:NotConfigured'],
+      };
+    },
   };
   const operationService = createOperationService({ store, policyCatalog, clock: () => current });
   const registryOperations = createRegistryOperations({
@@ -130,6 +152,19 @@ test('Registry credential mutation persists only a digest after current policy a
   assert.doesNotMatch(JSON.stringify(accepted[0]), new RegExp(credential));
   assert.equal(accepted[0].expectedPermissionRevision, 7);
   assert.equal(accepted[0].expectedRevokeEpoch, 2);
+});
+
+test('Registry connection projection exposes fixed metadata without credential material', async () => {
+  const { registryOperations } = fixture();
+  const envelope = await registryOperations.getRegistryConnection({
+    session,
+    correlationId: 'registry-connection-read-0001',
+  });
+  assert.equal(envelope.authority, 'ConsoleRegistryConnectionMetadata');
+  assert.equal(envelope.data.connectionId, 'opensphere-ghcr');
+  assert.equal(envelope.data.configurationState, 'NotConfigured');
+  assert.equal(envelope.data.credentialPresent, false);
+  assert.doesNotMatch(JSON.stringify(envelope), /secretRef|credentialDigest|password|token/i);
 });
 
 test('Registry revocation requires an exact digest and canonical confirmation', async () => {
@@ -350,6 +385,26 @@ test('PostgreSQL store binds every authority parameter and maps database denial 
   await assert.rejects(denied.get({ sessionId, actorRef, operationId }), { code: 'PermissionDenied', status: 403 });
 });
 
+test('PostgreSQL Registry projection binds session, actor and correlation without secret inputs', async () => {
+  const calls = [];
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{ read_envelope: {
+        authority: 'ConsoleRegistryConnectionMetadata', data: { configurationState: 'NotConfigured' },
+      } }] };
+    },
+  });
+  const envelope = await store.getRegistryConnection({
+    sessionId,
+    actorRef,
+    correlationId: 'registry-store-correlation-0001',
+  });
+  assert.equal(envelope.authority, 'ConsoleRegistryConnectionMetadata');
+  assert.match(calls[0].sql, /console_extension\.get_registry_connection/);
+  assert.deepEqual(calls[0].values, [sessionId, actorRef, 'registry-store-correlation-0001']);
+});
+
 test('opaque session resolver sends only cookie and CSRF digests to PostgreSQL', async () => {
   const calls = [];
   const resolver = createDatabaseSessionResolver({
@@ -408,6 +463,33 @@ test('HTTP Registry mutation returns a durable operation URL and no submitted cr
   assert.equal(response.headers.get('location'), '/api/platform/operations/' + operationId);
   assert.equal(resolverCalls[0].requireCsrf, true);
   assert.doesNotMatch(body, new RegExp(credential));
+});
+
+test('HTTP Registry connection read is session-revalidated and no-secret', async (t) => {
+  const { registryOperations, operationService } = fixture();
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) {
+      resolverCalls.push(options);
+      return session;
+    },
+    operationService,
+    registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const response = await fetch(
+    'http://127.0.0.1:' + address.port + '/api/admin/extensions/registry-connections/opensphere-ghcr',
+    { headers: { 'x-correlation-id': 'http-registry-connection-read-0001' } },
+  );
+  const envelope = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(envelope.authority, 'ConsoleRegistryConnectionMetadata');
+  assert.equal(envelope.data.configurationState, 'NotConfigured');
+  assert.equal(envelope.data.credentialPresent, false);
+  assert.equal(resolverCalls[0].requireCsrf, false);
+  assert.doesNotMatch(JSON.stringify(envelope), /secretRef|credentialDigest|password|token/i);
 });
 
 test('HTTP approval route requires CSRF and returns the Authorized receipt', async (t) => {

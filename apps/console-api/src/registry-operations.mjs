@@ -14,6 +14,18 @@ function exact(value, fields, label) {
 export function createRegistryOperations({ operationService, policyRevision, projectionStore }) {
   if (!operationService?.accept) throw new TypeError('operation service is required');
   return Object.freeze({
+    async getRegistryConnection({ session, correlationId }) {
+      if (!projectionStore?.getRegistryConnection) throw Object.assign(
+        new Error('Registry connection projection is unavailable'),
+        { code: 'AuthorityUnavailable', status: 503 },
+      );
+      return projectionStore.getRegistryConnection({
+        sessionId: session.sessionId,
+        actorRef: session.subjectId,
+        correlationId,
+      });
+    },
+
     async listRevocations({ session, correlationId }) {
       if (!projectionStore?.listRevocations) throw Object.assign(
         new Error('Extension revocation projection is unavailable'),

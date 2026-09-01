@@ -64,6 +64,8 @@ test('baseline migration declares separated authority schemas, RLS and append-on
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.claim_owner_operation/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation\.renew_owner_claim/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_extension\.apply_revocation/i);
+  assert.match(sql, /CREATE TABLE console_extension\.registry_connection/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_extension\.get_registry_connection/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_extension\.record_execution_failure/i);
   assert.match(sql, /DETAIL = 'StaleClaim'/i);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_audit\.append_event_internal/i);

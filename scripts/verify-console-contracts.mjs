@@ -92,6 +92,12 @@ export async function verifyContracts(repoRoot = process.cwd()) {
   const verificationSchema = verificationOperation?.requestBody?.content?.['application/json']?.schema;
   assert(verificationSchema?.required?.includes('expectedStateVersion'), 'verifyOperation must require compare-and-set state version');
 
+  const registryConnectionRead = entries.find(({ operation }) => operation.operationId === 'getRegistryConnection')?.operation;
+  assert(
+    registryConnectionRead?.['x-opensphere-authority'] === 'ConsoleRegistryConnectionMetadata',
+    'getRegistryConnection must declare its no-secret metadata authority',
+  );
+
   const referencedActions = entries.map(({ operation }) => operation['x-opensphere-action']).filter(Boolean);
   for (const actionPolicyId of actionPolicyIds) {
     assert(referencedActions.includes(actionPolicyId), actionPolicyId + ' is not referenced by OpenAPI');

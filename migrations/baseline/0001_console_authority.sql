@@ -186,6 +186,28 @@ CREATE TABLE console_operation.execution_receipt (
   UNIQUE (operation_id, claim_epoch, phase)
 );
 
+CREATE TABLE console_extension.registry_connection (
+  connection_id text PRIMARY KEY CHECK (connection_id = 'opensphere-ghcr'),
+  registry_origin text NOT NULL CHECK (registry_origin = 'ghcr.io'),
+  namespace text NOT NULL CHECK (namespace = 'opensphere-platform'),
+  username text CHECK (username IS NULL OR length(username) BETWEEN 1 AND 128),
+  credential_version text CHECK (credential_version IS NULL OR length(credential_version) BETWEEN 1 AND 128),
+  secret_ref_digest text CHECK (secret_ref_digest IS NULL OR secret_ref_digest ~ '^sha256:[0-9a-f]{64}$'),
+  configuration_state text NOT NULL CHECK (configuration_state IN ('NotConfigured', 'Configured', 'VerificationPending', 'Verified', 'Failed')),
+  last_verified_at timestamptz,
+  last_verification_code text CHECK (last_verification_code IS NULL OR last_verification_code ~ '^[A-Z][A-Za-z0-9]{2,63}$'),
+  updated_at timestamptz NOT NULL DEFAULT statement_timestamp(),
+  CHECK (
+    (configuration_state = 'NotConfigured' AND username IS NULL AND credential_version IS NULL AND secret_ref_digest IS NULL)
+    OR (configuration_state <> 'NotConfigured' AND username IS NOT NULL AND credential_version IS NOT NULL AND secret_ref_digest IS NOT NULL)
+  ),
+  CHECK (configuration_state <> 'Verified' OR last_verified_at IS NOT NULL)
+);
+
+INSERT INTO console_extension.registry_connection(
+  connection_id, registry_origin, namespace, configuration_state
+) VALUES ('opensphere-ghcr', 'ghcr.io', 'opensphere-platform', 'NotConfigured');
+
 CREATE TABLE console_extension.revocation (
   image_ref text PRIMARY KEY CHECK (
     image_ref ~ '^ghcr\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$'
@@ -207,6 +229,8 @@ ALTER TABLE console_operation.verification_receipt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.verification_receipt FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.execution_receipt ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_operation.execution_receipt FORCE ROW LEVEL SECURITY;
+ALTER TABLE console_extension.registry_connection ENABLE ROW LEVEL SECURITY;
+ALTER TABLE console_extension.registry_connection FORCE ROW LEVEL SECURITY;
 ALTER TABLE console_extension.revocation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE console_extension.revocation FORCE ROW LEVEL SECURITY;
 
@@ -1367,6 +1391,81 @@ $$;
 REVOKE ALL ON FUNCTION console_operation.get_operation(uuid, uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION console_operation.get_operation(uuid, uuid, uuid) TO console_api;
 
+CREATE OR REPLACE FUNCTION console_extension.get_registry_connection(
+  p_session_id uuid,
+  p_actor_ref uuid,
+  p_correlation_id text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, console_identity, console_extension
+AS $$
+DECLARE
+  v_session console_identity.browser_session;
+  v_authority console_identity.subject_authority;
+  v_connection console_extension.registry_connection;
+  v_observed_at timestamptz := statement_timestamp();
+BEGIN
+  IF length(COALESCE(p_correlation_id, '')) NOT BETWEEN 8 AND 128 THEN
+    RAISE EXCEPTION 'invalid correlation id' USING ERRCODE = '22023', DETAIL = 'ValidationFailed';
+  END IF;
+  SELECT * INTO v_session
+    FROM console_identity.browser_session
+    WHERE session_id = p_session_id;
+  IF NOT FOUND OR v_session.subject_id <> p_actor_ref OR v_session.revoked_at IS NOT NULL
+      OR v_session.expires_at <= v_observed_at THEN
+    RAISE EXCEPTION 'active Console session is required' USING ERRCODE = '28000', DETAIL = 'SessionInvalid';
+  END IF;
+  SELECT * INTO v_authority
+    FROM console_identity.subject_authority
+    WHERE subject_id = p_actor_ref;
+  IF NOT FOUND OR v_authority.permission_revision <> v_session.permission_revision
+      OR v_authority.revoke_epoch <> v_session.revoke_epoch THEN
+    RAISE EXCEPTION 'session authority revision is stale' USING ERRCODE = '28000', DETAIL = 'StaleAuthorityRevision';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM console_identity.permission_grant
+    WHERE subject_id = p_actor_ref
+      AND permission = 'console.registry.manage'
+      AND grant_revision <= v_authority.permission_revision
+      AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'permission denied' USING ERRCODE = '42501', DETAIL = 'PermissionDenied';
+  END IF;
+
+  SELECT * INTO STRICT v_connection
+    FROM console_extension.registry_connection
+    WHERE connection_id = 'opensphere-ghcr';
+
+  RETURN jsonb_build_object(
+    'schemaVersion', '1.0',
+    'data', jsonb_build_object(
+      'connectionId', v_connection.connection_id,
+      'registryOrigin', v_connection.registry_origin,
+      'namespace', v_connection.namespace,
+      'username', v_connection.username,
+      'credentialPresent', v_connection.credential_version IS NOT NULL,
+      'credentialVersion', v_connection.credential_version,
+      'configurationState', v_connection.configuration_state,
+      'lastVerifiedAt', v_connection.last_verified_at,
+      'lastVerificationCode', v_connection.last_verification_code,
+      'updatedAt', v_connection.updated_at
+    ),
+    'authority', 'ConsoleRegistryConnectionMetadata',
+    'observedAt', v_observed_at,
+    'freshness', 'fresh',
+    'correlationId', p_correlation_id,
+    'evidenceRefs', jsonb_build_array(
+      'registry-connection:' || v_connection.connection_id || ':' || v_connection.configuration_state
+    )
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION console_extension.get_registry_connection(uuid, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION console_extension.get_registry_connection(uuid, uuid, text) TO console_api;
+
 CREATE OR REPLACE FUNCTION console_extension.list_revocations(
   p_session_id uuid,
   p_actor_ref uuid,
@@ -1446,6 +1545,7 @@ COMMENT ON SCHEMA console_audit IS 'Append-only Console security and operation e
 COMMENT ON SCHEMA console_extension IS 'Extension Controller-owned package, registration and revocation authority';
 COMMENT ON TABLE console_operation.operation IS 'State changes require compare-and-set on state_version by constrained functions';
 COMMENT ON TABLE console_operation.verification_receipt IS 'Idempotent verifier evidence derived from current owner state; callers cannot submit observations';
+COMMENT ON TABLE console_extension.registry_connection IS 'No-secret metadata authority for the fixed OpenSphere GHCR connection';
 COMMENT ON FUNCTION console_operation.accept_operation(
   uuid, uuid, bigint, bigint, text, text, text, text, text, text, text, text,
   boolean, text, text, text, text, jsonb
@@ -1466,5 +1566,7 @@ COMMENT ON FUNCTION console_extension.record_execution_failure(uuid, bigint, big
   IS 'Records a typed Failed or Unknown owner result under the current claim fence without raw error material';
 COMMENT ON FUNCTION console_extension.list_revocations(uuid, uuid, text)
   IS 'Returns the current C_EXT exact-digest revocation authority through a session-revalidated no-secret projection';
+COMMENT ON FUNCTION console_extension.get_registry_connection(uuid, uuid, text)
+  IS 'Returns fixed GHCR connection metadata without credential or SecretRef material after current authority checks';
 
 COMMIT;

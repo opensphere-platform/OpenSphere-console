@@ -4,4 +4,4 @@
 
 The runtime login inherits only `console_extension_controller`; it has no direct table mutation grant. Required configuration is `CONSOLE_EXTENSION_DATABASE_URL`. Optional settings are `CONSOLE_EXTENSION_WORKER_ID`, `CONSOLE_EXTENSION_LEASE_SECONDS`, `CONSOLE_EXTENSION_POLL_MS`, database pool/connect settings, and `PORT`.
 
-This slice proves the Supabase authority and idempotent revocation path. Package/Registration Kubernetes reconciliation, Registry projection verification, and the write-only credential broker remain later slices; `Applied` is not yet `Verified`.
+This slice proves the Supabase authority and idempotent revocation path. Console API now derives `Verified` in a separate transaction only when the C_EXT revocation row matches the fenced `Applied` receipt. Package/Registration Kubernetes reconciliation, live Registry connection verification, and the write-only credential broker remain later slices.

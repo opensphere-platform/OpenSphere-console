@@ -154,6 +154,18 @@ function verification(operationId, candidateBody, candidateHeaders = {}) {
 
 try {
   await waitForReady();
+  const connectionProjectionResponse = await fetch(
+    origin + '/api/admin/extensions/registry-connections/opensphere-ghcr',
+    { headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-registry-read-0001' } },
+  );
+  assert.equal(connectionProjectionResponse.status, 200);
+  const connectionProjection = await connectionProjectionResponse.json();
+  assert.equal(connectionProjection.authority, 'ConsoleRegistryConnectionMetadata');
+  assert.equal(connectionProjection.data.connectionId, 'opensphere-ghcr');
+  assert.equal(connectionProjection.data.configurationState, 'NotConfigured');
+  assert.equal(connectionProjection.data.credentialPresent, false);
+  assert.doesNotMatch(JSON.stringify(connectionProjection), /secretRef|credentialDigest|password|token/i);
+
   const accepted = await mutation();
   assert.equal(accepted.status, 202);
   assert.equal(accepted.headers.get('x-idempotent-replay'), 'false');
@@ -368,6 +380,7 @@ try {
     status: 'passed',
     operationId: receipt.operationId,
     durableCounts: evidence.rows[0],
+    registryConnectionProjection: true,
     replay: true,
     idempotencyMismatch: true,
     approval: approvalEvidence.rows[0],
