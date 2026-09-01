@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0",
+  "contractId": "opensphere.setup.platform-support-profile/v1",
+  "consumer": "OpenSphere-Setup-CLI",
+  "provider": "OpenSphere-Console.ExtensionController",
+  "resource": {
+    "apiGroup": "platform.opensphere.io",
+    "version": "v1alpha1",
+    "kind": "PlatformSupportProfile",
+    "plural": "platformsupportprofiles",
+    "scope": "Namespaced",
+    "statusSubresource": true
+  },
+  "requiredAssets": ["platform-support-profile-crd.yaml"],
+  "ownership": {
+    "crdLifecycle": "OpenSphere-Setup-CLI",
+    "statusWriter": "OpenSphere-Console.ExtensionController"
+  }
+}

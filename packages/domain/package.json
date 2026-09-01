@@ -1,0 +1,6 @@
+{
+  "name": "@opensphere/console-domain",
+  "private": true,
+  "type": "module",
+  "exports": "./src/operation-state.mjs"
+}

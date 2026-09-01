@@ -1,5 +1,5 @@
 import { Injectable, signal } from '@angular/core';
-import type { Capability } from '@opensphere/sdk';
+import type { Capability } from '@opensphere/console-contracts';
 import { CONSOLE_COMPOSITION_MANIFEST, validateConsoleComposition } from './console-composition.manifest';
 import type { SystemPluginContractFailure, SystemPluginDescriptor } from './system-plugin-contract';
 

@@ -1,34 +1,23 @@
-# Build context: OpenSphere-Platform-V2 root.
-# The canonical Console source depends on the sibling OpenSphere-SDK package.
+# Build context: the OpenSphere-Console repository root.
 FROM docker.io/library/node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS build
-ARG SDK_SOURCE_REVISION
-WORKDIR /app/OpenSphere-console
-COPY OpenSphere-SDK /app/OpenSphere-SDK
-COPY OpenSphere-console/sdk-source.lock /app/sdk-source.lock
-RUN test -n "${SDK_SOURCE_REVISION}" \
-    && echo "${SDK_SOURCE_REVISION}" | grep -Eq '^[a-f0-9]{40}$' \
-    && test "$(tr -d '\r\n' </app/sdk-source.lock)" = "${SDK_SOURCE_REVISION}" \
-    && cd /app/OpenSphere-SDK \
-    && npm install --no-audit --no-fund \
-    && npm run build
-COPY OpenSphere-console/package.json OpenSphere-console/package-lock.json ./
+WORKDIR /app
+COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund --legacy-peer-deps
-COPY OpenSphere-console/angular.json OpenSphere-console/tsconfig.json OpenSphere-console/tsconfig.app.json OpenSphere-console/tsconfig.spec.json ./
-COPY OpenSphere-console/scripts ./scripts
-COPY OpenSphere-console/nginx ./nginx
-COPY OpenSphere-console/public ./public
-COPY OpenSphere-console/src ./src
+COPY angular.json tsconfig.json tsconfig.app.json tsconfig.spec.json ./
+COPY packages ./packages
+COPY scripts ./scripts
+COPY nginx ./nginx
+COPY public ./public
+COPY src ./src
 RUN npm run build -- --configuration production
 
 FROM docker.io/nginxinc/nginx-unprivileged@sha256:592b23aa79a6e6c08ba4b20f1fff700e1328895705966722608e115d62e52d39
-ARG SDK_SOURCE_REVISION
-LABEL io.opensphere.sdk-source-revision="${SDK_SOURCE_REVISION}"
 ENV OS_PLUGIN_NAMESPACE=opensphere-console
 USER root
 RUN apk del --no-cache curl
 USER 101
-COPY --from=build /app/OpenSphere-console/dist/opensphere-console/browser /usr/share/nginx/html
-COPY OpenSphere-console/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /app/dist/opensphere-console/browser /usr/share/nginx/html
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 RUN set -eu; \
     grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json; \
     grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js; \

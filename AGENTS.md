@@ -1,25 +1,11 @@
-# OpenSphere Console operating memory
+# OpenSphere Console working rules
 
-빌드·공식 버전·채널·GHCR 게시·배포의 유일한 권위는 다음 문서다.
-
-`../_DOCS_/01-CONSTITUTION/CONSTITUTION-0005-OCI-IMAGE-CHANNEL-PROMOTION-INSTALLATION-POLICY.md`
-
-상세 Edge·GA 실행 절차:
-
-`../_DOCS_/01-CONSTITUTION/RUNBOOK-0005-EDGE-GA-BUILD-PUBLISH-DEPLOY.md`
-
-작업 전에 이 문서를 읽고 그대로 적용한다. 하위 README, workflow 또는 과거 runbook의 중복 규칙을 우선하지 않는다.
-
-현재 Windows 개발 호스트에서 별도 채널 없이 “빌드해서 배포”를 요청받으면:
-
-1. `docker-desktop`과 전체 node `amd64`를 확인한다.
-2. 변경 component를 로컬에서 `linux/amd64` 하나로 build한다.
-3. GHCR에 KST `yyyyMMddHHmm` 공식 version과 immutable digest를 push한다.
-4. 검증한 digest에 canonical `edge` tag를 부여한다.
-5. manifest를 exact digest로 갱신하고 `docker-desktop`에 배포한다.
-6. rollout, API, Registry와 실제 UI를 확인한다.
-
-Edge에 GitHub Actions를 사용하지 않는다. subShell/plugin Edge는 Docker Desktop 전용
-`opensphere-edge-local-v1` P-256 trust를 사용하며 GA 승인키가 없다는 이유로 중단하지 않는다.
-이 산출물은 GA로 승격하지 않는다. GA는 승인된 GitHub Workflow만 사용하고 clean
-`linux/amd64,linux/arm64` rebuild와 공급망 증거를 요구한다.
+- The active design authority is `../DESIGN/20-MODULE/OpenSphere-Console/CONSOLE-DESIGN-INDEX.md`.
+- Platform-wide repository, build, GHCR, channel, design-system, security, error, naming, and source rules are inherited through that index. Do not treat archived `_DOCS_` files, bundled Manual content, old reports, or comments as current authority.
+- `main` revision `0d3f56ab97b717dc1c4c8f83ce3725c69f01b20d` is historical implementation evidence. Reconstruct product contracts and verified behavior; do not preserve large routers, accumulated migrations, legacy names, direct sibling-source imports, or operational workarounds merely because they exist.
+- Console owns Web/API, Registry, CLI, OS Shell, OSAA/OSDST, Extension Controller, Recovery, and Gitea bootstrap as native capabilities. Keep package, process/image, service identity, credential, data-writer, and failure boundaries separate.
+- New public or internal HTTP behavior requires an operation in `packages/contracts/openapi/console-v1.yaml`, referenced JSON Schema, authorization/idempotency/error semantics, and a contract test.
+- New code must not read another repository's source path. Cross-repository compatibility is proven with versioned contracts and provider/consumer conformance fixtures.
+- Never store private keys, PATs, service-role secrets, passwords, kubeconfig, or browser-readable refresh tokens in the repository. Test keys must be generated in a temporary directory for each test.
+- Keep build, publish, promotion, deploy, and runtime verification separate. No publish, channel movement, deployment, remote write, or credential migration is implied by a code change request.
+- Every implementation change maps to at least one `CON-FR-*`, C4 owner, contract/schema, runtime scenario, and acceptance gate.

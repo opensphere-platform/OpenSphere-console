@@ -1,4 +1,4 @@
-import type { OperatorSessionView } from '@opensphere/sdk';
+import type { OperatorSessionView } from '@opensphere/console-contracts';
 
 export type OsShellReadinessState = 'Disabled' | 'Checking' | 'Blocked' | 'Ready';
 export type OsShellAttachState =

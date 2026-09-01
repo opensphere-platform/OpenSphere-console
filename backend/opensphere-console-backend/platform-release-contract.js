@@ -37,11 +37,13 @@ const LOCAL_EDGE_TRUST = Object.freeze({
 const RELEASE_TRUST = Object.freeze({
   type: 'github-actions-attestation/v2',
   repository: 'opensphere-platform/OpenSphere-console',
-  signerWorkflow: 'opensphere-platform/OpenSphere-console/.github/workflows/publish-ga-images.yml',
+  signerWorkflow: 'opensphere-platform/OpenSphere-console/.github/workflows/publish-candidate-images.yml',
+  promoterWorkflow: 'opensphere-platform/OpenSphere-console/.github/workflows/promote-release.yml',
   oidcIssuer: 'https://token.actions.githubusercontent.com',
   sourceRef: 'refs/heads/main',
   provenancePredicate: 'https://slsa.dev/provenance/v1',
   sbomPredicate: 'https://spdx.dev/Document/v2.3',
+  promotionPredicate: 'https://opensphere.io/attestations/channel-promotion/v1',
 });
 const COMPONENT_REPOSITORIES = Object.freeze({
   console: 'opensphere-console',
@@ -168,7 +170,7 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
   if (!REVISION_RE.test(String(lock.sourceRevision || ''))) throw new Error('targetLock sourceRevision is invalid');
   assertClosedObject(lock.trust, [
     'type', 'repository', 'publisher', 'buildAuthority', 'releaseClass', 'gaEligible',
-    'signerWorkflow', 'oidcIssuer', 'sourceRef', 'provenancePredicate', 'sbomPredicate',
+    'signerWorkflow', 'promoterWorkflow', 'oidcIssuer', 'sourceRef', 'provenancePredicate', 'sbomPredicate', 'promotionPredicate',
   ], 'targetLock.trust');
   const localEdge = canonicalJson(lock.trust) === canonicalJson(LOCAL_EDGE_TRUST);
   const signedRelease = canonicalJson(lock.trust) === canonicalJson(RELEASE_TRUST);

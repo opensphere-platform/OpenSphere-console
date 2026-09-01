@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0",
+  "contractId": "opensphere.cluster-manager.owner-capabilities/v1",
+  "owner": "OpenSphere-Cluster-Manager",
+  "capabilityProtocol": "opensphere.io/osaa-owner/v1",
+  "capabilities": {
+    "hiss": [
+      "observability-config-read",
+      "observability-plan",
+      "observability-configure"
+    ],
+    "ceph": [
+      "status-read",
+      "connection-plan",
+      "connect",
+      "disconnect"
+    ]
+  },
+  "security": {
+    "mutationPermission": "console.his.manage",
+    "assurance": "aal2",
+    "secretInputPolicy": "StagedSecretRefOnly",
+    "unknownProperties": "reject"
+  }
+}

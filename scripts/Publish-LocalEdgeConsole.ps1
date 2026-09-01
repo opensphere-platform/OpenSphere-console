@@ -103,15 +103,14 @@ $changedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $baseRevision
 if (-not $changedPaths.Count) { throw 'Console publication has no source delta.' }
 $consolePaths = @($changedPaths | Where-Object {
   $_ -like 'src/*' -or $_ -like 'public/*' -or $_ -like 'nginx/*' -or
+  $_ -like 'packages/contracts/*' -or
   $_ -in @(
-    'Dockerfile', 'angular.json', 'package.json', 'package-lock.json', 'sdk-source.lock',
+    'Dockerfile', 'angular.json', 'package.json', 'package-lock.json',
     'tsconfig.json', 'tsconfig.app.json', 'scripts/Publish-LocalEdgeConsole.ps1'
   )
 })
 if (-not $consolePaths.Count) { throw 'Console publication delta does not contain a Console UI or publisher change.' }
 
-$sdkRevision = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'sdk-source.lock')).Trim()
-if ($sdkRevision -notmatch '^[a-f0-9]{40}$') { throw 'sdk-source.lock is not canonical.' }
 $epoch = [long](((Invoke-Checked git -C $repoRoot show -s --format=%ct $sourceRevision) -join '').Trim())
 $releaseTag = [DateTimeOffset]::FromUnixTimeSeconds($epoch).ToOffset([TimeSpan]::FromHours(9)).ToString('yyyyMMddHHmm')
 $repository = "$Registry/opensphere-console"
@@ -124,22 +123,11 @@ $outputRoot = if (Test-Path -LiteralPath $outputRootBase) {
 } else { $outputRootBase }
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) "opensphere-console-edge-$([Guid]::NewGuid().ToString('N'))"
 $consoleCheckout = Join-Path $buildRoot 'OpenSphere-console'
-$sdkCheckout = Join-Path $buildRoot 'OpenSphere-SDK'
 $metadataFile = Join-Path $buildRoot 'metadata.json'
 New-Item -ItemType Directory -Path $buildRoot, $outputRoot | Out-Null
 
 try {
   Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $sourceRevision | Out-Null
-  Invoke-Checked git init $sdkCheckout | Out-Null
-  Invoke-Checked git -C $sdkCheckout remote add origin https://github.com/opensphere-platform/OpenSphere-SDK.git | Out-Null
-  Invoke-Checked git -C $sdkCheckout fetch --depth 1 origin $sdkRevision | Out-Null
-  Invoke-Checked git -C $sdkCheckout checkout --detach $sdkRevision | Out-Null
-  if (((Invoke-Checked git -C $sdkCheckout rev-parse HEAD) -join '').Trim() -cne $sdkRevision) {
-    throw 'Detached SDK source differs from sdk-source.lock.'
-  }
-
-  Invoke-Checked npm --prefix $sdkCheckout install --no-audit --no-fund | Out-Null
-  Invoke-Checked npm --prefix $sdkCheckout run build | Out-Null
   Invoke-Checked npm --prefix $consoleCheckout ci --no-audit --no-fund --legacy-peer-deps | Out-Null
   Invoke-Checked npm --prefix $consoleCheckout run build -- --configuration=production | Out-Null
 
@@ -162,9 +150,8 @@ try {
     '--label','opensphere.io/build-authority=localhost',
     '--label','opensphere.io/release-class=pre-ga',
     '--label','opensphere.io/ga-eligible=false',
-    '--build-arg',"SDK_SOURCE_REVISION=$sdkRevision",
     '--file',(Join-Path $consoleCheckout 'Dockerfile'),
-    $buildRoot
+    $consoleCheckout
   )
   Invoke-Checked docker @arguments | Out-Null
   $digest = [string](Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json).'containerimage.digest'
@@ -192,7 +179,6 @@ try {
     versionTag = $releaseTag
     source = 'https://github.com/opensphere-platform/OpenSphere-console'
     sourceRevision = $sourceRevision
-    sdkSourceRevision = $sdkRevision
     artifacts = [ordered]@{
       supabaseMigrationManifest = [ordered]@{
         path = 'backend/supabase/migrations/manifest.json'

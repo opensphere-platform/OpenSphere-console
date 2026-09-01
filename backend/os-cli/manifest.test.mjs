@@ -1,20 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, createPublicKey, verify } from 'node:crypto';
+import { createHash, generateKeyPairSync, verify } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { canonicalUpdatePayload, generateManifest, localDevelopmentKeyId } from './generate-manifest.mjs';
 
-const localPublicKey = createPublicKey({
-  key: Buffer.from('MCowBQYDK2VwAyEAq5OF9nQUWzq/tgc4cThcXpb0cjvKWiwFrmsqa36ArqI=', 'base64'),
-  type: 'spki',
-  format: 'der',
-});
-const localPrivateKeyPem = `-----BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2VwBCIEIPKEGYePJEuX0e4DDJ+Gqkb0t9BYrRcGIoiBOSKAztNC
------END PRIVATE KEY-----
-`;
+const generatedSigningKey = generateKeyPairSync('ed25519');
+const localPublicKey = generatedSigningKey.publicKey;
+const localPublicKeyBase64 = localPublicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+const localPrivateKeyPem = generatedSigningKey.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+
+async function localSigningOptions(directory, profile = 'local') {
+  const privateKeyPath = join(directory, 'manifest-signing-key.pem');
+  await writeFile(privateKeyPath, localPrivateKeyPem, { mode: 0o600 });
+  return {
+    profile,
+    keyId: profile === 'local' ? localDevelopmentKeyId : 'opensphere-cli-production-test',
+    privateKeyPath,
+    publicKeyBase64: localPublicKeyBase64,
+  };
+}
 
 test('release manifest is hydrated from the exact compiled CLI artifacts', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'opensphere-cli-manifest-'));
@@ -27,7 +33,7 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
     const output = join(artifacts, 'index.json');
     await writeFile(input, JSON.stringify({ version: '0.4.0', links: [{ href: '/api/cli/os-test', size: 1, sha256: '0'.repeat(64) }] }));
 
-    const manifest = await generateManifest(input, artifacts, output);
+    const manifest = await generateManifest(input, artifacts, output, await localSigningOptions(dir));
     assert.equal(manifest.links[0].size, bytes.byteLength);
     assert.equal(manifest.links[0].sha256, createHash('sha256').update(bytes).digest('hex'));
     assert.equal(manifest.signature.algorithm, 'Ed25519');
@@ -42,6 +48,7 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
 test('the independent CLI artifact image compiles the manifest version', async () => {
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
   const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
+  const manifestGenerator = await readFile(new URL('./generate-manifest.mjs', import.meta.url), 'utf8');
   const runtimeDockerfile = await readFile(new URL('./Dockerfile.runtime', import.meta.url), 'utf8');
   const releaseManifest = JSON.parse(await readFile(new URL('./index.json', import.meta.url), 'utf8'));
   const escapedVersion = releaseManifest.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -55,6 +62,9 @@ test('the independent CLI artifact image compiles the manifest version', async (
   assert.match(cliDockerfile, /COPY go\.mod go\.sum \.\//);
   assert.match(cliDockerfile, /CLI_UPDATE_SIGNING_PROFILE/);
   assert.match(cliDockerfile, /cli_update_signing_key/);
+  assert.match(cliDockerfile, /cli_update_signing_key,required=true/);
+  assert.doesNotMatch(manifestGenerator, /BEGIN PRIVATE KEY/);
+  assert.match(manifestGenerator, /private-key secret path/);
   assert.doesNotMatch(rootDockerfile, /backend\/os-cli|cli-manifest|cli-build|CLI_UPDATE_/);
   assert.deepEqual(
     releaseManifest.links.map(({ os, arch }) => `${os}/${arch}`),
@@ -81,7 +91,7 @@ test('CLI publication authority requires the independent GitHub code owner', asy
 test('the macOS CLI is an optional build input that a release turns back into a requirement', async () => {
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
   const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
-  const workflow = await readFile(new URL('../../.github/workflows/publish-ga-images.yml', import.meta.url), 'utf8');
+  const workflow = await readFile(new URL('../../.github/workflows/publish-candidate-images.yml', import.meta.url), 'utf8');
   const publisher = await readFile(new URL('../../scripts/Publish-LocalEdge.ps1', import.meta.url), 'utf8');
 
   // Defaulting to an empty context is what lets a Windows host build the Console
@@ -99,20 +109,18 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   assert.match(cliDockerfile, /if \[ "\$\{CLI_REQUIRE_DARWIN\}" = "true" \]/, 'a release must still fail without darwin');
   assert.doesNotMatch(rootDockerfile, /CLI_DARWIN_CONTEXT|CLI_REQUIRE_DARWIN/);
 
-  // GA re-arms the requirement, so a release can never ship the reduced set.
+  // The GA-lineage candidate re-arms the requirement, so a release can never ship the reduced set.
   assert.match(workflow, /CLI_DARWIN_CONTEXT=macos-cli/);
   assert.match(workflow, /CLI_REQUIRE_DARWIN=true/);
 
   // The local edge publisher no longer recycles darwin binaries out of the
   // previous image, so an unrelated backend/os-cli commit cannot block it.
-  // The only named context it may add is the clean, revision-recorded Setup
-  // checkout consumed by the backend Platform Release executor.
+  // Console contracts are repository-local. The only named source context
+  // retained is the clean Setup checkout consumed by the Backend executor.
   assert.doesNotMatch(publisher, /--build-context[^\r\n]*darwin/i);
-  assert.match(publisher, /Get-Content -LiteralPath \$sdkSourceLockPath -Raw/);
-  assert.match(publisher, /git -C \$sdkCheckout fetch --depth 1 origin \$sdkSourceRevision/);
-  assert.match(publisher, /git -C \$sdkCheckout checkout --detach \$sdkSourceRevision/);
-  assert.match(publisher, /'--build-arg', "SDK_SOURCE_REVISION=\$sdkSourceRevision"/);
-  assert.doesNotMatch(publisher, /git clone --depth 1 --branch main \$SdkRepository \$sdkCheckout/);
+  assert.doesNotMatch(publisher, /sdk-source|sdkCheckout|SDK_SOURCE_REVISION/);
+  assert.match(rootDockerfile, /COPY packages \.\/packages/);
+  assert.match(publisher, /Key = 'console'; Image = 'opensphere-console'; Context = \$consoleCheckout/);
   assert.match(publisher, /git clone --depth 1 --branch main \$SetupRepository \$setupCheckout/);
   assert.match(publisher, /'--build-context', "setup-cli=\$\(\$item\.SetupContext\)"/);
   assert.match(publisher, /'--build-arg', "SETUP_SOURCE_REVISION=\$setupSourceRevision"/);
@@ -120,6 +128,7 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   assert.doesNotMatch(publisher, /opensphere-cli-darwin/);
   assert.doesNotMatch(publisher, /backend\/os-cli changed/);
   assert.match(publisher, /Key = 'cliArtifacts'; Image = 'opensphere-os-cli'/);
+  assert.match(publisher, /id=cli_update_signing_key,src=\$resolvedCliKey/);
 });
 
 test('the shell proxies downloads to the independently ready CLI artifact service', async () => {
@@ -172,7 +181,7 @@ test('production manifest signing binds the secret private key to the pinned pub
       profile: 'production',
       keyId: 'opensphere-cli-production-test',
       privateKeyPath,
-      publicKeyBase64: 'MCowBQYDK2VwAyEAq5OF9nQUWzq/tgc4cThcXpb0cjvKWiwFrmsqa36ArqI=',
+      publicKeyBase64: localPublicKeyBase64,
     };
     const manifest = await generateManifest(input, dir, join(dir, 'output.json'), options);
     assert.equal(manifest.signature.keyId, options.keyId);
@@ -212,7 +221,10 @@ test('a build without the macOS toolchain publishes what it produced and names w
     // The default stays fail-closed so a release cannot lose a platform silently.
     await assert.rejects(() => generateManifest(input, dir, join(dir, 'strict.json')), /ENOENT/);
 
-    const manifest = await generateManifest(input, dir, join(dir, 'edge.json'), { omitMissing: true });
+    const manifest = await generateManifest(input, dir, join(dir, 'edge.json'), {
+      ...(await localSigningOptions(dir)),
+      omitMissing: true,
+    });
     assert.deepEqual(manifest.links.map((l) => `${l.os}/${l.arch}`), ['linux/amd64']);
     assert.deepEqual(manifest.omittedPlatforms, ['darwin/arm64']);
     // The signature must cover the reduced set, not the declared catalogue.

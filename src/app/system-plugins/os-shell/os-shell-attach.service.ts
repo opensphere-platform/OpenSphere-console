@@ -1,6 +1,6 @@
 import { Injectable, NgZone, effect, inject } from '@angular/core';
 import { AuthService } from '../../core/auth.service';
-import type { PtyServerFrame } from '@opensphere/sdk';
+import type { PtyServerFrame } from '@opensphere/console-contracts';
 import { OsShellSessionService } from './os-shell-session.service';
 import {
   MAX_STDIN_FRAME_BYTES,

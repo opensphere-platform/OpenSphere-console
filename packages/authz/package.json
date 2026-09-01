@@ -1,0 +1,6 @@
+{
+  "name": "@opensphere/console-authz",
+  "private": true,
+  "type": "module",
+  "exports": "./src/authorize-operation.mjs"
+}

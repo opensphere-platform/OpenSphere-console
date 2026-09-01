@@ -4,10 +4,6 @@ import { pathToFileURL } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
 
 export const localDevelopmentKeyId = 'opensphere-cli-local-dev-v1';
-const localDevelopmentPrivateKey = `-----BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2VwBCIEIPKEGYePJEuX0e4DDJ+Gqkb0t9BYrRcGIoiBOSKAztNC
------END PRIVATE KEY-----
-`;
 
 export function canonicalUpdatePayload(manifest) {
   const clean = (value, field) => {
@@ -33,19 +29,17 @@ export function canonicalUpdatePayload(manifest) {
 
 async function signingMaterial(options) {
   const profile = options.profile || 'local';
-  if (profile === 'local') {
-    return { keyId: localDevelopmentKeyId, privateKey: createPrivateKey(localDevelopmentPrivateKey) };
-  }
-  if (profile !== 'production') throw new Error(`unsupported CLI signing profile: ${profile}`);
-  if (!options.keyId || !options.privateKeyPath || !options.publicKeyBase64) {
-    throw new Error('production CLI signing requires key id, private-key secret path, and pinned public key');
+  if (!['local', 'production'].includes(profile)) throw new Error('unsupported CLI signing profile: ' + profile);
+  const keyId = options.keyId || (profile === 'local' ? localDevelopmentKeyId : '');
+  if (!keyId || !options.privateKeyPath || !options.publicKeyBase64) {
+    throw new Error(profile + ' CLI signing requires key id, private-key secret path, and pinned public key');
   }
   const privateKey = createPrivateKey(await readFile(options.privateKeyPath, 'utf8'));
   const derivedPublic = createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).toString('base64');
   if (derivedPublic !== options.publicKeyBase64) {
-    throw new Error('production CLI signing private key does not match the public key pinned into the CLI');
+    throw new Error(profile + ' CLI signing private key does not match the public key pinned into the CLI');
   }
-  return { keyId: options.keyId, privateKey };
+  return { keyId, privateKey };
 }
 
 export async function generateManifest(manifestPath, artifactsDir, outputPath, options = {}) {

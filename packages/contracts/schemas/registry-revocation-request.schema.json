@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:registry-revocation-request:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "reason", "confirmation"],
+  "properties": {
+    "image": { "type": "string", "pattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$" },
+    "reason": { "type": "string", "minLength": 3, "maxLength": 500 },
+    "confirmation": { "type": "string", "minLength": 72, "maxLength": 512 }
+  }
+}

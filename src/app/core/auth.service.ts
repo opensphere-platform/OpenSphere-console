@@ -278,7 +278,6 @@ export class AuthService {
       this.loginRequired.set(false);
       return;
     }
-    if (await this.adoptLegacySession()) return;
     try {
       await this.refreshAuthorization();
       this.loginRequired.set(false);
@@ -298,40 +297,6 @@ export class AuthService {
       this.authorityWarning.set(String(error instanceof Error ? error.message : error));
     }
     this.loginRequired.set(true);
-  }
-
-  private async adoptLegacySession(): Promise<boolean> {
-    if (this.cookieValue('__Host-opensphere_csrf')) return false;
-    let legacy: { refresh_token?: string } | null = null;
-    try {
-      legacy = JSON.parse(window.sessionStorage.getItem('opensphere.supabase.session') || 'null') as { refresh_token?: string } | null;
-    } catch {
-      legacy = null;
-    }
-    if (!legacy?.refresh_token) return false;
-    try {
-      const body = await this.api<{ mfaRequired?: boolean; session?: BrowserSession }>(
-        '/api/identity/session/adopt',
-        {
-          method: 'POST',
-          body: JSON.stringify({ refreshToken: legacy.refresh_token }),
-        },
-        false,
-      );
-      this.currentSession.set(body.session || null);
-      this.mfaRequired.set(Boolean(body.mfaRequired));
-      if (body.mfaRequired) {
-        this.loginRequired.set(true);
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    } finally {
-      // The refresh credential was either rotated or rejected. Never leave a
-      // second browser-readable copy after the one-time migration attempt.
-      try { window.sessionStorage.removeItem('opensphere.supabase.session'); } catch { /* storage unavailable */ }
-    }
   }
 
   async login(email: string, password: string): Promise<void> {

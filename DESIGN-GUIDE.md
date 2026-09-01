@@ -377,9 +377,9 @@ rg -n 'DESIGN-RULES\.md|DESIGN-TOKENS\.md|dupa-nav-contribution-contract\.md' .
 
 ## 11. 유지관리
 
-- 이 문서만 디자인 정책의 정본으로 유지한다. 별도의 하위 디자인 규칙·토큰·내비 계약 문서를 만들지 않는다.
-- 세부 예시도 이 문서의 해당 절에 추가한다.
-- Clarity release나 Logo API가 바뀌면 먼저 영향 분석과 승인 후 이 문서를 갱신한다.
+- 플랫폼 디자인 정책 정본은 `../DESIGN/03-EXPERIENCE/`이다. 이 문서는 Console 구현용 호환 가이드이며 정본과 충돌할 수 없다.
+- Console 전용 세부 예시는 이 문서에 추가하되, 공통 토큰·레이아웃·타이포그래피·자산 규칙은 플랫폼 정본을 먼저 갱신한다.
+- Clarity release나 Logo API가 바뀌면 영향 분석과 승인 후 플랫폼 정본과 이 호환 가이드를 함께 갱신한다.
 - 예외는 영구 권리가 아니다. Clarity가 대응 기능을 제공하면 재검토하여 제거한다.
 - 구현과 문서가 다르면 구현을 정당화하지 않고 위반 또는 문서 변경 승인 대상으로 보고한다.
 
@@ -388,5 +388,7 @@ rg -n 'DESIGN-RULES\.md|DESIGN-TOKENS\.md|dupa-nav-contribution-contract\.md' .
 - Clarity Design System: https://clarity.design/
 - OpenSphere Logos agent guide: https://logos.opl.io.kr/llms.txt
 - OpenSphere Logos OpenAPI: https://logos.opl.io.kr/openapi.json
-- Shell hosting integration constitution:
-  `../_DOCS_/01-CONSTITUTION/CONSTITUTION-0003-SHELL-HOSTING-INTEGRATION.md`
+- OpenSphere Design System Policy:
+  `../DESIGN/03-EXPERIENCE/EXPERIENCE-PLATFORM-DESIGN-SYSTEM-POLICY.md`
+- Shell isolation decision:
+  `../DESIGN/07-DECISION/DECISION-PLATFORM-SHELL-ISOLATION-ADR-0006.md`

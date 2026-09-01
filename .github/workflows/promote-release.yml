@@ -1,0 +1,140 @@
+name: Promote Console Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_channel:
+        description: Next channel in the candidate to stable to ga chain
+        required: true
+        type: choice
+        options: [stable, ga]
+      source_revision:
+        description: Exact 40-character source revision built by the candidate workflow
+        required: true
+        type: string
+      release_tag:
+        description: Immutable yyyyMMddHHmm release tag created by the candidate workflow
+        required: true
+        type: string
+      approval_ticket:
+        description: Review or change-approval reference
+        required: true
+        type: string
+      azure_release_evidence:
+        description: Required for ga; immutable Azure release-source evidence reference
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+concurrency:
+  group: console-promote-${{ inputs.target_channel }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target_channel == 'ga' && 'console-ga' || 'console-stable' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - name: Login to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "$GH_TOKEN"
+      - name: Verify adjacent source channel and exact release family
+        id: verify
+        env:
+          TARGET_CHANNEL: ${{ inputs.target_channel }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          APPROVAL_TICKET: ${{ inputs.approval_ticket }}
+          AZURE_RELEASE_EVIDENCE: ${{ inputs.azure_release_evidence }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_TAG" =~ ^[0-9]{12}$ ]]
+          test -n "$APPROVAL_TICKET"
+          case "$TARGET_CHANNEL" in
+            stable) source_channel=candidate ;;
+            ga) source_channel=stable; test -n "$AZURE_RELEASE_EVIDENCE" ;;
+            *) echo 'target channel is outside the closed promotion chain' >&2; exit 1 ;;
+          esac
+          images=(
+            opensphere-console
+            opensphere-console-backend
+            opensphere-console-dupa-controller
+            opensphere-registry
+            opensphere-console-osaa-gateway
+            opensphere-osdst
+            opensphere-osaa-governed-adapter
+            opensphere-console-notification-dispatcher
+            opensphere-console-recovery
+            opensphere-console-gitea
+            opensphere-console-supabase-postgres
+            opensphere-console-supabase-auth
+            opensphere-console-supabase-rest
+            opensphere-console-supabase-storage
+            opensphere-console-gitea-postgres
+            opensphere-os-cli
+          )
+          components='{}'
+          for image in "${images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            source_digest="$(crane digest "$repository:$source_channel")"
+            release_digest="$(crane digest "$repository:$RELEASE_TAG")"
+            revision="$(crane config "$repository@$source_digest" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
+            built_channel="$(crane config "$repository@$source_digest" | jq -r '.config.Labels["io.opensphere.built-channel"] // empty')"
+            test "$source_digest" = "$release_digest"
+            test "$revision" = "$SOURCE_REVISION"
+            test "$built_channel" = candidate
+            components="$(jq -c --arg image "$image" --arg digest "$source_digest" '. + {($image): $digest}' <<<"$components")"
+          done
+          jq -n \
+            --arg schemaVersion '1.0' \
+            --arg sourceChannel "$source_channel" \
+            --arg targetChannel "$TARGET_CHANNEL" \
+            --arg sourceRevision "$SOURCE_REVISION" \
+            --arg releaseTag "$RELEASE_TAG" \
+            --arg approvalTicket "$APPROVAL_TICKET" \
+            --arg azureReleaseEvidence "$AZURE_RELEASE_EVIDENCE" \
+            --arg actor "$GITHUB_ACTOR" \
+            --argjson components "$components" \
+            '{schemaVersion: $schemaVersion, sourceChannel: $sourceChannel, targetChannel: $targetChannel,
+              sourceRevision: $sourceRevision, releaseTag: $releaseTag, approvalTicket: $approvalTicket,
+              azureReleaseEvidence: (if ($azureReleaseEvidence | length) > 0 then $azureReleaseEvidence else null end),
+              actor: $actor, components: $components}' \
+            > "$RUNNER_TEMP/opensphere-promotion-receipt.json"
+          anchor_digest="$(jq -r '.components["opensphere-console"]' "$RUNNER_TEMP/opensphere-promotion-receipt.json")"
+          echo "anchor-digest=$anchor_digest" >> "$GITHUB_OUTPUT"
+          echo "source-channel=$source_channel" >> "$GITHUB_OUTPUT"
+      - name: Attest promotion receipt before moving the channel
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ghcr.io/opensphere-platform/opensphere-console
+          subject-digest: ${{ steps.verify.outputs.anchor-digest }}
+          predicate-type: https://opensphere.io/attestations/channel-promotion/v1
+          predicate-path: ${{ runner.temp }}/opensphere-promotion-receipt.json
+          push-to-registry: true
+      - name: Advance target channel with Console anchor last
+        env:
+          TARGET_CHANNEL: ${{ inputs.target_channel }}
+        run: |
+          set -euo pipefail
+          receipt="$RUNNER_TEMP/opensphere-promotion-receipt.json"
+          for image in $(jq -r '.components | keys[] | select(. != "opensphere-console")' "$receipt"); do
+            digest="$(jq -r --arg image "$image" '.components[$image]' "$receipt")"
+            repository="ghcr.io/opensphere-platform/$image"
+            crane tag "$repository@$digest" "$TARGET_CHANNEL"
+            test "$(crane digest "$repository:$TARGET_CHANNEL")" = "$digest"
+          done
+          anchor_repository='ghcr.io/opensphere-platform/opensphere-console'
+          anchor_digest="$(jq -r '.components["opensphere-console"]' "$receipt")"
+          crane tag "$anchor_repository@$anchor_digest" "$TARGET_CHANNEL"
+          test "$(crane digest "$anchor_repository:$TARGET_CHANNEL")" = "$anchor_digest"
+          echo "Promoted ${{ steps.verify.outputs.source-channel }} → $TARGET_CHANNEL at $anchor_digest" >> "$GITHUB_STEP_SUMMARY"

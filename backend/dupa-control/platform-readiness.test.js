@@ -435,11 +435,15 @@ test('selected Crossplane adapter is part of live Delivery readiness', () => {
 
 test('bootstrap owns the PlatformSupportProfile CRD lifecycle', () => {
   const crd = read('backend', 'dupa-control', 'platform-support-profile-crd.yaml');
-  const setup = fs.readFileSync(path.resolve(root, '..', 'OpenSphere-Setup-CLI', 'src', 'bootstrap.mjs'), 'utf8');
+  const setupContract = JSON.parse(read('packages', 'contracts', 'consumers', 'setup-cli-platform-support-profile.json'));
   assert.match(crd, /kind: PlatformSupportProfile/);
   assert.match(crd, /subresources:\s*\n\s*status:/);
-  assert.match(setup, /platformsupportprofiles\.platform\.opensphere\.io/);
-  assert.match(setup, /platform-support-profile-crd\.yaml/);
+  assert.equal(setupContract.consumer, 'OpenSphere-Setup-CLI');
+  assert.equal(setupContract.resource.plural, 'platformsupportprofiles');
+  assert.equal(setupContract.resource.apiGroup, 'platform.opensphere.io');
+  assert.equal(setupContract.resource.statusSubresource, true);
+  assert.deepEqual(setupContract.requiredAssets, ['platform-support-profile-crd.yaml']);
+  assert.equal(setupContract.ownership.crdLifecycle, 'OpenSphere-Setup-CLI');
 });
 
 test('SecurityPolicy readiness requires a real server dry-run denial from the canonical admission policy', () => {

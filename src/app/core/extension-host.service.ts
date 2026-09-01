@@ -17,9 +17,9 @@ import {
   parseStoredConsoleNavigationSnapshot,
 } from './console-navigation-snapshot';
 import { OS_SHELL_STANDALONE_BOOT } from './boot-mode';
-import { normalizeManifest, isKnownCapability } from '@opensphere/sdk';
-import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/sdk';
-export type { PluginPage, NavNode } from '@opensphere/sdk';
+import { normalizeManifest, isKnownCapability } from '@opensphere/console-contracts';
+import type { PluginPage, NavNode, SearchProvider, Manifest, ManifestAsset, NormalizedManifest, PluginModule, Capability } from '@opensphere/console-contracts';
+export type { PluginPage, NavNode } from '@opensphere/console-contracts';
 
 /**
  * Extension Host — dynamic-ui §5.2의 구현 + manifest v2 보안 계약(§15, 팀장 검토 ② blocker).
@@ -39,7 +39,7 @@ export type { PluginPage, NavNode } from '@opensphere/sdk';
 
 export const SHELL_VERSION = '0.3.6';
 
-// 권한 scope 어휘(C1)·PluginPage·NavNode는 @opensphere/sdk가 SSOT(위에서 re-export).
+// 권한 scope 어휘(C1)·PluginPage·NavNode는 versioned Console contract package가 SSOT다.
 // 닫힌 집합 검증은 isKnownCapability().
 
 export type PluginLoadState = 'queued' | 'loading' | 'ready' | 'failed';

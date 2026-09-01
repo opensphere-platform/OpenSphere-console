@@ -3,9 +3,11 @@ param(
   [string]$Registry = 'ghcr.io/opensphere-platform',
   [string]$SourceRevision = '',
   [string]$Platform = '',
-  [string]$SdkRepository = 'https://github.com/opensphere-platform/OpenSphere-SDK.git',
   [string]$SetupRepository = 'https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git',
   [string]$SetupSourcePath = '',
+  [string]$CliUpdateSigningKeyPath = '',
+  [string]$CliUpdateSigningKeyId = 'opensphere-cli-local-dev-v1',
+  [string]$CliUpdateSigningPublicKey = '',
   [switch]$UseExistingRegistryLogin,
   [switch]$AdvanceOsShellUxConsoleEdge,
   [ValidateSet('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend', 'dupaController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
@@ -148,7 +150,6 @@ $localTag = "local-$($SourceRevision.Substring(0, 12))"
 $platformRoot = Split-Path $repoRoot -Parent
 $workspace = Join-Path $platformRoot ".codex-tmp\local-edge-$($SourceRevision.Substring(0, 12))"
 $consoleCheckout = Join-Path $workspace 'OpenSphere-console'
-$sdkCheckout = Join-Path $workspace 'OpenSphere-SDK'
 $setupCheckout = Join-Path $workspace 'OpenSphere-Setup-CLI'
 $metadataRoot = Join-Path $workspace 'metadata'
 
@@ -164,22 +165,8 @@ Write-Host "[immutable] $localTag"
 Write-Host "[platform] $Platform"
 Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligible=false"
 
-Write-Host '[step 01/06] Prepare clean Console, SDK and governed Setup source'
+Write-Host '[step 01/06] Prepare clean Console and governed Setup source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
-$sdkSourceLockPath = Join-Path $consoleCheckout 'sdk-source.lock'
-$sdkSourceRevision = (Get-Content -LiteralPath $sdkSourceLockPath -Raw).Trim()
-if ($sdkSourceRevision -notmatch '^[0-9a-f]{40}$') {
-  throw 'The governed Console sdk-source.lock is invalid.'
-}
-Invoke-Checked git init $sdkCheckout
-Invoke-Checked git -C $sdkCheckout remote add origin $SdkRepository
-Invoke-Checked git -C $sdkCheckout fetch --depth 1 origin $sdkSourceRevision
-Invoke-Checked git -C $sdkCheckout checkout --detach $sdkSourceRevision
-$resolvedSdkSourceRevision = (& git -C $sdkCheckout rev-parse HEAD).Trim()
-if ($resolvedSdkSourceRevision -ne $sdkSourceRevision) {
-  throw "SDK checkout $resolvedSdkSourceRevision differs from governed lock $sdkSourceRevision."
-}
-Write-Host "[sdk] $sdkSourceRevision"
 $backendSelected = $Components.Count -eq 0 -or $Components -contains 'backend'
 $setupSourceRevision = ''
 if ($backendSelected) {
@@ -285,7 +272,7 @@ if ($UseExistingRegistryLogin) {
 }
 
 $allImages = @(
-  [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $workspace; File = (Join-Path $consoleCheckout 'Dockerfile') },
+  [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'Dockerfile') },
   # CLI artifacts are a Console-native auxiliary workload with an independent
   # build and rollout. They are intentionally not added to the 14-component
   # Platform Release lock merely to decouple an Angular UI build.
@@ -396,8 +383,22 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
       '--build-arg', "SETUP_SOURCE_REVISION=$setupSourceRevision"
     )
   }
-  if ($item.Key -eq 'console') {
-    $arguments += @('--build-arg', "SDK_SOURCE_REVISION=$sdkSourceRevision")
+  if ($item.Key -eq 'cliArtifacts') {
+    if (-not $CliUpdateSigningKeyPath -or -not (Test-Path -LiteralPath $CliUpdateSigningKeyPath)) {
+      throw 'CLI local-edge publication requires a host-local Ed25519 private-key path.'
+    }
+    if (-not $CliUpdateSigningPublicKey) {
+      throw 'CLI local-edge publication requires the matching SPKI DER public key in base64.'
+    }
+    $resolvedCliKey = (Resolve-Path -LiteralPath $CliUpdateSigningKeyPath).Path
+    if ($resolvedCliKey.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+      throw 'CLI local-edge signing key must be stored outside the source repository.'
+    }
+    $arguments += @(
+      '--build-arg', "CLI_UPDATE_TRUST_ID=$CliUpdateSigningKeyId",
+      '--build-arg', "CLI_UPDATE_TRUST_PUBLIC=$CliUpdateSigningPublicKey",
+      '--secret', "id=cli_update_signing_key,src=$resolvedCliKey"
+    )
   }
   if ($item.Key -eq 'osShellRuntime') {
     $arguments += @('--build-arg', "OPENSPHERE_VERSION=$releaseTag")

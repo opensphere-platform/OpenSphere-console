@@ -111,7 +111,7 @@ if ($legacyGateway.Count -ne 1 -or $legacyAdapter.Count -ne 1) {
 }
 
 $profile = @(
-  [ordered]@{ Key='console'; BaseRevision=[string]$installedLock.components.console.sourceRevision; Image='opensphere-console'; Context='workspace'; File='OpenSphere-console\Dockerfile'; Sdk=$true },
+  [ordered]@{ Key='console'; BaseRevision=[string]$installedLock.components.console.sourceRevision; Image='opensphere-console'; Context='OpenSphere-console'; File='OpenSphere-console\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='dupaController'; BaseRevision=[string]$installedLock.components.dupaController.sourceRevision; Image='opensphere-console-dupa-controller'; Context='OpenSphere-console\backend\dupa-control'; File='OpenSphere-console\backend\dupa-control\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='osaaGateway'; BaseRevision=[string]$legacyGateway[0].Value.sourceRevision; Image='opensphere-console-osaa-gateway'; Context='OpenSphere-console\backend\opensphere-console-osaa-gateway'; File='OpenSphere-console\backend\opensphere-console-osaa-gateway\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='osaaGovernedAdapter'; BaseRevision=[string]$legacyAdapter[0].Value.sourceRevision; Image='opensphere-osaa-governed-adapter'; Context='OpenSphere-console\backend\osaa-governed-adapter'; File='OpenSphere-console\backend\osaa-governed-adapter\Dockerfile'; Sdk=$false },
@@ -132,8 +132,6 @@ foreach ($item in $profile) {
 $changedPaths = @($changedPathSet | Sort-Object)
 if (-not $changedPaths.Count) { throw 'OSAA cutover publication has no source delta.' }
 
-$sdkRevision = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'sdk-source.lock')).Trim()
-if ($sdkRevision -notmatch '^[a-f0-9]{40}$') { throw 'sdk-source.lock is not canonical.' }
 $epoch = [long](((Invoke-Checked git -C $repoRoot show -s --format=%ct $sourceRevision) -join '').Trim())
 $releaseTag = [DateTimeOffset]::FromUnixTimeSeconds($epoch).ToOffset([TimeSpan]::FromHours(9)).ToString('yyyyMMddHHmm')
 $localTag = "local-$($sourceRevision.Substring(0,12))"
@@ -145,20 +143,12 @@ $outputRoot = if (Test-Path -LiteralPath $outputBase) {
 } else { $outputBase }
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) "opensphere-osaa-cutover-$([Guid]::NewGuid().ToString('N'))"
 $consoleCheckout = Join-Path $buildRoot 'OpenSphere-console'
-$sdkCheckout = Join-Path $buildRoot 'OpenSphere-SDK'
 $metadataRoot = Join-Path $buildRoot 'metadata'
 New-Item -ItemType Directory -Path $buildRoot,$metadataRoot,$outputRoot | Out-Null
 $digests = [ordered]@{}
 
 try {
   Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $sourceRevision | Out-Null
-  Invoke-Checked git init $sdkCheckout | Out-Null
-  Invoke-Checked git -C $sdkCheckout remote add origin https://github.com/opensphere-platform/OpenSphere-SDK.git | Out-Null
-  Invoke-Checked git -C $sdkCheckout fetch --depth 1 origin $sdkRevision | Out-Null
-  Invoke-Checked git -C $sdkCheckout checkout --detach $sdkRevision | Out-Null
-  if (((Invoke-Checked git -C $sdkCheckout rev-parse HEAD) -join '').Trim() -cne $sdkRevision) {
-    throw 'Detached SDK source differs from sdk-source.lock.'
-  }
 
   Invoke-Checked node --test `
     (Join-Path $consoleCheckout 'scripts\osaa-canonical-identity.test.mjs') `
@@ -176,7 +166,7 @@ try {
   foreach ($item in $profile) {
     $repository = "$Registry/$($item.Image)"
     $metadataFile = Join-Path $metadataRoot "$($item.Key).json"
-    $context = if ($item.Context -eq 'workspace') { $buildRoot } else { Join-Path $buildRoot $item.Context }
+    $context = Join-Path $buildRoot $item.Context
     $dockerfile = Join-Path $buildRoot $item.File
     $arguments = @(
       'buildx','build','--platform','linux/amd64','--push','--provenance=mode=max',
@@ -191,7 +181,6 @@ try {
       '--label','opensphere.io/ga-eligible=false',
       '--file',$dockerfile
     )
-    if ($item.Sdk) { $arguments += @('--build-arg',"SDK_SOURCE_REVISION=$sdkRevision") }
     $arguments += $context
     Invoke-Checked docker @arguments | Out-Null
     $digest = [string](Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json).'containerimage.digest'

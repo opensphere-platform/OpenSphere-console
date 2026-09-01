@@ -62,8 +62,11 @@ type updateReport struct {
 var executablePathFn = os.Executable
 var installDownloadedUpdateFn = installDownloadedUpdate
 
-const localUpdateKeyID = "opensphere-cli-local-dev-v1"
-const localUpdatePublicKey = "MCowBQYDK2VwAyEAq5OF9nQUWzq/tgc4cThcXpb0cjvKWiwFrmsqa36ArqI="
+// Local trust is injected by the localhost build from a host-local keypair.
+// Production binaries leave these empty and cannot accept a repository-bundled
+// development trust root.
+var localUpdateKeyID = ""
+var localUpdatePublicKey = ""
 
 // Production builds pin these values with -ldflags. The matching private key
 // exists only in the release workflow secret and is never copied into an image.

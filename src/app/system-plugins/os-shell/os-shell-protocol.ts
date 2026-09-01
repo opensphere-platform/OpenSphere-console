@@ -1,4 +1,4 @@
-import type { PtyServerFrame } from '@opensphere/sdk';
+import type { PtyServerFrame } from '@opensphere/console-contracts';
 import type { OsShellFrameMessage } from './os-shell.types';
 
 export const OS_SHELL_FRAME_CONTRACT = 'opensphere.shell.frame/v1' as const;

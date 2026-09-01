@@ -504,68 +504,6 @@ function createBrowserSessionManager({
     };
   }
 
-  async function adoptLegacy(req, legacy) {
-    if (!requestOriginAllowed(req)) throw { code: 403, msg: 'legacy session adoption origin rejected' };
-    const refreshToken = String(legacy?.refreshToken || '');
-    if (!refreshToken) throw { code: 400, msg: 'legacy refresh credential is required' };
-    // Rotate before custody transfer so the browser-held refresh credential is
-    // invalid as soon as the server-managed session is established.
-    const session = await supabase('/token', {
-      method: 'POST',
-      query: 'grant_type=refresh_token',
-      body: { refresh_token: refreshToken },
-    });
-    if (!session.access_token || !session.refresh_token) throw { code: 401, msg: 'legacy session could not be rotated' };
-    const verified = await verifyToken(session.access_token);
-    const factorState = verified.assurance === 'aal2'
-      ? { verifiedTotp: null }
-      : await factors(session.access_token);
-    const handle = randomBytes(32).toString('base64url');
-    const csrfToken = randomBytes(24).toString('base64url');
-    const current = now();
-    const absolute = new Date(current.getTime() + DURATION_MS.browser);
-    const mfaRequired = Boolean(factorState.verifiedTotp?.id);
-    const status = mfaRequired ? 'pending_mfa' : 'active';
-    const idle = new Date(Math.min(
-      current.getTime() + (mfaRequired ? PENDING_TTL_MS : idleTtlMs),
-      absolute.getTime(),
-    ));
-    const rows = await restRequest('browser_session', {
-      method: 'POST',
-      query: 'select=id,owner_id,status,assurance,persistence,created_at,last_seen_at,idle_expires_at,absolute_expires_at,user_agent_digest',
-      body: [{
-        owner_id: verified.sub,
-        handle_hash: sha256(handle),
-        csrf_hash: sha256(csrfToken),
-        access_token_ciphertext: encodeSecret(session.access_token, key),
-        refresh_token_ciphertext: encodeSecret(session.refresh_token, key),
-        supabase_session_id: verified.authSessionId || null,
-        assurance: verified.assurance === 'aal2' ? 'aal2' : 'aal1',
-        persistence: 'browser',
-        status,
-        credential_revision: Number(verified.credentialRevision || 0),
-        user_agent_digest: req.headers['user-agent'] ? sha256(req.headers['user-agent']) : null,
-        network_digest: clientNetworkDigest(req),
-        activated_at: status === 'active' ? current.toISOString() : null,
-        last_reauthenticated_at: verified.assurance === 'aal2' ? current.toISOString() : null,
-        idle_expires_at: idle.toISOString(),
-        absolute_expires_at: absolute.toISOString(),
-      }],
-      prefer: 'return=representation',
-    });
-    const row = rows[0];
-    await recordEvent(row, 'login', status === 'active' ? 'ok' : 'pending', {
-      persistence: 'browser',
-      migratedFrom: 'legacy-session-storage',
-    });
-    return {
-      cookies: cookies(handle, 'browser', csrfToken),
-      csrfToken,
-      mfaRequired,
-      session: publicSession(row, row.id),
-    };
-  }
-
   async function authenticate(req, options = {}) {
     const handle = parseCookies(req.headers.cookie)[COOKIE_NAME];
     const handleHash = sha256(handle);
@@ -953,7 +891,6 @@ function createBrowserSessionManager({
 
   return {
     create,
-    adoptLegacy,
     authenticate,
     resolveForDurableExecution,
     touch,

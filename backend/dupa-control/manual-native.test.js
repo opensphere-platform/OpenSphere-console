@@ -129,6 +129,11 @@ test('bundled Manual Registry provides ten readable Perspective documents and ne
   const seed = JSON.parse(read('backend', 'opensphere-console-osaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'));
   const perspectiveDocs = seed.documents.filter((doc) => doc.tags?.includes('perspective-home'));
 
+  assert.match(seed.version, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(seed.source.basePath, 'DESIGN');
+  assert.equal(seed.source.authorityModel, 'active-design-only');
+  assert.equal(seed.documents.some((doc) => /(^|\/)\_DOCS_\//i.test(doc.sourcePath || '')), false);
+  assert.equal(seed.documents.some((doc) => doc.tags?.includes('active-design')), true);
   assert.equal(perspectiveDocs.length, 10);
   assert.deepEqual(
     perspectiveDocs.map((doc) => doc.tags.find((tag) => /^order-\d{2}$/.test(tag))),

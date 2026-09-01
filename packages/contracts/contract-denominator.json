@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0",
+  "status": "foundational-slice",
+  "targetStatus": "complete",
+  "sourceBaseline": "0d3f56ab97b717dc1c4c8f83ce3725c69f01b20d",
+  "supplementEvidence": "731f4d1e3301f076cc8c6b63b7916c8a2f57fccf",
+  "requirements": ["CON-FR-001", "CON-FR-002", "CON-FR-008", "CON-FR-009", "CON-FR-010", "CON-FR-017"],
+  "operations": [
+    "getSession",
+    "deleteSession",
+    "getMe",
+    "getSupabaseStatus",
+    "listAuditEvents",
+    "createOperation",
+    "getOperation",
+    "approveOperation",
+    "getRegistryConnection",
+    "replaceRegistryCredential",
+    "deleteRegistryConnection",
+    "verifyRegistryConnection",
+    "listExtensionRevocations",
+    "createExtensionRevocation",
+    "inspectExtensionCandidate",
+    "installExtensionCandidate"
+  ],
+  "requiredSchemas": [
+    "error-envelope.schema.json",
+    "operation-receipt.schema.json",
+    "operation-request.schema.json",
+    "read-envelope.schema.json",
+    "registry-credential-write.schema.json",
+    "registry-revocation-request.schema.json",
+    "extension-candidate-request.schema.json"
+  ],
+  "remaining": {
+    "legacyProductionApiLiterals": 277,
+    "rule": "Every production endpoint must be adopted, reworked, or rejected before status becomes complete."
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:extension-candidate-request:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image"],
+  "properties": {
+    "image": { "type": "string", "pattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9._-]*@sha256:[0-9a-f]{64}$" },
+    "descriptorRevision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
+    "executionRevision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
+    "reason": { "type": ["string", "null"], "maxLength": 500 }
+  }
+}

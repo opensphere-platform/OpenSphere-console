@@ -159,7 +159,8 @@ $observedBackendInputs = @($backendChanges | Where-Object { $_ -in $backendImage
 Assert-ExactPaths -Actual $observedBackendInputs -Expected $backendImageInputs -Purpose 'Backend image input delta'
 $observedConsoleInputs = @($consoleChanges | Where-Object {
   $_ -like 'src/*' -or $_ -like 'scripts/*' -or $_ -like 'nginx/*' -or $_ -like 'public/*' -or
-  $_ -in @('Dockerfile', 'angular.json', 'package.json', 'package-lock.json', 'sdk-source.lock', 'tsconfig.json', 'tsconfig.app.json')
+  $_ -in @('Dockerfile', 'angular.json', 'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.app.json') -or
+  $_ -like 'packages/contracts/*'
 })
 Assert-ExactPaths -Actual $observedConsoleInputs -Expected $consoleImageInputs -Purpose 'Console image input delta'
 

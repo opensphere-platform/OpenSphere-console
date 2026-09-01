@@ -6,6 +6,7 @@ ARG CLI_REQUIRE_DARWIN=false
 FROM scratch AS cli-darwin-absent
 FROM ${CLI_DARWIN_CONTEXT} AS cli-darwin
 FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS build
+ARG CLI_UPDATE_SIGNING_PROFILE
 ARG CLI_UPDATE_TRUST_ID
 ARG CLI_UPDATE_TRUST_PUBLIC
 ARG CLI_REQUIRE_DARWIN
@@ -14,9 +15,18 @@ COPY go.mod go.sum ./
 COPY cmd ./cmd
 # Test natively for each Buildx target; only the downloadable binaries are
 # cross-compiled. This keeps the arm64 image build from executing an amd64 test.
-RUN mkdir -p /out && go test ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.2 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-linux-amd64 ./cmd/os && \
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.2 -X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
+RUN set -eu; \
+    test -n "${CLI_UPDATE_TRUST_ID}"; \
+    test -n "${CLI_UPDATE_TRUST_PUBLIC}"; \
+    case "${CLI_UPDATE_SIGNING_PROFILE}" in \
+      local) trust_ldflags="-X main.localUpdateKeyID=${CLI_UPDATE_TRUST_ID} -X main.localUpdatePublicKey=${CLI_UPDATE_TRUST_PUBLIC}" ;; \
+      production) trust_ldflags="-X main.updateProductionKeyID=${CLI_UPDATE_TRUST_ID} -X main.updateProductionPublicKey=${CLI_UPDATE_TRUST_PUBLIC}" ;; \
+      *) echo 'unsupported CLI update signing profile' >&2; exit 1 ;; \
+    esac; \
+    mkdir -p /out; \
+    go test ./...; \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.2 ${trust_ldflags}" -o /out/opensphere-cli-linux-amd64 ./cmd/os; \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=0.8.2 ${trust_ldflags}" -o /out/opensphere-cli-windows-amd64.exe ./cmd/os
 RUN --mount=from=cli-darwin,target=/darwin,ro \
     if [ -f /darwin/opensphere-cli-darwin-arm64 ] && [ -f /darwin/opensphere-cli-darwin-amd64 ]; then \
       cp /darwin/opensphere-cli-darwin-arm64 /darwin/opensphere-cli-darwin-amd64 /out/; \
@@ -34,7 +44,7 @@ ARG CLI_REQUIRE_DARWIN
 WORKDIR /work
 COPY index.json generate-manifest.mjs ./
 COPY --from=build /out/ /out/
-RUN --mount=type=secret,id=cli_update_signing_key,required=false \
+RUN --mount=type=secret,id=cli_update_signing_key,required=true \
     node generate-manifest.mjs /work/index.json /out /work/index.generated.json \
       "$CLI_UPDATE_SIGNING_PROFILE" "$CLI_UPDATE_TRUST_ID" /run/secrets/cli_update_signing_key "$CLI_UPDATE_TRUST_PUBLIC" \
       "$([ "${CLI_REQUIRE_DARWIN}" = "true" ] && echo false || echo true)"

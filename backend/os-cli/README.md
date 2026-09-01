@@ -116,6 +116,18 @@ Ed25519로 서명된 manifest와 정확한 size·SHA-256을 모두 검증한 뒤
 개인키는 BuildKit secret mount로 manifest 생성 단계에만 전달되며 이미지 layer나 CLI에
 복사하지 않는다. CLI에는 대응하는 공개 키와 key ID만 고정된다.
 
+로컬 개발 개인키도 repository에 고정하거나 commit하지 않는다. 호스트별 trust는 다음 명령으로
+source tree 밖의 사용자 전용 디렉터리에 한 번 생성한다.
+
+```powershell
+.\scripts\Initialize-LocalCliSigningTrust.ps1
+```
+
+생성된 `cli-update-trust.json`의 `keyId`와 `publicKeyBase64`, 그리고 같은 디렉터리의 private-key
+경로를 `Publish-LocalEdge.ps1`의 `CliUpdateSigningKeyId`, `CliUpdateSigningPublicKey`,
+`CliUpdateSigningKeyPath`에 전달한다. publisher는 private key를 BuildKit secret으로만 전달하고
+source tree 안의 key path를 거부한다.
+
 Windows에서는 현재 프로세스가 종료된 뒤 숨김 helper가 교체하고 `<os.exe>.previous`에
 직전 바이너리를 보관한다. 비동기 교체 결과는 `os update --status`로 확인한다.
 Linux/macOS는 같은 디렉터리에서 atomic rename으로 교체하며,

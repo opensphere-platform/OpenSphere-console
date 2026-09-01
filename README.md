@@ -1,59 +1,42 @@
-# OpensphereShell
+# OpenSphere Console
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.15.
+OpenSphere Console is the operator control plane and experience host for OpenSphere. It owns the Web/API shell and the native CLI, OS Shell, OSAA/OSDST, Extension Controller, Registry, Recovery, and Gitea bootstrap capabilities as one integrated release family. Each runtime keeps its own process, identity, credential, failure, and artifact boundary.
 
-## Development server
+The current implementation branch reconstructs the product from the accepted product boundaries and verified legacy behavior. Historical source remains evidence; it is not copied as the target structure.
 
-To start a local development server, run:
+## Authority
 
-```bash
-ng serve
+- Console design index: `../DESIGN/20-MODULE/OpenSphere-Console/CONSOLE-DESIGN-INDEX.md`
+- Repository/build/GHCR model: `../DESIGN/06-OPERATIONS/OPERATIONS-PLATFORM-REPOSITORY-BUILD-GHCR-OPERATING-MODEL.md`
+- Release channels: `../DESIGN/06-OPERATIONS/OPERATIONS-PLATFORM-RELEASE-CHANNEL-POLICY.md`
+- Source authority: `../DESIGN/09-GOVERNANCE/GOVERNANCE-PLATFORM-SOURCE-AUTHORITY-POLICY.md`
+- Implementation assessment: `../DESIGN/20-MODULE/OpenSphere-Console/90-EVIDENCE/CONSOLE-EVIDENCE-CURRENT-CODE-IMPLEMENTATION-ENTRY-ASSESSMENT.md`
+
+Archived `_DOCS_` material and bundled historical manuals are evidence only. They do not override the active DESIGN tree.
+
+## Target repository structure
+
+```text
+apps/                 independently runnable Console-native applications
+cmd/                  native command-line programs
+packages/contracts/   OpenAPI, JSON Schema, owner/consumer contracts, shared types
+migrations/           reconstructed baseline and append-only version migrations
+deploy/               base manifests and environment overlays
+src/                   legacy Angular application during controlled migration
+backend/               legacy runtime implementations during controlled migration
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+`src/` and `backend/` remain migration sources until each capability passes its new contract and acceptance gate. New cross-capability contracts belong in `packages/contracts`; new code must not import another repository's source tree.
 
-## Code scaffolding
+## Local validation
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
-
-```bash
-ng generate component component-name
+```powershell
+npm ci --no-audit --no-fund --legacy-peer-deps
+npm run verify:contracts
+npm test
+npm run build -- --configuration production
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+The full legacy test suite still contains migration targets. `npm run verify:contracts` is the first self-contained gate and must remain green without sibling repository source.
 
-```bash
-ng generate --help
-```
-
-## Building
-
-To build the project run:
-
-```bash
-ng build
-```
-
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
-
-## Running unit tests
-
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
-
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+Build, publish, promotion, deployment, and runtime verification are distinct operations. A successful local build does not authorize GHCR publication or deployment.

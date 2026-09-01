@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -830,24 +831,32 @@ func TestSelfUpdateCheckAndApplyVerifyManifestArtifact(t *testing.T) {
 
 func signTestUpdateManifest(t *testing.T, manifest updateManifest) updateManifest {
 	t.Helper()
-	privateDER, err := base64.StdEncoding.DecodeString("MC4CAQAwBQYDK2VwBCIEIPKEGYePJEuX0e4DDJ+Gqkb0t9BYrRcGIoiBOSKAztNC")
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := x509.ParsePKCS8PrivateKey(privateDER)
-	if err != nil {
-		t.Fatal(err)
-	}
-	privateKey, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		t.Fatal("test update private key is not Ed25519")
-	}
+	previousKeyID, previousPublicKey := localUpdateKeyID, localUpdatePublicKey
+	localUpdateKeyID = "opensphere-cli-test-local"
+	localUpdatePublicKey = base64.StdEncoding.EncodeToString(mustMarshalPKIXPublicKey(t, publicKey))
+	t.Cleanup(func() {
+		localUpdateKeyID = previousKeyID
+		localUpdatePublicKey = previousPublicKey
+	})
 	payload, err := canonicalUpdateManifestPayload(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	manifest.Signature = updateSignature{Algorithm: "Ed25519", KeyID: localUpdateKeyID, Value: base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(payload)))}
 	return manifest
+}
+
+func mustMarshalPKIXPublicKey(t *testing.T, key ed25519.PublicKey) []byte {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
 }
 
 func TestSelfUpdateManifestSignatureRejectsTamperingAndRemoteDevKey(t *testing.T) {

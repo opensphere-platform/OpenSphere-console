@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:error-envelope:v1",
+  "title": "Console Error Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "code", "message", "retryable", "sideEffect", "correlationId"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "code": {
+      "enum": [
+        "ValidationFailed", "AuthenticationRequired", "PermissionDenied", "StepUpRequired",
+        "NotFound", "Conflict", "StaleRevision", "IdempotencyMismatch", "PreconditionsFailed",
+        "PolicyRejected", "RateLimited", "DependencyFailed", "AuthorityUnavailable", "DependencyTimeout"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "retryable": { "type": "boolean" },
+    "sideEffect": { "enum": ["none", "possible", "committed", "unknown"] },
+    "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "operationId": { "type": ["string", "null"] },
+    "details": { "type": "object", "additionalProperties": true }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "sourceRevision": "731f4d1e3301f076cc8c6b63b7916c8a2f57fccf",
+  "baseRevision": "0d3f56ab97b717dc1c4c8f83ce3725c69f01b20d",
+  "decision": "rework-contracts-without-merging-legacy-layout",
+  "adopt": [
+    "registry credential no-return and verify-before-replace",
+    "typed registry timeout, unauthorized, not-found, rate-limit and unavailable errors",
+    "R2 plus AAL2 for credential mutation and revocation",
+    "exact-digest revocation with explicit target-bound confirmation",
+    "descriptor revision separated from execution revision",
+    "idempotent install replay classification and bounded running lease"
+  ],
+  "rework": [
+    "move route policy into versioned OpenAPI and JSON Schema",
+    "move credential custody behind SecretRef owner contract",
+    "move install execution behind durable Console operation receipt",
+    "replace in-memory verify limiter with bounded shared enforcement at the API boundary"
+  ],
+  "reject": [
+    "blind merge of the eleven supplemental commits",
+    "large legacy router and Angular screen edits as the target package structure",
+    "source-regex tests as sole acceptance evidence",
+    "mutable tag as an execution identity"
+  ]
+}

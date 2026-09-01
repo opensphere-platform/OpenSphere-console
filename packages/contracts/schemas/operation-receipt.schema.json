@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:operation-receipt:v1",
+  "title": "OpenSphere Console Operation Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "operationId", "actionId", "actionVersion", "actorRef", "targetRef",
+    "payloadDigest", "risk", "planRevision", "idempotencyKey", "state", "createdAt",
+    "updatedAt", "correlationId"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "operationId": { "type": "string", "minLength": 1 },
+    "actionId": { "type": "string", "minLength": 1 },
+    "actionVersion": { "type": "string", "minLength": 1 },
+    "actorRef": { "type": "string", "minLength": 1 },
+    "targetRef": { "type": "string", "minLength": 1 },
+    "payloadDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "reason": { "type": "string" },
+    "risk": { "enum": ["R0", "R1", "R2", "R3"] },
+    "aal": { "type": "string" },
+    "approvalRevision": { "type": ["string", "null"] },
+    "planRevision": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "sourceRevision": { "type": ["string", "null"] },
+    "ownerRef": { "type": ["string", "null"] },
+    "state": {
+      "enum": ["Planned", "Authorized", "Submitted", "Reconciling", "Applied", "Verified", "Failed", "Unknown", "RolledBack"]
+    },
+    "expectedPostcondition": { "type": ["object", "null"] },
+    "observedPostcondition": { "type": ["object", "null"] },
+    "error": { "type": ["object", "null"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "correlationId": { "type": "string", "minLength": 1 }
+  }
+}

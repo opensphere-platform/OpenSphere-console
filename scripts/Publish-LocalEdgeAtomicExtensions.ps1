@@ -3,6 +3,9 @@ param(
   [string]$Registry = 'ghcr.io/opensphere-platform',
   [ValidateSet('console', 'dupaController', 'registry', 'backend', 'osaaGateway', 'cliArtifacts')]
   [string[]]$Components = @('console', 'dupaController'),
+  [string]$CliUpdateSigningKeyPath = '',
+  [string]$CliUpdateSigningKeyId = 'opensphere-cli-local-dev-v1',
+  [string]$CliUpdateSigningPublicKey = '',
   [switch]$UseExistingRegistryLogin
 )
 
@@ -102,8 +105,6 @@ foreach ($componentName in $componentNames) {
   }
 }
 
-$sdkRevision = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'sdk-source.lock')).Trim()
-if ($sdkRevision -notmatch '^[0-9a-f]{40}$') { throw 'sdk-source.lock is not canonical.' }
 $commonGitDir = ((Invoke-Checked git -C $repoRoot rev-parse --git-common-dir) -join '').Trim()
 if (-not [IO.Path]::IsPathRooted($commonGitDir)) { $commonGitDir = Join-Path $repoRoot $commonGitDir }
 $canonicalConsoleRoot = Split-Path (Resolve-Path $commonGitDir).Path -Parent
@@ -113,7 +114,6 @@ if (Test-Path -LiteralPath $outputRoot) { throw "Publication output already exis
 
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) "opensphere-atomic-extension-$([Guid]::NewGuid().ToString('N'))"
 $consoleCheckout = Join-Path $buildRoot 'OpenSphere-console'
-$sdkCheckout = Join-Path $buildRoot 'OpenSphere-SDK'
 $setupCheckout = Join-Path $buildRoot 'OpenSphere-Setup-CLI'
 $metadataRoot = Join-Path $buildRoot 'metadata'
 New-Item -ItemType Directory -Path $buildRoot, $metadataRoot, $outputRoot | Out-Null
@@ -130,13 +130,6 @@ $digests = [ordered]@{}
 
 try {
   Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $sourceRevision | Out-Null
-  Invoke-Checked git init $sdkCheckout | Out-Null
-  Invoke-Checked git -C $sdkCheckout remote add origin https://github.com/opensphere-platform/OpenSphere-SDK.git | Out-Null
-  Invoke-Checked git -C $sdkCheckout fetch --depth 1 origin $sdkRevision | Out-Null
-  Invoke-Checked git -C $sdkCheckout checkout --detach $sdkRevision | Out-Null
-  if (((Invoke-Checked git -C $sdkCheckout rev-parse HEAD) -join '').Trim() -ne $sdkRevision) {
-    throw 'SDK checkout differs from sdk-source.lock.'
-  }
 
   $setupRevision = ''
   if ($componentNames -contains 'backend') {
@@ -181,9 +174,8 @@ try {
     $consoleMetadata = Join-Path $metadataRoot 'console.json'
     $consoleArgs = @(
       'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
-      '--metadata-file', $consoleMetadata, '--tag', "$($repositories.console):$buildTag",
-      '--build-arg', "SDK_SOURCE_REVISION=$sdkRevision"
-    ) + $labels + @('--file', (Join-Path $consoleCheckout 'Dockerfile'), $buildRoot)
+      '--metadata-file', $consoleMetadata, '--tag', "$($repositories.console):$buildTag"
+    ) + $labels + @('--file', (Join-Path $consoleCheckout 'Dockerfile'), $consoleCheckout)
     Invoke-Checked docker @consoleArgs | Out-Null
     $digests.console = [string](Get-Content -Raw $consoleMetadata | ConvertFrom-Json).'containerimage.digest'
   }
@@ -244,11 +236,24 @@ try {
   }
 
   if ($componentNames -contains 'cliArtifacts') {
+    if (-not $CliUpdateSigningKeyPath -or -not (Test-Path -LiteralPath $CliUpdateSigningKeyPath)) {
+      throw 'CLI artifact publication requires a host-local Ed25519 private-key path.'
+    }
+    if (-not $CliUpdateSigningPublicKey) {
+      throw 'CLI artifact publication requires the matching SPKI DER public key in base64.'
+    }
+    $resolvedCliKey = (Resolve-Path -LiteralPath $CliUpdateSigningKeyPath).Path
+    if ($resolvedCliKey.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+      throw 'CLI signing key must be stored outside the source repository.'
+    }
     $cliMetadata = Join-Path $metadataRoot 'os-cli.json'
     $cliArgs = @(
       'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
       '--metadata-file', $cliMetadata, '--tag', "$($repositories.cliArtifacts):$buildTag",
-      '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local'
+      '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
+      '--build-arg', "CLI_UPDATE_TRUST_ID=$CliUpdateSigningKeyId",
+      '--build-arg', "CLI_UPDATE_TRUST_PUBLIC=$CliUpdateSigningPublicKey",
+      '--secret', "id=cli_update_signing_key,src=$resolvedCliKey"
     ) + $labels + @(
       '--file', (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile'),
       (Join-Path $consoleCheckout 'backend\os-cli')

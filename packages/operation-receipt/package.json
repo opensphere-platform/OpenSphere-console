@@ -1,0 +1,6 @@
+{
+  "name": "@opensphere/console-operation-receipt",
+  "private": true,
+  "type": "module",
+  "exports": "./src/operation-receipt.mjs"
+}

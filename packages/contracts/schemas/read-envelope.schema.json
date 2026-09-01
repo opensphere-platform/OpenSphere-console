@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:read-envelope:v1",
+  "title": "Console Authority-aware Read Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "data", "authority", "observedAt", "freshness", "correlationId", "evidenceRefs"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "data": {},
+    "authority": { "type": "string", "minLength": 1 },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "freshness": { "enum": ["fresh", "stale", "unknown", "unavailable"] },
+    "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "evidenceRefs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

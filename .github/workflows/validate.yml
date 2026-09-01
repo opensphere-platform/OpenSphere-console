@@ -1,0 +1,69 @@
+name: Validate Console
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-console-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_PASSWORD: console-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout Console
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+      - name: Verify machine contracts
+        run: npm run verify:contracts
+      - name: Verify fresh Console authority baseline on PostgreSQL
+        env:
+          PGPASSWORD: console-test
+        run: |
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/supabase-test-prerequisites.sql
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/0001_console_authority.sql
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/0001_console_authority.verify.sql
+      - name: Verify deterministic Manual seed
+        run: |
+          npm run manual:seed
+          git diff --exit-code -- backend/opensphere-console-osaa-gateway/manual-seeds/opensphere-core-manuals.json
+      - name: Test Console contracts and legacy behavior
+        run: npm test
+      - name: Build production Web
+        run: npm run build -- --configuration production
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: backend/os-cli/go.mod
+          cache-dependency-path: |
+            backend/os-cli/go.sum
+            backend/registry/go.sum
+      - name: Test native CLI and Shell runtime
+        working-directory: backend/os-cli
+        run: go test ./...
+      - name: Test Registry
+        working-directory: backend/registry
+        run: go test ./...

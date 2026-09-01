@@ -1,4 +1,4 @@
-name: Publish Console GA Images
+name: Publish Console Candidate Images
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   artifact-metadata: write
 
 concurrency:
-  group: console-ga-images
+  group: console-candidate-images
   cancel-in-progress: false
 
 jobs:
@@ -19,46 +19,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Console
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: OpenSphere-console
-      - name: Checkout SDK
-        uses: actions/checkout@v4
-        with:
-          repository: opensphere-platform/OpenSphere-SDK
-          path: OpenSphere-SDK
-      - name: Require private Setup read credential
-        env:
-          SETUP_REPOSITORY_SSH_KEY: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
-        run: test -n "$SETUP_REPOSITORY_SSH_KEY"
-      - name: Checkout Setup CLI
-        uses: actions/checkout@v4
-        with:
-          repository: opensphere-platform/OpenSphere-Setup-CLI
-          path: OpenSphere-Setup-CLI
-          ssh-key: ${{ secrets.SETUP_REPOSITORY_SSH_KEY }}
-          persist-credentials: false
-      - name: Checkout Cluster Manager
-        uses: actions/checkout@v4
-        with:
-          repository: opensphere-platform/OpenSphere-shell-clusterManager
-          path: OpenSphere-shell-clusterManager
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: OpenSphere-console/package-lock.json
-      - name: Install SDK
-        working-directory: OpenSphere-SDK
-        # The SDK repository does not yet publish a package-lock.json.
-        run: npm install --no-audit --no-fund && npm run build
       - name: Install Console
         working-directory: OpenSphere-console
         run: npm ci --no-audit --no-fund --legacy-peer-deps
       - name: Install controller test dependencies
         working-directory: OpenSphere-console/backend/dupa-control
         run: npm ci --no-audit --no-fund
+      - name: Verify repository-owned contracts
+        working-directory: OpenSphere-console
+        run: npm run verify:contracts
       - name: Console contract tests
         working-directory: OpenSphere-console
         run: npm test
@@ -79,11 +57,11 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Checkout Console
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: OpenSphere-console
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: OpenSphere-console/backend/os-cli/go.mod
       - name: Keychain round-trip and macOS CLI build
@@ -103,7 +81,7 @@ jobs:
           file opensphere-cli-darwin-arm64 | grep -q 'arm64'
           file opensphere-cli-darwin-amd64 | grep -q 'x86_64'
       - name: Upload macOS CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: opensphere-cli-darwin
           path: OpenSphere-console/backend/os-cli/opensphere-cli-darwin-*
@@ -119,7 +97,7 @@ jobs:
       matrix:
         include:
           - image: opensphere-console
-            context: .
+            context: OpenSphere-console
             file: OpenSphere-console/Dockerfile
           - image: opensphere-os-cli
             context: OpenSphere-console/backend/os-cli
@@ -168,15 +146,9 @@ jobs:
             file: OpenSphere-console/backend/gitea/postgres-image/Dockerfile
     steps:
       - name: Checkout Console
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: OpenSphere-console
-      - name: Checkout SDK
-        if: matrix.image == 'opensphere-console'
-        uses: actions/checkout@v4
-        with:
-          repository: opensphere-platform/OpenSphere-SDK
-          path: OpenSphere-SDK
       - name: Require private Setup read credential
         if: matrix.image == 'opensphere-console-backend'
         env:
@@ -184,7 +156,7 @@ jobs:
         run: test -n "$SETUP_REPOSITORY_SSH_KEY"
       - name: Checkout governed Setup CLI
         if: matrix.image == 'opensphere-console-backend'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: opensphere-platform/OpenSphere-Setup-CLI
           path: OpenSphere-Setup-CLI
@@ -197,16 +169,16 @@ jobs:
         run: echo "revision=$(git -C OpenSphere-Setup-CLI rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Download native macOS CLI artifact
         if: matrix.image == 'opensphere-os-cli'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: opensphere-cli-darwin
           path: ${{ runner.temp }}/opensphere-cli-macos
       - name: Setup QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - name: Setup Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -222,29 +194,30 @@ jobs:
           echo "version=$release_tag" >> "$GITHUB_OUTPUT"
       - name: Image metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/opensphere-platform/${{ matrix.image }}
           tags: |
             type=sha,prefix=sha-
           labels: |
-            io.opensphere.channel=ga
+            io.opensphere.channel=candidate
+            io.opensphere.built-channel=candidate
             io.opensphere.source-revision=${{ github.sha }}
             io.opensphere.release-tag=${{ steps.release.outputs.version }}
             org.opencontainers.image.version=${{ steps.release.outputs.version }}
             opensphere.io/build-authority=github-actions
-            opensphere.io/release-class=ga
+            opensphere.io/release-class=pre-ga
             opensphere.io/ga-eligible=true
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           build-contexts: |
             macos-cli=${{ matrix.image == 'opensphere-os-cli' && format('{0}/opensphere-cli-macos', runner.temp) || '.' }}
             setup-cli=${{ matrix.image == 'opensphere-console-backend' && 'OpenSphere-Setup-CLI' || '.' }}
-          # GA is built only by the approved GitHub workflow with the complete
+          # The GA-lineage candidate is built only by the approved GitHub workflow with the complete
           # supported architecture set and supply-chain evidence.
           platforms: linux/amd64,linux/arm64
           push: true
@@ -255,7 +228,7 @@ jobs:
             CLI_UPDATE_SIGNING_PROFILE=production
             CLI_UPDATE_TRUST_ID=${{ vars.CLI_UPDATE_SIGNING_KEY_ID }}
             CLI_UPDATE_TRUST_PUBLIC=${{ vars.CLI_UPDATE_SIGNING_PUBLIC_KEY }}
-            # GA must ship every declared CLI platform. This turns the optional
+            # A candidate must ship every declared CLI platform. This turns the optional
             # macOS context into a hard requirement, so a release can never
             # publish the reduced artifact set a local edge build may produce.
             CLI_DARWIN_CONTEXT=macos-cli
@@ -268,7 +241,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
       - name: Attest published digest provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ghcr.io/opensphere-platform/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -287,7 +260,7 @@ jobs:
           output-file: ${{ runner.temp }}/${{ matrix.image }}.spdx.json
           upload-artifact: false
       - name: Attest SPDX SBOM
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ghcr.io/opensphere-platform/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -298,15 +271,15 @@ jobs:
 
   # A channel must represent a complete console release, not whichever matrix
   # member happened to finish first. The matrix publishes only an immutable
-  # source tag; this job advances mutable GA tags after all attestations.
+  # source tag; this job advances mutable candidate tags after all attestations.
   # Readers reject any short GHCR tag-propagation window rather than installing
   # a mixed revision.
-  publish-ga:
+  publish-candidate:
     needs: [publish]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: imjasonh/setup-crane@v0.4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
       - name: Login to GHCR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -391,8 +364,8 @@ jobs:
           jq -n \
             --arg apiVersion 'release.opensphere.io/v1alpha1' \
             --arg kind 'OpenSphereReleaseBOM' \
-            --arg channel 'ga' \
-            --arg status 'Active' \
+            --arg channel 'candidate' \
+            --arg status 'Candidate' \
             --arg releaseTag "$release_tag" \
             --arg source 'https://github.com/opensphere-platform/OpenSphere-console' \
             --arg sourceRevision "$GITHUB_SHA" \
@@ -419,7 +392,7 @@ jobs:
           echo 'Signed Release BOM prepared; no mutable channel tag has moved.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Attest atomic OpenSphere Release BOM
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ghcr.io/opensphere-platform/opensphere-console
           subject-digest: ${{ steps.release-bom.outputs.anchor-digest }}
@@ -427,7 +400,7 @@ jobs:
           predicate-path: ${{ runner.temp }}/opensphere-release-bom.json
           push-to-registry: true
 
-      - name: Advance GA with Console anchor last
+      - name: Advance candidate with Console anchor last
         env:
           RELEASE_TAG: ${{ steps.release-bom.outputs.release-tag }}
         run: |
@@ -484,12 +457,12 @@ jobs:
             repository="ghcr.io/opensphere-platform/$image"
             digest="$(jq -r --arg key "$key" '.components[$key].image | split("@")[1]' "$bom")"
             publish_immutable_tag "$repository" "$digest"
-            crane tag "$repository@$digest" ga
+            crane tag "$repository@$digest" candidate
           done
 
           # Downloadable CLI artifacts have an independent lifecycle so a UI
           # change never recompiles or rolls them. They remain exact-digest,
-          # provenance/SBOM-attested GA output, but are intentionally outside
+          # provenance/SBOM-attested candidate output, but are intentionally outside
           # the 15-component Console runtime BOM.
           cli_repository="ghcr.io/opensphere-platform/opensphere-os-cli"
           cli_source="$cli_repository:sha-${GITHUB_SHA:0:7}"
@@ -497,25 +470,25 @@ jobs:
           cli_revision="$(crane config "$cli_source" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
           test "$cli_revision" = "$GITHUB_SHA"
           publish_immutable_tag "$cli_repository" "$cli_digest"
-          crane tag "$cli_repository@$cli_digest" ga
-          test "$(crane digest "$cli_repository:ga")" = "$cli_digest"
+          crane tag "$cli_repository@$cli_digest" candidate
+          test "$(crane digest "$cli_repository:candidate")" = "$cli_digest"
 
           # This is the atomic publication point. If any earlier step fails,
-          # Console:ga still anchors the previous complete signed BOM.
+          # Console:candidate still anchors the previous complete signed BOM.
           anchor_digest="$(jq -r '.components.console.image | split("@")[1]' "$bom")"
           anchor_repository="ghcr.io/opensphere-platform/opensphere-console"
           publish_immutable_tag "$anchor_repository" "$anchor_digest"
-          crane tag "$anchor_repository@$anchor_digest" ga
+          crane tag "$anchor_repository@$anchor_digest" candidate
 
           for key in $(jq -r '.components | keys[]' "$bom"); do
             image="$(jq -r --arg key "$key" '.components[$key].repository' "$bom")"
             repository="ghcr.io/opensphere-platform/$image"
             expected="$(jq -r --arg key "$key" '.components[$key].image | split("@")[1]' "$bom")"
             test "$(crane digest "$repository:$RELEASE_TAG")" = "$expected"
-            actual="$(crane digest "$repository:ga")"
+            actual="$(crane digest "$repository:candidate")"
             if [[ "$actual" != "$expected" ]]; then
-              echo "$repository:ga resolved to $actual, expected $expected" >&2
+              echo "$repository:candidate resolved to $actual, expected $expected" >&2
               exit 1
             fi
-            echo "- \`$image:ga\` → \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`$image:candidate\` → \`$expected\`" >> "$GITHUB_STEP_SUMMARY"
           done

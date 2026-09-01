@@ -136,7 +136,7 @@ foreach ($baseRevision in @($consoleBaseRevision,$gatewayBaseRevision)) {
   Invoke-Checked git -C $repoRoot merge-base --is-ancestor $baseRevision $sourceRevision | Out-Null
 }
 $consoleChangedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $consoleBaseRevision $sourceRevision -- `
-  Dockerfile angular.json package.json package-lock.json sdk-source.lock nginx public scripts src)
+  Dockerfile angular.json package.json package-lock.json packages/contracts nginx public scripts src)
 $gatewayChangedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $gatewayBaseRevision $sourceRevision -- `
   backend/opensphere-console-osaa-gateway)
 if ('src/app/os/os-osaa-agent.ts' -notin $consoleChangedPaths -or -not $gatewayChangedPaths.Count) {
@@ -153,21 +153,11 @@ $outputRoot = if (Test-Path -LiteralPath $outputBase) {
 } else { $outputBase }
 $buildRoot = Join-Path ([IO.Path]::GetTempPath()) "opensphere-osaa-chat-$([Guid]::NewGuid().ToString('N'))"
 $checkout = Join-Path $buildRoot 'OpenSphere-console'
-$sdkCheckout = Join-Path $buildRoot 'OpenSphere-SDK'
 $metadataRoot = Join-Path $buildRoot 'metadata'
 New-Item -ItemType Directory -Path $buildRoot,$metadataRoot,$outputRoot | Out-Null
 
 try {
   Invoke-Checked git -C $repoRoot worktree add --detach $checkout $sourceRevision | Out-Null
-  $sdkRevision = (Get-Content -Raw -LiteralPath (Join-Path $checkout 'sdk-source.lock')).Trim()
-  if ($sdkRevision -notmatch '^[a-f0-9]{40}$') { throw 'Console sdk-source.lock is invalid.' }
-  Invoke-Checked git init $sdkCheckout | Out-Null
-  Invoke-Checked git -C $sdkCheckout remote add origin https://github.com/opensphere-platform/OpenSphere-SDK.git | Out-Null
-  Invoke-Checked git -C $sdkCheckout fetch --depth 1 origin $sdkRevision | Out-Null
-  Invoke-Checked git -C $sdkCheckout checkout --detach $sdkRevision | Out-Null
-  if (((Invoke-Checked git -C $sdkCheckout rev-parse HEAD) -join '').Trim() -ne $sdkRevision) {
-    throw 'SDK checkout differs from the governed lock.'
-  }
   Invoke-Checked node --test `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-prompt-boundary.test.js') `
     (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-source-grounding.test.js') `
@@ -198,7 +188,7 @@ try {
   $gatewayMetadata = Join-Path $metadataRoot 'osaa-gateway.json'
   Invoke-Checked docker buildx build --platform linux/amd64 --push --provenance=mode=max `
     --metadata-file $consoleMetadata --tag "${consoleRepository}:$localTag" @commonLabels `
-    --build-arg "SDK_SOURCE_REVISION=$sdkRevision" --file (Join-Path $checkout 'Dockerfile') $buildRoot | Out-Null
+    --file (Join-Path $checkout 'Dockerfile') $checkout | Out-Null
   Invoke-Checked docker buildx build --platform linux/amd64 --push --provenance=mode=max `
     --metadata-file $gatewayMetadata --tag "${gatewayRepository}:$localTag" @commonLabels `
     --file (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\Dockerfile') `

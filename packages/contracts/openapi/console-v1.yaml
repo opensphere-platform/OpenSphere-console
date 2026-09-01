@@ -1,0 +1,407 @@
+openapi: 3.1.0
+info:
+  title: OpenSphere Console API
+  version: 0.1.0
+  description: Foundational session, identity, audit, and durable-operation contract slice.
+  x-opensphere-status: foundational-slice
+servers:
+  - url: /
+    description: Same-origin Console ingress
+tags:
+  - name: Session
+  - name: Identity
+  - name: DataIdentity
+  - name: Audit
+  - name: Operations
+  - name: Extensions
+paths:
+  /api/identity/session:
+    get:
+      operationId: getSession
+      tags: [Session]
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-authority: SupabaseAuth
+      responses:
+        "200":
+          description: Current opaque browser session projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadEnvelope"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+    delete:
+      operationId: deleteSession
+      tags: [Session]
+      x-opensphere-requirement: CON-FR-001
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: optional
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "204":
+          description: Session revoked
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+  /api/identity/me:
+    get:
+      operationId: getMe
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-002
+      x-opensphere-authority: SupabaseAuth
+      responses:
+        "200":
+          description: Current actor profile and effective access projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadEnvelope"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+  /api/identity/supabase/status:
+    get:
+      operationId: getSupabaseStatus
+      tags: [DataIdentity]
+      x-opensphere-requirement: CON-FR-009
+      x-opensphere-authority: Supabase
+      responses:
+        "200":
+          description: Auth, database, storage, migration, RLS, backup, and restore readiness
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadEnvelope"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/audit:
+    get:
+      operationId: listAuditEvents
+      tags: [Audit]
+      x-opensphere-requirement: CON-FR-017
+      x-opensphere-authority: SupabaseAuditLedger
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 256 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Append-only audit events visible to the current actor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadEnvelope"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+  /api/platform/operations:
+    post:
+      operationId: createOperation
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-risk: request-defined
+      x-opensphere-idempotency: required
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/operation-request.schema.json"
+      responses:
+        "202":
+          description: Durable intent committed; no runtime success is implied
+          headers:
+            Location:
+              required: true
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/operation-receipt.schema.json"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/PolicyRejected"
+  /api/platform/operations/{operationId}:
+    parameters:
+      - $ref: "#/components/parameters/OperationId"
+    get:
+      operationId: getOperation
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      responses:
+        "200":
+          description: Durable operation receipt
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/operation-receipt.schema.json"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/platform/operations/{operationId}/approvals:
+    parameters:
+      - $ref: "#/components/parameters/OperationId"
+    post:
+      operationId: approveOperation
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-risk: R2-or-R3
+      x-opensphere-idempotency: required
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason, approvalRevision]
+              properties:
+                reason: { type: string, minLength: 3, maxLength: 500 }
+                approvalRevision: { type: string, minLength: 1, maxLength: 128 }
+                confirmation: { type: [string, "null"], maxLength: 500 }
+      responses:
+        "202":
+          description: Approval recorded and operation queued for the next authorized transition
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/operation-receipt.schema.json"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/admin/extensions/registry-connections/opensphere-ghcr:
+    get:
+      operationId: getRegistryConnection
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R0
+      x-opensphere-authority: ConsoleRegistryMetadata
+      responses:
+        "200":
+          description: Redacted GHCR connection metadata and verification state; credentials are never returned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadEnvelope" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+    put:
+      operationId: replaceRegistryCredential
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R2
+      x-opensphere-assurance: aal2
+      x-opensphere-idempotency: required
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/registry-credential-write.schema.json" }
+      responses:
+        "202":
+          description: Candidate credential verified and durable replacement operation accepted
+          content:
+            application/json:
+              schema: { $ref: "../schemas/operation-receipt.schema.json" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/PolicyRejected" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
+    delete:
+      operationId: deleteRegistryConnection
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R2
+      x-opensphere-assurance: aal2
+      x-opensphere-idempotency: required
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: X-OpenSphere-Confirmation
+          in: header
+          required: true
+          schema: { const: "REMOVE opensphere-ghcr" }
+      responses:
+        "202":
+          description: Durable removal operation accepted
+          content:
+            application/json:
+              schema: { $ref: "../schemas/operation-receipt.schema.json" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/admin/extensions/registry-connections/opensphere-ghcr/verify:
+    post:
+      operationId: verifyRegistryConnection
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R0
+      x-opensphere-rate-limit: required
+      x-opensphere-idempotency: not-applicable-read-only
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      responses:
+        "200":
+          description: Bounded live verification against the approved GHCR namespace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadEnvelope" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
+  /api/admin/extensions/revocations:
+    get:
+      operationId: listExtensionRevocations
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable-read-only
+      responses:
+        "200":
+          description: Current exact-digest revocation set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadEnvelope" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+    post:
+      operationId: createExtensionRevocation
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R2
+      x-opensphere-assurance: aal2
+      x-opensphere-idempotency: required
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/registry-revocation-request.schema.json" }
+      responses:
+        "202":
+          description: Revocation intent durably accepted
+          content:
+            application/json:
+              schema: { $ref: "../schemas/operation-receipt.schema.json" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/admin/extensions/inspect:
+    post:
+      operationId: inspectExtensionCandidate
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable-read-only
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/extension-candidate-request.schema.json" }
+      responses:
+        "200":
+          description: Descriptor, execution revision, signature, compatibility and revocation evidence
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadEnvelope" }
+        "422": { $ref: "#/components/responses/PolicyRejected" }
+  /api/admin/extensions/install:
+    post:
+      operationId: installExtensionCandidate
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-risk: R2
+      x-opensphere-assurance: aal2
+      x-opensphere-idempotency: required
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/extension-candidate-request.schema.json" }
+      responses:
+        "202":
+          description: Exact-revision install operation durably accepted
+          content:
+            application/json:
+              schema: { $ref: "../schemas/operation-receipt.schema.json" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/PolicyRejected" }
+components:
+  securitySchemes:
+    BrowserSession:
+      type: apiKey
+      in: cookie
+      name: __Host-opensphere-session
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string, minLength: 16, maxLength: 512 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    OperationId:
+      name: operationId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+  schemas:
+    ReadEnvelope:
+      $ref: "../schemas/read-envelope.schema.json"
+    ErrorEnvelope:
+      $ref: "../schemas/error-envelope.schema.json"
+  responses:
+    AuthenticationRequired:
+      description: Authentication is missing, expired, or revoked
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    PermissionDenied:
+      description: Current permission or assurance is insufficient
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: The target is absent or not visible to this actor
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: Revision, state, or idempotency conflict
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    PolicyRejected:
+      description: A validated request was rejected by current policy
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    AuthorityUnavailable:
+      description: The named source authority is unavailable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    RateLimited:
+      description: The bounded verification or mutation rate was exceeded
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+security:
+  - BrowserSession: []

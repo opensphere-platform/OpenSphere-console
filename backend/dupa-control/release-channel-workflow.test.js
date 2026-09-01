@@ -4,7 +4,8 @@ const path = require('node:path');
 const test = require('node:test');
 
 const consoleRoot = path.join(__dirname, '..', '..');
-const gaWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows', 'publish-ga-images.yml'), 'utf8');
+const candidateWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
+const promoteWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows', 'promote-release.yml'), 'utf8');
 const angularConfig = JSON.parse(fs.readFileSync(path.join(consoleRoot, 'angular.json'), 'utf8'));
 const localEdgePublisher = fs.readFileSync(path.join(consoleRoot, 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
 const setupSourceLock = fs.readFileSync(
@@ -12,28 +13,29 @@ const setupSourceLock = fs.readFileSync(
   'utf8'
 ).trim();
 
-test('GA is rebuilt by a manual GitHub workflow and never publishes edge', () => {
-  assert.match(gaWorkflow, /^\s*workflow_dispatch:\s*$/m);
-  assert.doesNotMatch(gaWorkflow, /^  push:/m);
-  assert.match(gaWorkflow, /platforms: linux\/amd64,linux\/arm64/);
-  assert.match(gaWorkflow, /io\.opensphere\.channel=ga/);
-  assert.match(gaWorkflow, /opensphere\.io\/build-authority=github-actions/);
-  assert.match(gaWorkflow, /opensphere\.io\/release-class=ga/);
-  assert.match(gaWorkflow, /opensphere\.io\/ga-eligible=true/);
-  assert.match(gaWorkflow, /org\.opencontainers\.image\.version=\$\{\{ steps\.release\.outputs\.version \}\}/);
-  assert.doesNotMatch(gaWorkflow, /crane tag [^\n]+ edge/);
-  assert.match(gaWorkflow, /crane tag "\$repository@\$digest" ga/);
-  assert.match(gaWorkflow, /crane tag "\$anchor_repository@\$anchor_digest" ga/);
+test('GA lineage is clean-built as candidate and never publishes edge or ga directly', () => {
+  assert.match(candidateWorkflow, /^\s*workflow_dispatch:\s*$/m);
+  assert.doesNotMatch(candidateWorkflow, /^  push:/m);
+  assert.match(candidateWorkflow, /platforms: linux\/amd64,linux\/arm64/);
+  assert.match(candidateWorkflow, /io\.opensphere\.channel=candidate/);
+  assert.match(candidateWorkflow, /io\.opensphere\.built-channel=candidate/);
+  assert.match(candidateWorkflow, /opensphere\.io\/build-authority=github-actions/);
+  assert.match(candidateWorkflow, /opensphere\.io\/release-class=pre-ga/);
+  assert.match(candidateWorkflow, /opensphere\.io\/ga-eligible=true/);
+  assert.match(candidateWorkflow, /org\.opencontainers\.image\.version=\$\{\{ steps\.release\.outputs\.version \}\}/);
+  assert.doesNotMatch(candidateWorkflow, /crane tag [^\n]+ (?:edge|stable|ga)/);
+  assert.match(candidateWorkflow, /crane tag "\$repository@\$digest" candidate/);
+  assert.match(candidateWorkflow, /crane tag "\$anchor_repository@\$anchor_digest" candidate/);
 });
 
-test('GA channel moves only after a complete immutable Console BOM is prepared', () => {
-  assert.match(gaWorkflow, /publish-ga:\s*\n\s+needs: \[publish\]/);
-  assert.match(gaWorkflow, /source_tag="sha-\$\{GITHUB_SHA:0:7\}"/);
-  assert.match(gaWorkflow, /release_tag="\$\(TZ=Asia\/Seoul date -d "@\$release_epoch" \+%Y%m%d%H%M\)"/);
-  assert.match(gaWorkflow, /bom="\$RUNNER_TEMP\/opensphere-release-bom\.json"/);
-  assert.match(gaWorkflow, /Do not move any channel tag until every immutable component was/);
-  assert.match(gaWorkflow, /--argjson supportedPlatforms '\["linux\/amd64","linux\/arm64"\]'/);
-  assert.match(gaWorkflow, /Advance GA with Console anchor last/);
+test('candidate moves only after a complete immutable Console BOM is prepared', () => {
+  assert.match(candidateWorkflow, /publish-candidate:\s*\n\s+needs: \[publish\]/);
+  assert.match(candidateWorkflow, /source_tag="sha-\$\{GITHUB_SHA:0:7\}"/);
+  assert.match(candidateWorkflow, /release_tag="\$\(TZ=Asia\/Seoul date -d "@\$release_epoch" \+%Y%m%d%H%M\)"/);
+  assert.match(candidateWorkflow, /bom="\$RUNNER_TEMP\/opensphere-release-bom\.json"/);
+  assert.match(candidateWorkflow, /Do not move any channel tag until every immutable component was/);
+  assert.match(candidateWorkflow, /--argjson supportedPlatforms '\["linux\/amd64","linux\/arm64"\]'/);
+  assert.match(candidateWorkflow, /Advance candidate with Console anchor last/);
 });
 
 test('Windows local edge publisher is host-native, GHCR-backed, and KST-versioned', () => {
@@ -76,14 +78,21 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   assert.match(localEdgePublisher, /-not \$partialPublication -or \$AdvanceOsShellUxConsoleEdge/);
 });
 
-test('retag-only promotion workflow is absent because channel identity is immutable image metadata', () => {
-  assert.equal(fs.existsSync(path.join(consoleRoot, '.github', 'workflows', 'promote-image-channel.yml')), false);
+test('promotion is adjacent, approval-gated, exact-digest and moves the Console anchor last', () => {
+  assert.match(promoteWorkflow, /stable\) source_channel=candidate/);
+  assert.match(promoteWorkflow, /ga\) source_channel=stable; test -n "\$AZURE_RELEASE_EVIDENCE"/);
+  assert.match(promoteWorkflow, /environment: \$\{\{ inputs\.target_channel == 'ga' && 'console-ga' \|\| 'console-stable' \}\}/);
+  assert.match(promoteWorkflow, /test "\$source_digest" = "\$release_digest"/);
+  assert.match(promoteWorkflow, /test "\$built_channel" = candidate/);
+  assert.match(promoteWorkflow, /Attest promotion receipt before moving the channel/);
+  assert.match(promoteWorkflow, /Advance target channel with Console anchor last/);
 });
 
-test('public Console GA workflow reads private Setup through a dedicated read-only secret', () => {
-  const checkout = gaWorkflow.slice(
-    gaWorkflow.indexOf('      - name: Require private Setup read credential'),
-    gaWorkflow.indexOf('      - name: Checkout Cluster Manager'),
+test('candidate backend build reads private Setup through a dedicated read-only secret', () => {
+  const start = candidateWorkflow.indexOf('      - name: Require private Setup read credential');
+  const checkout = candidateWorkflow.slice(
+    start,
+    candidateWorkflow.indexOf('      - name: Record Setup source revision', start),
   );
   assert.match(checkout, /SETUP_REPOSITORY_SSH_KEY/);
   assert.match(checkout, /ssh-key: \$\{\{ secrets\.SETUP_REPOSITORY_SSH_KEY \}\}/);

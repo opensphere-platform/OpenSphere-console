@@ -388,17 +388,6 @@ test('rehydrates recent aal2 only for the exact token forwarded by an owner serv
   }), null);
 });
 
-test('adopts one legacy browser session by rotating its refresh credential once', async () => {
-  const h = harness();
-  const adopted = await h.manager.adoptLegacy(request({ method: 'POST' }), {
-    refreshToken: 'legacy-refresh',
-  });
-  assert.equal(adopted.mfaRequired, false);
-  assert.match(adopted.cookies[0], /^__Host-opensphere_session=/);
-  assert.equal(h.row().persistence, 'browser');
-  assert.doesNotMatch(h.row().refresh_token_ciphertext, /legacy-refresh|refresh-rotated/);
-});
-
 test('does not rotate or revoke a valid browser session when live authorization is unavailable', async () => {
   const h = harness();
   const created = await h.manager.create(request({ method: 'POST' }), {

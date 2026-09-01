@@ -4956,21 +4956,6 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/identity/bootstrap' && req.method === 'POST') {
       return json(res, 201, await bootstrapInitialOperator(await readBody(req)));
     }
-    if (p === '/api/identity/session/adopt' && req.method === 'POST') {
-      try {
-        if (!browserSessions) throw { code: 503, msg: 'browser session broker unavailable' };
-        const body = await readBody(req);
-        const adopted = await browserSessions.adoptLegacy(req, {
-          refreshToken: body.refreshToken,
-        });
-        return json(res, 200, {
-          mfaRequired: adopted.mfaRequired,
-          session: adopted.session,
-        }, { 'set-cookie': adopted.cookies });
-      } catch (e) {
-        return json(res, authErrorStatus(e), { error: e.msg || 'Legacy browser session adoption failed' });
-      }
-    }
     if (p === '/api/monitoring/baseline/v1/overview' && req.method === 'GET') {
       try {
         const actor = await verifyAuthed(req);

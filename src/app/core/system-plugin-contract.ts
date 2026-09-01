@@ -1,4 +1,4 @@
-import type { Capability } from '@opensphere/sdk';
+import type { Capability } from '@opensphere/console-contracts';
 
 export type SystemPluginCategory = 'Developer Tools' | 'AI Orchestration';
 
