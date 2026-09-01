@@ -57,6 +57,7 @@ export function createDatabaseSessionResolver({ store, cookieName = DEFAULT_COOK
       persistence: session.persistence ?? '24h',
       lastSeenAt: session.lastSeenAt ?? null,
       accessTokenExpiresAt: session.accessTokenExpiresAt ?? null,
+      lastReauthenticatedAt: session.lastReauthenticatedAt ?? null,
       revokedAt: session.revokedAt,
       authorityFresh: session.authorityFresh === true,
       permissions: Array.isArray(session.permissions) ? session.permissions : [],

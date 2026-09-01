@@ -15,7 +15,7 @@ export function authorizeOperation({ session, permission, risk, reason, now = ne
     throw Object.assign(new Error('reason is required'), { code: 'ReasonRequired' });
   }
   if ((risk === 'R2' || risk === 'R3') && session.aal !== 'aal2') {
-    throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired' });
+    throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 428 });
   }
   return Object.freeze({
     actorRef: session.subjectId,

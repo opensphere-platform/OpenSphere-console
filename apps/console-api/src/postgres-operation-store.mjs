@@ -169,7 +169,7 @@ function databaseError(error) {
     SubjectAuthorityMissing: 403,
     StaleAuthorityRevision: 409,
     PermissionDenied: 403,
-    StepUpRequired: 403,
+    StepUpRequired: 428,
     IdempotencyMismatch: 409,
     AuthorityUnavailable: 503,
     CsrfRejected: 403,

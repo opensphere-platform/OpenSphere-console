@@ -713,6 +713,7 @@ test('opaque session resolver sends only cookie and CSRF digests to PostgreSQL',
     'x-os-csrf-token': csrf,
   } }, { requireCsrf: true });
   assert.equal(resolved.subjectId, actorRef);
+  assert.equal(resolved.lastReauthenticatedAt, null);
   assert.equal(calls[0].tokenDigest.toString('hex'), createHash('sha256').update(handle).digest('hex'));
   assert.equal(calls[0].csrfTokenDigest.toString('hex'), createHash('sha256').update(csrf).digest('hex'));
   assert.doesNotMatch(JSON.stringify(calls[0]), new RegExp(handle));

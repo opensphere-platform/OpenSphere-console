@@ -57,6 +57,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0006_browser_session_inventory_revocation.verify.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0007_browser_session_totp_enrollment.verify.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0008_browser_session_step_up.verify.sql
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0009_recent_aal2_enforcement.verify.sql
       - name: Verify Console API through PostgreSQL
         env:
           CONSOLE_DATABASE_URL: postgresql://console_api_runtime:console-runtime-test@localhost:5432/postgres

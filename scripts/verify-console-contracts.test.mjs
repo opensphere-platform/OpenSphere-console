@@ -39,7 +39,8 @@ test('Console API authority verification rejects missing grants and direct table
   const inventorySource = await readFile(new URL('../migrations/versions/0006_browser_session_inventory_revocation.sql', import.meta.url), 'utf8');
   const enrollmentSource = await readFile(new URL('../migrations/versions/0007_browser_session_totp_enrollment.sql', import.meta.url), 'utf8');
   const stepUpSource = await readFile(new URL('../migrations/versions/0008_browser_session_step_up.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource].join('\n');
+  const recentAal2Source = await readFile(new URL('../migrations/versions/0009_recent_aal2_enforcement.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

@@ -159,7 +159,7 @@ export function createRegistryOperations({ operationService, policyRevision, pro
     async installCandidate({ session, body, idempotencyKey, correlationId }) {
       requirePermission(session, 'console.extension.install');
       if (session.aal !== 'aal2') {
-        throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 403 });
+        throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 428 });
       }
       const request = catalogRequest(body, true);
       if (!registryResolver?.resolveExtension) throw Object.assign(
@@ -203,7 +203,7 @@ export function createRegistryOperations({ operationService, policyRevision, pro
     async removeExtension({ session, body, idempotencyKey, correlationId }) {
       requirePermission(session, 'console.extension.remove');
       if (session.aal !== 'aal2') {
-        throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 403 });
+        throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 428 });
       }
       const request = removalRequest(body);
       return operationService.accept({

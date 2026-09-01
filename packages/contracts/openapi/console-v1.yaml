@@ -436,6 +436,8 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
+        "428":
+          $ref: "#/components/responses/StepUpRequired"
         "409":
           $ref: "#/components/responses/Conflict"
         "404":
@@ -516,6 +518,7 @@ paths:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/PolicyRejected" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
         "503": { $ref: "#/components/responses/AuthorityUnavailable" }
     delete:
       operationId: deleteRegistryConnection
@@ -540,6 +543,7 @@ paths:
             application/json:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
   /api/admin/extensions/registry-connections/opensphere-ghcr/verify:
     post:
       operationId: verifyRegistryConnection
@@ -595,6 +599,7 @@ paths:
             application/json:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
   /api/admin/extensions/inspect:
     post:
       operationId: inspectExtensionCandidate
@@ -643,6 +648,7 @@ paths:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/PolicyRejected" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
   /api/admin/extensions/remove:
     post:
       operationId: removeExtension
@@ -668,6 +674,7 @@ paths:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/PolicyRejected" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
 components:
   securitySchemes:
     BrowserSession:
@@ -713,6 +720,11 @@ components:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     PermissionDenied:
       description: Current permission or assurance is insufficient
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    StepUpRequired:
+      description: The operation requires successful MFA reauthentication within the preceding five minutes
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

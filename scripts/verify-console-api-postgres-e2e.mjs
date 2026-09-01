@@ -41,6 +41,10 @@ const enrollmentAal2AccessToken = integrationAccessToken({
   aal: 'aal2', expiresInSeconds: 3600, sessionId: 'supabase-auth-session-enrollment-aal2-0001',
 });
 const enrollmentAal2RefreshToken = 'supabase-refresh-credential-enrollment-aal2-0001';
+const stepUpAal2AccessToken = integrationAccessToken({
+  aal: 'aal2', expiresInSeconds: 3600, sessionId: 'supabase-auth-session-step-up-aal2-0001',
+});
+const stepUpAal2RefreshToken = 'supabase-refresh-credential-step-up-aal2-0001';
 let totpEnrollmentState = 'none';
 const mfaAccessToken = [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -122,10 +126,11 @@ const authorityServer = createServer(async (request, response) => {
   }
   if (request.url === '/user' && request.method === 'GET') {
     const bearer = request.headers.authorization;
-    assert.ok([loginAccessToken, rotatedLoginAccessToken, enrollmentAal2AccessToken, mfaAccessToken, mfaAal2AccessToken]
+    assert.ok([loginAccessToken, rotatedLoginAccessToken, enrollmentAal2AccessToken, stepUpAal2AccessToken, mfaAccessToken, mfaAal2AccessToken]
       .some((token) => bearer === 'Bearer ' + token));
     const enrollmentBearer = bearer === 'Bearer ' + rotatedLoginAccessToken
-      || bearer === 'Bearer ' + enrollmentAal2AccessToken;
+      || bearer === 'Bearer ' + enrollmentAal2AccessToken
+      || bearer === 'Bearer ' + stepUpAal2AccessToken;
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
       id: loginSubjectId,
@@ -153,18 +158,27 @@ const authorityServer = createServer(async (request, response) => {
     return;
   }
   if (request.url === '/factors/factor-enrollment-1/challenge' && request.method === 'POST') {
-    assert.equal(request.headers.authorization, 'Bearer ' + rotatedLoginAccessToken);
+    const steppingUp = request.headers.authorization === 'Bearer ' + enrollmentAal2AccessToken;
+    assert.ok(steppingUp || request.headers.authorization === 'Bearer ' + rotatedLoginAccessToken);
     assert.deepEqual(requestBody, {});
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ id: 'integration-enrollment-challenge-0001' }));
+    response.end(JSON.stringify({ id: steppingUp
+      ? 'integration-step-up-challenge-0001'
+      : 'integration-enrollment-challenge-0001' }));
     return;
   }
   if (request.url === '/factors/factor-enrollment-1/verify' && request.method === 'POST') {
-    assert.equal(request.headers.authorization, 'Bearer ' + rotatedLoginAccessToken);
-    assert.deepEqual(requestBody, { challenge_id: 'integration-enrollment-challenge-0001', code: '654321' });
+    const steppingUp = request.headers.authorization === 'Bearer ' + enrollmentAal2AccessToken;
+    assert.ok(steppingUp || request.headers.authorization === 'Bearer ' + rotatedLoginAccessToken);
+    assert.deepEqual(requestBody, steppingUp
+      ? { challenge_id: 'integration-step-up-challenge-0001', code: '789012' }
+      : { challenge_id: 'integration-enrollment-challenge-0001', code: '654321' });
     totpEnrollmentState = 'verified';
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ access_token: enrollmentAal2AccessToken, refresh_token: enrollmentAal2RefreshToken }));
+    response.end(JSON.stringify({
+      access_token: steppingUp ? stepUpAal2AccessToken : enrollmentAal2AccessToken,
+      refresh_token: steppingUp ? stepUpAal2RefreshToken : enrollmentAal2RefreshToken,
+    }));
     return;
   }
   if (request.url === '/factors/factor-1/challenge' && request.method === 'POST') {
@@ -584,6 +598,47 @@ try {
   assert.notEqual(enrollmentEvidence.rows[0].access_token_ciphertext, preEnrollmentEvidence.rows[0].access_token_ciphertext);
   assert.notEqual(enrollmentEvidence.rows[0].refresh_token_ciphertext, preEnrollmentEvidence.rows[0].refresh_token_ciphertext);
   assert.doesNotMatch(enrollmentEvidence.rows[0].audit_evidence, /JBSWY3DPEHPK3PXP|factor-enrollment-1|otpauth|integration-signature/);
+
+  await admin.query(
+    "UPDATE console_identity.browser_session SET last_reauthenticated_at = statement_timestamp() - interval '6 minutes' WHERE session_id = $1",
+    [loginBody.session.id],
+  );
+  const staleStepUpHeaders = {
+    ...headers,
+    cookie: loginCookieHeader,
+    'x-os-csrf-token': loginCsrf,
+    'idempotency-key': 'integration-step-up-operation-0001',
+    'x-correlation-id': 'integration-step-up-operation-correlation-0001',
+  };
+  const stalePrivilegedResponse = await mutation(body, staleStepUpHeaders);
+  assert.equal(stalePrivilegedResponse.status, 428);
+  assert.equal((await stalePrivilegedResponse.json()).code, 'StepUpRequired');
+  const stepUpResponse = await fetch(origin + '/api/identity/session/step-up', {
+    method: 'POST',
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'content-type': 'application/json',
+      'x-correlation-id': 'integration-session-step-up-0001',
+    },
+    body: JSON.stringify({ code: '789012' }),
+  });
+  assert.equal(stepUpResponse.status, 200);
+  const stepUpBody = await stepUpResponse.json();
+  assert.equal(stepUpBody.assurance, 'aal2');
+  assert.ok(new Date(stepUpBody.reauthenticatedAt) > new Date(Date.now() - 60_000));
+  const stepUpAccepted = await mutation(body, staleStepUpHeaders);
+  assert.equal(stepUpAccepted.status, 202);
+  const stepUpEvidence = await admin.query(
+    [
+      'SELECT last_reauthenticated_at > statement_timestamp() - interval \'1 minute\' AS recent,',
+      '(SELECT count(*)::int FROM console_audit.event',
+      "WHERE action = 'console.identity.session.step_up' AND correlation_id = $2) AS audit_events",
+      'FROM console_identity.browser_session WHERE session_id = $1',
+    ].join(' '),
+    [loginBody.session.id, 'integration-session-step-up-0001'],
+  );
+  assert.deepEqual(stepUpEvidence.rows[0], { recent: true, audit_events: 1 });
 
   const secondLoginResponse = await fetch(origin + '/api/identity/session/login', {
     method: 'POST',
@@ -1272,6 +1327,7 @@ try {
     ownedSessionRevocationLifecycle: true,
     mfaLoginChallengeLifecycle: true,
     mfaEnrollmentLifecycle: true,
+    privilegedStepUpLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     revokeDenied: true,
