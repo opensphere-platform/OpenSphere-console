@@ -15,6 +15,10 @@ test('foundational Console contracts are internally complete and self-contained'
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 10,
+    browserApiPatterns: 121,
+    browserApiFamilies: 15,
+    targetBrowserSessionReady: false,
+    authenticatedBrowserCutoverReady: false,
   });
 });
 

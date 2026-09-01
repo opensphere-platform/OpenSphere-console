@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0",
+  "status": "target-migration",
+  "sourceRoot": "src/app",
+  "cutoverPolicy": "atomic-authenticated-browser-session-authority",
+  "currentSessionAuthority": "legacy-browser-session-broker",
+  "targetSessionAuthority": "console_identity.browser_session",
+  "inventory": {
+    "routePatternCount": 121,
+    "setDigest": "sha256:7db53639f2030a0af91fc3bc44df5c4124110e42c6ebed6b951ae7edc9362054"
+  },
+  "targetSessionCapabilities": [
+    { "id": "password-login", "status": "missing" },
+    { "id": "refresh-rotation", "status": "missing" },
+    { "id": "csrf-binding", "status": "direct-test" },
+    { "id": "current-session-resolution", "status": "direct-test" },
+    { "id": "self-logout", "status": "direct-test" },
+    { "id": "activity-touch", "status": "missing" },
+    { "id": "mfa-login-challenge", "status": "missing" },
+    { "id": "mfa-enrollment", "status": "missing" },
+    { "id": "mfa-step-up", "status": "missing" },
+    { "id": "password-recovery", "status": "missing" },
+    { "id": "active-session-inventory", "status": "missing" },
+    { "id": "other-session-revocation", "status": "missing" },
+    { "id": "initial-admin-bootstrap", "status": "missing" }
+  ],
+  "families": [
+    { "id": "identity", "prefix": "/api/identity", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "platform", "prefix": "/api/platform", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "admin", "prefix": "/api/admin", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "monitoring", "prefix": "/api/monitoring", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "notifications", "prefix": "/api/notifications", "targetOwner": "C_NOTIFY", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "external-channels", "prefix": "/api/external-channels", "targetOwner": "C_BAK", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "catalog", "prefix": "/api/catalog", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "kubernetes", "prefix": "/api/kubernetes", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "status", "prefix": "/api/status", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    { "id": "osaa", "prefix": "/api/osaa", "targetOwner": "C_AI", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
+    { "id": "manual", "prefix": "/api/manual", "targetOwner": "C_AI", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
+    { "id": "os-shell", "prefix": "/api/os-shell", "targetOwner": "C_SCTL", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
+    { "id": "plugins", "prefix": "/api/plugins", "targetOwner": "C_EXT", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
+    { "id": "registry", "prefix": "/api/v1/registry", "targetOwner": "C_REG", "sessionPolicy": "public-read", "status": "target-routed" },
+    { "id": "cli-artifact", "prefix": "/api/cli", "targetOwner": "C_CLI", "sessionPolicy": "public-static", "status": "target-routed" }
+  ]
+}
