@@ -91,12 +91,18 @@ export function createCatalogOperations({ registryResolver }) {
       if (!body || typeof body !== 'object' || Array.isArray(body)
         || Object.keys(body).some((key) => key !== 'entity')
         || !body.entity || typeof body.entity !== 'object' || Array.isArray(body.entity)
-        || String(body.entity.metadata?.name || '') !== name) {
-        throw validationFault('runtime resource request must identify the path entity');
+        || Object.keys(body.entity).some((key) => key !== 'metadata')
+        || !body.entity.metadata || typeof body.entity.metadata !== 'object' || Array.isArray(body.entity.metadata)
+        || Object.keys(body.entity.metadata).some((key) => key !== 'name')
+        || String(body.entity.metadata.name || '') !== name) {
+        throw validationFault('runtime resource request must identify only the path entity');
       }
-      // C_API deliberately has no Kubernetes authority. The current browser
-      // contract is preserved until a dedicated runtime projection is defined.
-      return Object.freeze({ items: Object.freeze([]) });
+      throw Object.assign(new Error('Kubernetes runtime observation owner is not configured'), {
+        code: 'AuthorityUnavailable',
+        status: 503,
+        reasonCode: 'RuntimeObservationOwnerUnconfigured',
+        authority: 'KubernetesRuntimeObservation',
+      });
     },
   });
 }

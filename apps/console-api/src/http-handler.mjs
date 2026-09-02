@@ -89,7 +89,10 @@ function errorEnvelope(error, correlationId) {
     sideEffect,
     correlationId,
     operationId: error?.operationId || null,
-    details: {},
+    details: error?.reasonCode === 'RuntimeObservationOwnerUnconfigured'
+      && error?.authority === 'KubernetesRuntimeObservation'
+      ? { reasonCode: error.reasonCode, authority: error.authority }
+      : {},
   };
 }
 
@@ -678,7 +681,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         if (!catalogOperations?.runtimeResources) {
           throw Object.assign(new Error('runtime resource projection is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         }
-        await resolveSession(request, { requireCsrf: false, correlationId });
+        await resolveSession(request, { requireCsrf: true, correlationId });
         return send(response, 200, await catalogOperations.runtimeResources({
           entityName: runtimeResourcesMatch[1],
           body: await jsonBody(request),

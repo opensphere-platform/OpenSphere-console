@@ -46,6 +46,14 @@ export interface RuntimeResource {
   healthy: boolean;
 }
 
+export class RuntimeObservationUnavailableError extends Error {
+  override readonly name = 'RuntimeObservationUnavailableError';
+
+  constructor() {
+    super('Kubernetes runtime observation owner is not configured');
+  }
+}
+
 /** 리소스 종류별 상태 요약 (TAP Status 열 대응) */
 function summarizeStatus(type: string, o: any): string {
   const s = o.status ?? {};
@@ -117,15 +125,26 @@ export class ApiService {
     return (await this.catalogProjection(true)).items;
   }
 
-  /** 엔티티의 살아있는 K8s 리소스 — rhdh-self kubernetes backend 플러그인 소비
-   *  (TAP 'Runtime Resources' 대응 — 헌법 §10: 흡수, 재구현 아님) */
+  /** Runtime observation stays unavailable until a bounded owner is configured.
+   *  C_API deliberately receives no Kubernetes credential or RBAC. */
   async runtimeResources(entity: CatalogEntity): Promise<RuntimeResource[]> {
     const res = await this.http.request(`/api/kubernetes/services/${entity.metadata.name}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity }),
+      body: JSON.stringify({ entity: { metadata: { name: entity.metadata.name } } }),
     });
-    if (!res.ok) throw new Error(`kubernetes: HTTP ${res.status}`);
+    if (!res.ok) {
+      const error = await res.clone().json().catch(() => null) as {
+        code?: string;
+        details?: { reasonCode?: string; authority?: string };
+      } | null;
+      if (res.status === 503 && error?.code === 'AuthorityUnavailable'
+        && error.details?.reasonCode === 'RuntimeObservationOwnerUnconfigured'
+        && error.details.authority === 'KubernetesRuntimeObservation') {
+        throw new RuntimeObservationUnavailableError();
+      }
+      throw new Error(`kubernetes: HTTP ${res.status}`);
+    }
     const data = await res.json();
     const out: RuntimeResource[] = [];
     for (const item of data.items ?? []) {

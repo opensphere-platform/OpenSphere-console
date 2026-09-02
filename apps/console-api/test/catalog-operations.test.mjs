@@ -53,13 +53,19 @@ test('Catalog projection maps Registry descriptors without Kubernetes authority'
   await assert.rejects(operations.listEntities({ limit: '201' }), { code: 'ValidationFailed', status: 400 });
 });
 
-test('Runtime Resources preserves the empty read projection and rejects a mismatched entity', async () => {
+test('Runtime Resources fails closed when its observation owner is unconfigured', async () => {
   const { operations } = fixture();
-  assert.deepEqual(await operations.runtimeResources({
+  await assert.rejects(operations.runtimeResources({
     entityName: 'cbss.opensphere-console', body: { entity: { metadata: { name: 'cbss.opensphere-console' } } },
-  }), { items: [] });
+  }), {
+    code: 'AuthorityUnavailable', status: 503,
+    reasonCode: 'RuntimeObservationOwnerUnconfigured', authority: 'KubernetesRuntimeObservation',
+  });
   await assert.rejects(operations.runtimeResources({
     entityName: 'cbss.opensphere-console', body: { entity: { metadata: { name: 'different' } } },
+  }), { code: 'ValidationFailed', status: 400 });
+  await assert.rejects(operations.runtimeResources({
+    entityName: 'cbss.opensphere-console', body: { entity: { metadata: { name: 'cbss.opensphere-console' }, spec: {} } },
   }), { code: 'ValidationFailed', status: 400 });
 });
 
@@ -87,8 +93,12 @@ test('HTTP Catalog and Runtime Resources routes use the target session authority
     method: 'POST', headers: { 'content-type': 'application/json', 'x-os-correlation-id': 'runtime-correlation-0001' },
     body: JSON.stringify({ entity: { metadata: { name: 'cbss.opensphere-console' } } }),
   });
-  assert.equal(runtime.status, 200);
-  assert.deepEqual(await runtime.json(), { items: [] });
+  assert.equal(runtime.status, 503);
+  const runtimeBody = await runtime.json();
+  assert.equal(runtimeBody.code, 'AuthorityUnavailable');
+  assert.deepEqual(runtimeBody.details, {
+    reasonCode: 'RuntimeObservationOwnerUnconfigured', authority: 'KubernetesRuntimeObservation',
+  });
   assert.equal(sessions.length, 2);
-  assert(sessions.every(({ requireCsrf }) => requireCsrf === false));
+  assert.deepEqual(sessions.map(({ requireCsrf }) => requireCsrf), [false, true]);
 });

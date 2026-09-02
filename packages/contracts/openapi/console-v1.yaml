@@ -1160,6 +1160,37 @@ paths:
           in: query
           required: false
           schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+  /api/kubernetes/services/{entityName}:
+    parameters:
+      - name: entityName
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[a-z0-9][a-z0-9._-]{0,254}$" }
+    post:
+      operationId: getCatalogRuntimeResources
+      tags: [Catalog]
+      x-opensphere-requirement: CON-FR-006
+      x-opensphere-authority: KubernetesRuntimeObservation
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable-read-projection
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/catalog-runtime-resource-request.schema.json"
+      responses:
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          description: Runtime observation owner is deliberately unconfigured; C_API has no Kubernetes credential or RBAC
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
   /api/platform/change-templates/{templateId}:
     parameters:
       - name: templateId

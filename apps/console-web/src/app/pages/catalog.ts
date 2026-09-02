@@ -1,7 +1,7 @@
 import { Component, OnInit, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
-import { ApiService, CatalogCoverage, CatalogEntity, RuntimeResource } from '../core/api.service';
+import { ApiService, CatalogCoverage, CatalogEntity, RuntimeObservationUnavailableError, RuntimeResource } from '../core/api.service';
 import { OsDatagrid, OsColumn } from '../os/os-datagrid';
 import { OsPanel } from '../os/os-panel';
 import { BackendUnavailable } from '../os/backend-unavailable';
@@ -98,7 +98,7 @@ import { OsPageHeader } from '../os/os-page-header';
         }
         @if (e.kind === 'Component') {
           <h3 class="os-h3">
-            Runtime Resources <span class="os-engine">live · engine: kubernetes plugin</span>
+            Runtime Resources <span class="os-engine">owner: Kubernetes runtime observation</span>
           </h3>
           @if (runtime(); as rt) {
             @if (rt.length) {
@@ -130,10 +130,10 @@ import { OsPageHeader } from '../os/os-page-header';
                 </tbody>
               </table>
             } @else {
-              <p class="os-sub">매핑된 런타임 리소스 없음 (kubernetes-label-selector 주석 확인)</p>
+              <p class="os-sub">현재 관측 범위에 매핑된 런타임 리소스가 없습니다.</p>
             }
           } @else if (runtimeError()) {
-            <p class="os-sub">조회 실패: {{ runtimeError() }}</p>
+            <p class="os-sub">{{ runtimeError() }}</p>
           } @else {
             <span class="spinner spinner-inline"></span>
           }
@@ -267,7 +267,9 @@ export class Catalog implements OnInit {
     try {
       this.runtime.set(await this.api.runtimeResources(e));
     } catch (err) {
-      this.runtimeError.set(String(err));
+      this.runtimeError.set(err instanceof RuntimeObservationUnavailableError
+        ? '관측 owner 미구성 — Console API에는 Kubernetes 권한을 부여하지 않습니다.'
+        : `조회 실패: ${String(err)}`);
     }
   }
 

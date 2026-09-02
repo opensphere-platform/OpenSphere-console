@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:catalog-runtime-resource-request:v1",
+  "title": "Bounded runtime observation lookup",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entity"],
+  "properties": {
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metadata"],
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$" }
+          }
+        }
+      }
+    }
+  }
+}

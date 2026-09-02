@@ -412,6 +412,15 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   'listCatalogEntities must use the closed revision-bound projection schema');
   assert(catalogRead?.parameters?.find(({ name }) => name === 'limit')?.schema?.maximum === 200,
     'listCatalogEntities must keep a bounded page size');
+  const runtimeObservation = entries.find(({ operation }) => operation.operationId === 'getCatalogRuntimeResources')?.operation;
+  assert(runtimeObservation?.['x-opensphere-authority'] === 'KubernetesRuntimeObservation',
+    'getCatalogRuntimeResources must name its missing runtime observation authority');
+  assert(runtimeObservation?.requestBody?.content?.['application/json']?.schema?.$ref
+    === '../schemas/catalog-runtime-resource-request.schema.json',
+  'getCatalogRuntimeResources must accept only the bounded entity identity');
+  assert(runtimeObservation?.responses?.['200'] === undefined
+    && runtimeObservation?.responses?.['503']?.content?.['application/json']?.schema?.$ref === '#/components/schemas/ErrorEnvelope',
+  'getCatalogRuntimeResources must not claim live data before an observation owner exists');
   const supabaseStatus = entries.find(({ operation }) => operation.operationId === 'getSupabaseStatus')?.operation;
   assert(supabaseStatus?.['x-opensphere-authority'] === 'Supabase', 'getSupabaseStatus must declare Supabase authority');
   assert(supabaseStatus?.['x-opensphere-permission'] === 'console.data_identity.read', 'getSupabaseStatus must declare its read permission');
