@@ -9,7 +9,6 @@ import { MyInfo } from './pages/my-info';
 import { ConsoleAdmins } from './pages/console-admins';
 import { AdminDataIdentity } from './pages/admin-data-identity';
 import { AdminChangeControl } from './pages/admin-change-control';
-import { AdminObservability } from './pages/admin-observability';
 import { AdminPlatformControl } from './pages/admin-platform-control';
 import { AdminPlatformRelease } from './pages/admin-platform-release';
 import { AdminNotifications } from './pages/admin-notifications';
@@ -140,7 +139,7 @@ export const routes: Routes = [
         path: 'infrastructure-monitoring',
         loadComponent: () => import('./pages/admin-infrastructure-monitoring').then((module) => module.AdminInfrastructureMonitoring),
       },
-      { path: 'observability', component: AdminObservability },
+      { path: 'observability', redirectTo: 'infrastructure-monitoring', pathMatch: 'full' },
       { path: 'notifications', component: AdminNotifications },
       { path: 'external-channels', component: AdminExternalChannels },
       { path: 'notification-channels', redirectTo: 'external-channels', pathMatch: 'full' },

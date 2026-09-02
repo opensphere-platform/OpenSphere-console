@@ -391,10 +391,11 @@
       "targetOwner": "C_API",
       "target": {
         "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "family": "monitoring",
+        "prefix": "/api/monitoring",
+        "replacement": "/api/monitoring/baseline/v1/nodes/:systemId/series"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The unrestricted PromQL surface is replaced by the bounded Beszel system-series contract; arbitrary expressions never reach an observability backend."
     },
     {
       "path": "/api/admin/observability/query?expr=",
@@ -408,10 +409,11 @@
       "targetOwner": "C_API",
       "target": {
         "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "family": "monitoring",
+        "prefix": "/api/monitoring",
+        "replacement": "/api/monitoring/baseline/v1/nodes/:systemId/series"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The unrestricted PromQL surface is replaced by the bounded Beszel system-series contract; arbitrary expressions never reach an observability backend."
     },
     {
       "path": "/api/admin/observability/query_range",
@@ -466,10 +468,11 @@
       "targetOwner": "C_API",
       "target": {
         "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "family": "monitoring",
+        "prefix": "/api/monitoring",
+        "replacement": "/api/monitoring/baseline/v1/data-health"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The legacy HISS/DUPA read is replaced by the authenticated, read-only Beszel baseline monitoring contract owned by C_API."
     },
     {
       "path": "/api/admin/observability/targets",
@@ -487,10 +490,11 @@
       "targetOwner": "C_API",
       "target": {
         "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "family": "monitoring",
+        "prefix": "/api/monitoring",
+        "replacement": "/api/monitoring/baseline/v1/nodes"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The legacy HISS/DUPA read is replaced by the authenticated, read-only Beszel baseline monitoring contract owned by C_API."
     },
     {
       "path": "/api/admin/platform-control",

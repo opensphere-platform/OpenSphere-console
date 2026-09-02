@@ -1101,19 +1101,12 @@ func backbone(cfg Config, args []string, out, errOut io.Writer) error {
 
 func observability(cfg Config, args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] == "status" {
-		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/observability/status"), nil, out)
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/monitoring/baseline/v1/data-health"), nil, out)
 	}
 	if args[0] == "targets" {
-		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/observability/targets"), nil, out)
+		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/monitoring/baseline/v1/nodes"), nil, out)
 	}
-	if args[0] == "query" {
-		expr := strings.TrimSpace(parseLongFlags(args[1:])["expr"])
-		if expr == "" {
-			return usageError("사용법: os observability query --expr <PromQL>")
-		}
-		return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/observability/query?expr="+url.QueryEscape(expr)), nil, out)
-	}
-	return usageError("사용법: os observability status|targets|query")
+	return usageError("사용법: os observability status|targets")
 }
 
 func auditLog(cfg Config, args []string, out io.Writer) error {

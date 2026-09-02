@@ -201,7 +201,7 @@ export class AdminOverview {
         { label: 'CBSS', name: 'Supabase', description: 'Identity · Data · Audit · Object' },
         { label: 'CBSS', name: 'Gitea', description: 'Declarative change authority' },
         { label: 'RUNTIME', name: 'Kubernetes API', description: '실행 상태 정본' },
-        { label: 'EVIDENCE', name: 'HISS Observability', description: 'Metrics · Logs · Traces', route: '/manage/observability' },
+        { label: 'EVIDENCE', name: 'Beszel Baseline', description: 'Node telemetry · Alerts', route: '/manage/infrastructure-monitoring' },
       ],
     },
   ];

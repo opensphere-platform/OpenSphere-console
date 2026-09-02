@@ -15,7 +15,7 @@ test('foundational Console contracts are internally complete and self-contained'
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 54,
-    browserApiPatterns: 119,
+    browserApiPatterns: 118,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: false,
@@ -35,13 +35,21 @@ test('Console Web exposes only the implemented interactive CLI credential surfac
   assert(!profileSource.includes('/api/identity/cli/tokens'));
 });
 
-test('Console Web monitoring names Beszel as its current authority and Kubernetes observation as unconfigured', async () => {
+test('Console Web and CLI use only the bounded Beszel baseline monitoring authority', async () => {
   const source = await readFile(new URL('../apps/console-web/src/app/pages/admin-infrastructure-monitoring.ts', import.meta.url), 'utf8');
+  const routes = await readFile(new URL('../apps/console-web/src/app/app.routes.ts', import.meta.url), 'utf8');
+  const handler = await readFile(new URL('../apps/console-api/src/http-handler.mjs', import.meta.url), 'utf8');
+  const cli = await readFile(new URL('../cmd/os-cli/cmd/os/main.go', import.meta.url), 'utf8');
   assert(source.includes('Baseline observation · Beszel v0.18.7'));
   assert(source.includes('관측 owner 미구성'));
   assert(source.includes("binding: 'beszel-authoritative'"));
   assert(source.includes("identity: 'beszel-system'"));
   assert(!source.includes('Kubernetes API의 현재 상태를 결합합니다'));
+  assert(routes.includes("{ path: 'observability', redirectTo: 'infrastructure-monitoring', pathMatch: 'full' }"));
+  assert(cli.includes('/api/monitoring/baseline/v1/data-health'));
+  assert(cli.includes('/api/monitoring/baseline/v1/nodes'));
+  assert(!cli.includes('/api/admin/observability') && !cli.includes('PromQL'));
+  assert(!handler.includes('/api/admin/observability'));
 });
 
 test('Console Web exposes only target-governed platform changes', async () => {

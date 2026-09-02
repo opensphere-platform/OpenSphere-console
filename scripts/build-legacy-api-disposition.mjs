@@ -150,6 +150,46 @@ function decision(path, sources) {
     };
   }
 
+  if (path === '/api/admin/observability/status') {
+    return {
+      disposition: 'reworked',
+      targetOwner: 'C_API',
+      target: {
+        kind: 'browser-family',
+        family: 'monitoring',
+        prefix: '/api/monitoring',
+        replacement: '/api/monitoring/baseline/v1/data-health',
+      },
+      rationale: 'The legacy HISS/DUPA read is replaced by the authenticated, read-only Beszel baseline monitoring contract owned by C_API.',
+    };
+  }
+  if (path === '/api/admin/observability/targets') {
+    return {
+      disposition: 'reworked',
+      targetOwner: 'C_API',
+      target: {
+        kind: 'browser-family',
+        family: 'monitoring',
+        prefix: '/api/monitoring',
+        replacement: '/api/monitoring/baseline/v1/nodes',
+      },
+      rationale: 'The legacy HISS/DUPA read is replaced by the authenticated, read-only Beszel baseline monitoring contract owned by C_API.',
+    };
+  }
+  if (pathMatches(path, '/api/admin/observability/query')) {
+    return {
+      disposition: 'reworked',
+      targetOwner: 'C_API',
+      target: {
+        kind: 'browser-family',
+        family: 'monitoring',
+        prefix: '/api/monitoring',
+        replacement: '/api/monitoring/baseline/v1/nodes/:systemId/series',
+      },
+      rationale: 'The unrestricted PromQL surface is replaced by the bounded Beszel system-series contract; arbitrary expressions never reach an observability backend.',
+    };
+  }
+
   if (path.startsWith('/api/v1/')) return kubernetesOrCooperatingSystemDecision(path, files);
 
   const browserFamily = BROWSER_FAMILIES.find(([prefix]) => pathMatches(path, prefix));

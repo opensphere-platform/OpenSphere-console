@@ -434,6 +434,10 @@ func TestDoctorReportsOptionalMissingCRDsWithoutHidingThem(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"not found"}`))
 			return
 		}
+		if r.URL.Path == "/api/monitoring/baseline/v1/data-health" {
+			_, _ = w.Write([]byte(`{"status":"healthy"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"status":"Ready","version":3,"schema":"opensphere.registry-catalog/v1","revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","inventory":{"descriptors":[],"coverage":{}},"capabilities":[],"plugins":[],"templates":[],"trustedKeys":{}}`))
 	}))
 	defer server.Close()
@@ -1164,5 +1168,39 @@ func TestGetResourceRejectsSPAHTMLAndUsesConsoleNamespace(t *testing.T) {
 	}
 	if !strings.Contains(requested, "/namespaces/opensphere-console/uipluginpackages") {
 		t.Fatalf("resource request used the wrong namespace: %s", requested)
+	}
+}
+
+func TestObservabilityUsesBoundedBeszelBaselineRoutes(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	}))
+	defer server.Close()
+
+	cfg := defaults()
+	cfg.ConsoleURL = server.URL
+	cfg.testBearer = "test-token"
+	for _, args := range [][]string{{"status"}, {"targets"}} {
+		if err := observability(cfg, args, &bytes.Buffer{}); err != nil {
+			t.Fatalf("observability %v failed: %v", args, err)
+		}
+	}
+	want := []string{
+		"/api/monitoring/baseline/v1/data-health",
+		"/api/monitoring/baseline/v1/nodes",
+	}
+	if len(requests) != len(want) {
+		t.Fatalf("unexpected Beszel request count: got %v want %v", requests, want)
+	}
+	for index := range want {
+		if requests[index] != want[index] {
+			t.Fatalf("unexpected Beszel request %d: got %q want %q", index, requests[index], want[index])
+		}
+	}
+	if err := observability(cfg, []string{"query", "--expr", "up"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("unbounded PromQL query must be rejected")
 	}
 }
