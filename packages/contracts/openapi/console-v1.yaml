@@ -1125,6 +1125,31 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
+  /api/platform/change-templates/{templateId}:
+    parameters:
+      - name: templateId
+        in: path
+        required: true
+        schema: { type: string, enum: [foundation-control-plane-bootstrap, ceph-rook-prerequisite] }
+    get:
+      operationId: getPlatformChangeTemplate
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-authority: ReviewedChangeTemplateCatalog
+      x-opensphere-permission: console.git.change
+      responses:
+        "200":
+          description: One immutable reviewed change template
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/platform-change-template-response.schema.json"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/platform/releases/status:
     get:
       operationId: getPlatformReleaseStatus

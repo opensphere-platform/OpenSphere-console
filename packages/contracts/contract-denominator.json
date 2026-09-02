@@ -48,6 +48,7 @@
     "getMe",
     "getSupabaseStatus",
     "listAuditEvents",
+    "getPlatformChangeTemplate",
     "getPlatformReleaseStatus",
     "generatePlatformReleaseComponentTarget",
     "getGiteaStatus",
@@ -86,6 +87,7 @@
     "console.extension.remove@1.0"
   ],
   "requiredSchemas": [
+    "platform-change-template-response.schema.json",
     "platform-release-lock.schema.json",
     "platform-release-status-response.schema.json",
     "platform-release-component-target-request.schema.json",

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:platform-change-template-response:v1",
+  "title": "Platform Change Template Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "displayName", "consumerId", "action", "target", "reasonPlaceholder", "returnTo", "desiredState"],
+  "properties": {
+    "id": { "enum": ["foundation-control-plane-bootstrap", "ceph-rook-prerequisite"] },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "consumerId": { "enum": ["foundation-bootstrap", "ceph-prerequisites"] },
+    "action": { "const": "apply" },
+    "target": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "reasonPlaceholder": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "returnTo": { "type": "string", "pattern": "^/[^\\r\\n]*$", "maxLength": 300 },
+    "desiredState": { "type": "object", "minProperties": 1, "additionalProperties": true }
+  }
+}

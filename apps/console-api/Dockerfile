@@ -5,6 +5,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY apps/console-api/src ./src
 COPY apps/console-api/runtime/platform-release-contract.js apps/console-api/runtime/platform-release-agent-identity-cutover.js ./runtime/
+COPY apps/console-api/runtime/foundation-bootstrap-contract.js ./runtime/
 COPY packages /workspace/packages
 ENV NODE_ENV=production
 ENV PORT=8080

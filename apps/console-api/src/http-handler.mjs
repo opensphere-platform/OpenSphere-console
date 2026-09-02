@@ -92,7 +92,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformReleaseOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformChangeTemplateOperations, platformReleaseOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -500,6 +500,19 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         return send(response, 200, await platformReleaseOperations.generateComponentTarget({
           session,
           body: await jsonBody(request),
+          correlationId,
+        }));
+      }
+      const platformChangeTemplateMatch = url.pathname.match(/^\/api\/platform\/change-templates\/([a-z0-9-]{1,64})$/u);
+      if (platformChangeTemplateMatch && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!platformChangeTemplateOperations?.get) {
+          throw Object.assign(new Error('Platform change template authority is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });
+        }
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        return send(response, 200, platformChangeTemplateOperations.get({
+          session,
+          templateId: platformChangeTemplateMatch[1],
           correlationId,
         }));
       }

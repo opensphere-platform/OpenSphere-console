@@ -19,6 +19,7 @@ import { createPlatformChangeOperations } from './platform-change-operations.mjs
 import { createCatalogOperations } from './catalog-operations.mjs';
 import { createOwnerAdmissionOperations } from './owner-admission-operations.mjs';
 import { createFileInstallationReleaseStore, createPlatformReleaseOperations } from './platform-release-operations.mjs';
+import { createPlatformChangeTemplateOperations } from './platform-change-template-operations.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -119,6 +120,7 @@ const platformReleaseOperations = createPlatformReleaseOperations({
     path: String(process.env.CONSOLE_INSTALLATION_RELEASE_PATH || '/var/run/opensphere/release/release.json'),
   }),
 });
+const platformChangeTemplateOperations = createPlatformChangeTemplateOperations();
 const handler = createConsoleApiHandler({
   resolveSession: identitySessionBroker.resolveSession,
   operationService,
@@ -131,6 +133,7 @@ const handler = createConsoleApiHandler({
   cliIdentityBroker,
   dataIdentityOperations,
   platformChangeOperations,
+  platformChangeTemplateOperations,
   platformReleaseOperations,
   health: () => store.health(),
 });
