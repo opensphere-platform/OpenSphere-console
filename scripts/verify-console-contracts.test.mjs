@@ -15,7 +15,7 @@ test('foundational Console contracts are internally complete and self-contained'
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 54,
-    browserApiPatterns: 120,
+    browserApiPatterns: 119,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: false,
@@ -27,6 +27,14 @@ test('Console Web exposes only the implemented interactive CLI credential surfac
   assert(profileSource.includes("'/api/identity/cli/devices'"));
   assert(profileSource.includes('/api/identity/cli/enrollments/'));
   assert(!profileSource.includes('/api/identity/cli/tokens'));
+});
+
+test('Console Web exposes only target-governed platform changes', async () => {
+  const source = await readFile(new URL('../apps/console-web/src/app/pages/admin-change-control.ts', import.meta.url), 'utf8');
+  assert(source.includes("'/api/platform/changes'"));
+  assert(source.includes('/api/platform/changes/${encodeURIComponent(change.request_id)}/approve'));
+  assert(!source.includes('/api/platform/changes/${encodeURIComponent(change.request_id)}/retry'));
+  assert(!source.includes('retrySelected'));
 });
 
 test('Console Web extension actions use the target authority contracts', async () => {

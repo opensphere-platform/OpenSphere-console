@@ -7,8 +7,8 @@
   "currentSessionAuthority": "legacy-browser-session-broker",
   "targetSessionAuthority": "console_identity.browser_session",
   "inventory": {
-    "routePatternCount": 120,
-    "setDigest": "sha256:98c78d335b77d5a2e1a5c5777bce5614141f749291652838ca5aa989ae9da943"
+    "routePatternCount": 119,
+    "setDigest": "sha256:72afd96ae73428210efe82d7e27a0880d0a3590640ed349a99481c9eea4c73d4"
   },
   "targetSessionCapabilities": [
     { "id": "password-login", "status": "implemented-and-verified" },
@@ -40,7 +40,21 @@
         "packages/contracts/schemas/current-session-response.schema.json"
       ]
     },
-    { "id": "platform", "prefix": "/api/platform", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    {
+      "id": "platform",
+      "prefix": "/api/platform",
+      "targetOwner": "C_API",
+      "sessionPolicy": "browser-session",
+      "status": "target-implemented-and-verified",
+      "evidence": [
+        "apps/console-api/src/http-handler.mjs",
+        "apps/console-api/src/platform-change-operations.mjs",
+        "apps/console-api/test/platform-change-operations.test.mjs",
+        "apps/console-api/test/platform-release-operations.test.mjs",
+        "apps/console-api/test/platform-change-template-operations.test.mjs",
+        "apps/console-web/src/app/pages/admin-change-control.ts"
+      ]
+    },
     { "id": "admin", "prefix": "/api/admin", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     { "id": "monitoring", "prefix": "/api/monitoring", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     { "id": "notifications", "prefix": "/api/notifications", "targetOwner": "C_NOTIFY", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
