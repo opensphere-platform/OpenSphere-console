@@ -178,7 +178,7 @@ Invoke-Kubectl @('-n', $GiteaNamespace, 'rollout', 'status', 'deployment/opensph
 Invoke-Kubectl @('-n', $GiteaNamespace, 'scale', 'deployment/opensphere-gitea', '--replicas=1')
 Invoke-Kubectl @('-n', $GiteaNamespace, 'rollout', 'status', 'deployment/opensphere-gitea', '--timeout=10m')
 
-& $controlPlaneScript -GiteaNamespace $GiteaNamespace -ConsoleNamespace $ConsoleNamespace -KubeContext $KubeContext
+& $controlPlaneScript -GiteaNamespace $GiteaNamespace -ConsoleNamespace $ConsoleNamespace -ReleaseType 'target' -KubeContext $KubeContext
 if ($LASTEXITCODE -ne 0) { throw 'Gitea declarative control-plane bootstrap failed' }
 
-Write-Host "Gitea Declarative Change Authority installed in namespace $GiteaNamespace."
+Write-Host "Gitea Declarative Change Authority core installed in namespace $GiteaNamespace; post-merge target owner remains unconfigured."

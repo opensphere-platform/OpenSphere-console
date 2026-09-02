@@ -46,3 +46,26 @@ test('Gitea change authority keeps signing and control credentials server-side',
   assert.match(controlPlane, /block_admin_merge_override = \$true/);
   assert.match(controlPlane, /enable_approvals_whitelist = \$true/);
 });
+
+test('target bootstrap does not create the dead legacy webhook or claim reconciliation readiness', () => {
+  assert.match(controlPlane, /\[ValidateSet\('target', 'legacy-rollback'\)\][\s\S]*\$ReleaseType = 'target'/);
+  assert.match(installer, /\$controlPlaneScript[^\n]*-ReleaseType 'target'/);
+  assert.match(installer, /post-merge target owner remains unconfigured/);
+  assert.doesNotMatch(installer, /Declarative Change Authority installed in namespace/);
+  assert.match(
+    controlPlane,
+    /function Enable-LegacyRollbackWebhook[\s\S]*opensphere-console-backend[^\n]*\/api\/platform\/gitea\/webhook/
+  );
+  assert.equal(
+    (controlPlane.match(/Enable-LegacyRollbackWebhook/g) || []).length,
+    2,
+    'legacy webhook helper must have only its declaration and the explicitly gated invocation'
+  );
+  assert.match(
+    controlPlane,
+    /if \(\$ReleaseType -eq 'legacy-rollback'\) \{\s*Enable-LegacyRollbackWebhook/
+  );
+  assert.match(controlPlane, /Target C_API has no Gitea webhook owner/);
+  assert.match(controlPlane, /No repository webhook was created; post-merge reconciliation and management readiness remain unavailable/);
+  assert.doesNotMatch(controlPlane, /^Write-Host "Gitea Platform Control bootstrap ready: \$Organization\/\$Repository \(private\)"\s*$/m);
+});

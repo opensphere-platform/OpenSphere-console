@@ -6,6 +6,8 @@ param(
   [string]$ServiceAccount = 'opensphere-control',
   [string]$ReviewServiceAccount = 'opensphere-review',
   [string]$SecretName = 'opensphere-gitea-control-plane',
+  [ValidateSet('target', 'legacy-rollback')]
+  [string]$ReleaseType = 'target',
   [string]$KubeContext = ''
 )
 
@@ -68,8 +70,12 @@ if (-not $giteaPod) { throw "Gitea pod not found in $GiteaNamespace" }
 
 $token = Read-SecretValue 'token'
 $reviewToken = Read-SecretValue 'review-token'
-$webhookSecret = Read-SecretValue 'webhook-secret'
-$reconcilerToken = Read-SecretValue 'reconciler-token'
+$webhookSecret = ''
+$reconcilerToken = ''
+if ($ReleaseType -eq 'legacy-rollback') {
+  $webhookSecret = Read-SecretValue 'webhook-secret'
+  $reconcilerToken = Read-SecretValue 'reconciler-token'
+}
 
 if (-not $token) {
   $users = (& kubectl @kubectlArgs -n $GiteaNamespace exec -c gitea $giteaPod -- gitea --config /etc/gitea/app.ini admin user list)
@@ -111,14 +117,19 @@ if (-not $reviewToken) {
 Assert-GiteaUserIsNotAdmin $ServiceAccount
 Assert-GiteaUserIsNotAdmin $ReviewServiceAccount
 
-if (-not $webhookSecret) { $webhookSecret = New-RandomHex 32 }
-if (-not $reconcilerToken) { $reconcilerToken = New-RandomHex 32 }
+$secretData = @{ token = $token; 'review-token' = $reviewToken }
+if ($ReleaseType -eq 'legacy-rollback') {
+  if (-not $webhookSecret) { $webhookSecret = New-RandomHex 32 }
+  if (-not $reconcilerToken) { $reconcilerToken = New-RandomHex 32 }
+  $secretData['webhook-secret'] = $webhookSecret
+  $secretData['reconciler-token'] = $reconcilerToken
+}
 
 $secret = @{
   apiVersion = 'v1'; kind = 'Secret'
   metadata = @{ name = $SecretName; namespace = $ConsoleNamespace; labels = @{ 'opensphere.io/secret-scope' = 'platform-control-server-only' } }
   type = 'Opaque'
-  stringData = @{ token = $token; 'review-token' = $reviewToken; 'webhook-secret' = $webhookSecret; 'reconciler-token' = $reconcilerToken }
+  stringData = $secretData
 } | ConvertTo-Json -Depth 8 -Compress
 Invoke-Kubectl @('apply', '-f', '-') $secret
 
@@ -178,14 +189,22 @@ if (-not $mainProtection) {
   Invoke-GiteaRequest 'PATCH' "/api/v1/repos/$Organization/$Repository/branch_protections/main" $protectionPayload
 }
 
-$hookTarget = 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080/api/platform/gitea/webhook'
-$hooksCommand = "wget -qO- --header 'Authorization: token $token' 'http://127.0.0.1:3000/api/v1/repos/$Organization/$Repository/hooks'"
-$hooksJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$hooksCommand`n#"
-$hooks = @()
-if ($hooksJson) { $hooks = @($hooksJson | ConvertFrom-Json) }
-if (-not ($hooks | Where-Object { $_.config.url -eq $hookTarget })) {
-  Invoke-GiteaPost "/api/v1/repos/$Organization/$Repository/hooks" @{ type = 'gitea'; active = $true; events = @('pull_request'); config = @{ url = $hookTarget; content_type = 'json'; secret = $webhookSecret } }
+function Enable-LegacyRollbackWebhook {
+  $hookTarget = 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080/api/platform/gitea/webhook'
+  $hooksCommand = "wget -qO- --header 'Authorization: token $token' 'http://127.0.0.1:3000/api/v1/repos/$Organization/$Repository/hooks'"
+  $hooksJson = Invoke-Kubectl @('-n', $GiteaNamespace, 'exec', '-i', '-c', 'gitea', $giteaPod, '--', 'sh', '-s') "$hooksCommand`n#"
+  $hooks = @()
+  if ($hooksJson) { $hooks = @($hooksJson | ConvertFrom-Json) }
+  if (-not ($hooks | Where-Object { $_.config.url -eq $hookTarget })) {
+    Invoke-GiteaPost "/api/v1/repos/$Organization/$Repository/hooks" @{ type = 'gitea'; active = $true; events = @('pull_request'); config = @{ url = $hookTarget; content_type = 'json'; secret = $webhookSecret } }
+  }
 }
 
-Write-Host "Gitea Platform Control bootstrap ready: $Organization/$Repository (private)"
+if ($ReleaseType -eq 'legacy-rollback') {
+  Enable-LegacyRollbackWebhook
+  Write-Host "Legacy rollback Gitea Platform Control bootstrap ready: $Organization/$Repository (private)"
+} else {
+  Write-Host "Gitea target core bootstrap completed: $Organization/$Repository (private, signed, protected main)"
+  Write-Warning 'Target C_API has no Gitea webhook owner. No repository webhook was created; post-merge reconciliation and management readiness remain unavailable.'
+}
 Write-Host "The Console backend Secret '$SecretName' contains only server-side token material."
