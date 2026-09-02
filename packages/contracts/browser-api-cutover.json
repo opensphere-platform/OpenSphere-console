@@ -7,8 +7,8 @@
   "currentSessionAuthority": "legacy-browser-session-broker",
   "targetSessionAuthority": "console_identity.browser_session",
   "inventory": {
-    "routePatternCount": 122,
-    "setDigest": "sha256:c02f2c0cda64902394461fd110281c55f2f7c2f5863d3d95f7150c1ae886c167"
+    "routePatternCount": 120,
+    "setDigest": "sha256:8aa6281cb15558e4141261b807143bd28cc91a8c8f3b355cf5e2b9553f3eb2ad"
   },
   "targetSessionCapabilities": [
     { "id": "password-login", "status": "implemented-and-verified" },

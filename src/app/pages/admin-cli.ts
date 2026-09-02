@@ -95,8 +95,8 @@ interface CliManifest {
         <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
           <clr-alert-item>
             <span class="alert-text">
-              자동화 API 토큰은 CI·무인 작업 전용입니다. 대화형 CLI 로그인을 위해 토큰을 반복 생성하거나 파일에 저장하지 않습니다.
-              향후 workforce 인증·권한·명령은 별도 Binding과 workforce 프로파일로 확장합니다.
+              현재 Console은 장기 자동화 API 토큰을 발급하지 않습니다. 구체적인 자동화 소비자, 최소 scope,
+              rotation과 폐기 요구가 승인될 때 별도 구현 단위로 심사합니다. 사람은 <code>os login</code> 장치 등록을 사용합니다.
             </span>
           </clr-alert-item>
         </clr-alert>

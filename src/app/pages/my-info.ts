@@ -30,24 +30,6 @@ interface CliDevice {
   user: string;
 }
 
-interface ApiToken {
-  jti: string;
-  label: string;
-  scope: string;
-  status: 'active' | 'expired';
-  createdAt: string | null;
-  expiresAt: string | null;
-  lastUsedAt: string | null;
-  user: string;
-}
-
-interface MintedToken {
-  token: string;
-  jti: string;
-  label: string;
-  expiresAt: string;
-}
-
 interface Enrollment {
   enrollmentId: string;
   label: string;
@@ -75,9 +57,8 @@ interface AuditEvent {
 
 /**
  * 내 프로필 — 사람 중심의 Console 신원·권한·자격 증명 제어 표면.
- * 장치 키와 API 토큰은 같은 화면에 보이지만 용도가 다르다.
- * - 장치 키: 대화형 os 로그인, OS 보안 저장소의 private key + 15분 세션
- * - API 토큰: 비대화형 자동화 전용, 30일 만료 + 중앙 폐기
+ * 장치 키는 대화형 os 로그인에만 사용한다.
+ * private key는 OS 보안 저장소에 남고 Console은 15분 세션만 교환한다.
  */
 @Component({
   selector: 'os-my-info',
@@ -138,7 +119,7 @@ interface AuditEvent {
                 <dl class="kv-list compact">
                   <div><dt>콘솔 로그인</dt><dd>사용 가능</dd></div>
                   <div><dt>CLI 장치 키</dt><dd>{{ activeDeviceCount() ? '사용 가능' : '등록 필요' }}</dd></div>
-                  <div><dt>자동화 API 토큰</dt><dd>사용 가능</dd></div>
+                  <div><dt>자동화 API 토큰</dt><dd>제공하지 않음</dd></div>
                   <div><dt>역할 기반 접근</dt><dd>{{ auth.groups().length ? '적용됨' : '없음' }}</dd></div>
                 </dl>
               </section>
@@ -268,13 +249,11 @@ interface AuditEvent {
               <div class="credential-intro">
                 <div>
                   <h2 id="credential-page-title">내 자격 증명</h2>
-                  <p class="section-lead">대화형 CLI 장치와 비대화형 자동화 토큰을 한곳에서 확인합니다. 비밀 원문은 서버에서 다시 조회할 수 없습니다.</p>
+                  <p class="section-lead">대화형 CLI 장치와 Console 로그인 세션을 확인합니다. CLI private key와 세션 원문은 서버에서 다시 조회할 수 없습니다.</p>
                 </div>
                 <div class="credential-summary" aria-label="자격 증명 요약">
                   <span class="label label-success">활성 장치 {{ activeDeviceCount() }}</span>
                   @if (revokedDeviceCount()) { <span class="label label-light-blue">폐기 이력 {{ revokedDeviceCount() }}</span> }
-                  <span class="label label-success">활성 토큰 {{ activeTokenCount() }}</span>
-                  @if (expiredTokenCount()) { <span class="label label-warning">만료 {{ expiredTokenCount() }}</span> }
                 </div>
               </div>
 
@@ -323,7 +302,7 @@ interface AuditEvent {
                     <clr-dg-cell>{{ fmt(device.lastSessionExpiresAt) }}</clr-dg-cell>
                     <clr-dg-cell>
                       @if (device.status === 'active') {
-                        <button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke('device', device.id, device.label)" [disabled]="busy()">신뢰 해제</button>
+                        <button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke(device.id, device.label)" [disabled]="busy()">신뢰 해제</button>
                       } @else {
                         <span class="credential-state-meta">폐기 완료</span>
                       }
@@ -332,46 +311,6 @@ interface AuditEvent {
                 }
                 <clr-dg-placeholder>{{ deviceFilter() ? '검색 조건과 일치하는 장치가 없습니다' : '등록된 CLI 장치가 없습니다. 터미널에서 os login을 실행하세요.' }}</clr-dg-placeholder>
                 <clr-dg-footer>{{ filteredDevices().length }}개 표시 · 활성 {{ activeDeviceCount() }}개 · 폐기 {{ revokedDeviceCount() }}개</clr-dg-footer>
-              </clr-datagrid>
-              </div>
-              </article>
-
-              <article class="credential-section" aria-labelledby="api-token-title">
-                <div class="section-heading">
-                  <div>
-                    <h2 id="api-token-title">자동화 API 토큰</h2>
-                    <p class="section-lead">CI·무인 자동화 전용 장기 자격입니다. 사람의 <code>os</code> 로그인에는 사용하지 않습니다.</p>
-                  </div>
-                  <button class="btn btn-sm btn-primary" (click)="openTokenPanel()">API 토큰 생성</button>
-                </div>
-                <form class="credential-toolbar" (ngSubmit)="searchTokens()">
-                  <clr-input-container class="credential-search">
-                    <label>토큰 검색</label>
-                    <input clrInput [(ngModel)]="tokenSearchText" name="token-search" placeholder="설명, 토큰 ID 또는 범위" />
-                  </clr-input-container>
-                  <button class="btn btn-sm btn-outline" type="submit">검색</button>
-                  <button class="btn btn-sm btn-link" type="button" (click)="clearTokenSearch()" [disabled]="!tokenFilter() && !tokenSearchText">초기화</button>
-                </form>
-              <div class="credential-grid-scroll" tabindex="0" aria-label="자동화 API 토큰 표">
-              <clr-datagrid [clrDgLoading]="credentialsLoading()">
-                <clr-dg-column>설명</clr-dg-column><clr-dg-column>상태</clr-dg-column><clr-dg-column>범위</clr-dg-column><clr-dg-column>토큰 ID</clr-dg-column><clr-dg-column>생성</clr-dg-column><clr-dg-column>만료</clr-dg-column><clr-dg-column>마지막 사용</clr-dg-column><clr-dg-column>동작</clr-dg-column>
-                @for (token of filteredApiTokens(); track token.jti) {
-                  <clr-dg-row>
-                    <clr-dg-cell><strong>{{ token.label || '(설명 없음)' }}</strong></clr-dg-cell>
-                    <clr-dg-cell>
-                      @if (token.status === 'active') { <span class="label label-success">활성</span> }
-                      @else { <span class="label label-warning">만료</span> }
-                    </clr-dg-cell>
-                    <clr-dg-cell><code>{{ token.scope || 'admin:automation' }}</code></clr-dg-cell>
-                    <clr-dg-cell class="os-mono">{{ token.jti }}</clr-dg-cell>
-                    <clr-dg-cell>{{ fmt(token.createdAt) }}</clr-dg-cell>
-                    <clr-dg-cell>{{ fmt(token.expiresAt) }}</clr-dg-cell>
-                    <clr-dg-cell>{{ fmt(token.lastUsedAt) }}</clr-dg-cell>
-                    <clr-dg-cell><button class="btn btn-sm btn-danger-outline" (click)="openCredentialRevoke('token', token.jti, token.label || token.jti)" [disabled]="busy() || token.status !== 'active'">폐기</button></clr-dg-cell>
-                  </clr-dg-row>
-                }
-                <clr-dg-placeholder>{{ tokenFilter() ? '검색 조건과 일치하는 토큰이 없습니다' : '발급된 자동화 API 토큰이 없습니다' }}</clr-dg-placeholder>
-                <clr-dg-footer>{{ filteredApiTokens().length }}개 표시 · 전체 {{ apiTokens().length }}개 · 기본 만료 30일</clr-dg-footer>
               </clr-datagrid>
               </div>
               </article>
@@ -563,33 +502,9 @@ interface AuditEvent {
       </div>
     </os-panel>
 
-    <os-panel [open]="tokenPanelOpen()" title="자동화 API 토큰 생성" subtitle="비대화형 작업 전용 · 30일" (closed)="closeTokenPanel()">
-      @if (!mintedToken()) {
-        <clr-alert [clrAlertType]="'warning'" [clrAlertClosable]="false">
-          <clr-alert-item><span class="alert-text">이 토큰은 CI와 무인 자동화 전용입니다. 사람의 CLI 로그인에는 <code>os login</code> 장치 등록을 사용하세요.</span></clr-alert-item>
-        </clr-alert>
-        <form clrForm clrLayout="vertical">
-          <clr-input-container><label>설명</label><input clrInput [(ngModel)]="tokenLabel" name="token-label" maxlength="64" placeholder="예: nightly-backup" /></clr-input-container>
-          <clr-textarea-container><label>발급 사유</label><textarea clrTextarea [(ngModel)]="tokenReason" name="token-reason" maxlength="240" required></textarea><clr-control-helper>영구 감사에 기록됩니다(8자 이상).</clr-control-helper></clr-textarea-container>
-        </form>
-        <div class="panel-actions"><button class="btn btn-primary" (click)="mintToken()" [disabled]="busy() || !tokenLabel.trim() || tokenReason.trim().length < 8">생성</button><button class="btn btn-outline" (click)="closeTokenPanel()">취소</button></div>
-      } @else {
-        <clr-alert [clrAlertType]="'success'" [clrAlertClosable]="false">
-          <clr-alert-item><span class="alert-text"><strong>토큰이 생성되었습니다.</strong> 이 값은 지금 한 번만 표시됩니다. 닫기 전에 운영체제 보안 저장소나 CI 비밀 저장소에 보관하세요.</span></clr-alert-item>
-        </clr-alert>
-        <dl class="token-metadata">
-          <div><dt>설명</dt><dd>{{ mintedToken()?.label }}</dd></div>
-          <div><dt>토큰 ID</dt><dd class="os-mono">{{ mintedToken()?.jti }}</dd></div>
-          <div><dt>만료</dt><dd>{{ fmt(mintedToken()?.expiresAt || null) }}</dd></div>
-        </dl>
-        <textarea class="token-output" readonly [value]="mintedToken()?.token"></textarea>
-        <div class="panel-actions"><button class="btn btn-primary" (click)="copy(mintedToken()?.token || '')">복사</button><button class="btn btn-outline" (click)="closeTokenPanel()">닫기</button></div>
-      }
-    </os-panel>
-
-    <os-panel [open]="credentialRevokeOpen()" title="자격 증명 폐기" subtitle="즉시 효력 상실 · 영구 감사" (closed)="closeCredentialRevoke()">
+    <os-panel [open]="credentialRevokeOpen()" title="CLI 장치 신뢰 해제" subtitle="즉시 효력 상실 · 영구 감사" (closed)="closeCredentialRevoke()">
       @if (pendingRevoke(); as credential) {
-        <p><strong>{{ credential.label }}</strong> 자격 증명을 폐기합니다. 폐기 후 해당 장치 또는 토큰의 다음 요청부터 거부됩니다.</p>
+        <p><strong>{{ credential.label }}</strong> 장치의 신뢰를 해제합니다. 현재 CLI 세션을 포함해 해당 장치의 다음 요청부터 거부됩니다.</p>
         <form clrForm clrLayout="vertical">
           <clr-textarea-container><label>폐기 사유</label><textarea clrTextarea [(ngModel)]="revokeReason" name="revoke-reason" maxlength="240" required></textarea><clr-control-helper>영구 감사에 기록됩니다(8자 이상).</clr-control-helper></clr-textarea-container>
         </form>
@@ -691,11 +606,6 @@ interface AuditEvent {
       .alert-actions { margin-top: .35rem; }
       .os-mono { font-family: var(--os-font-mono, monospace); font-size: 0.65rem; word-break: break-all; }
       .panel-actions { display: flex; gap: 0.45rem; margin-top: 0.8rem; }
-      .token-metadata { display: grid; gap: .3rem; margin: .8rem 0; }
-      .token-metadata div { display: grid; grid-template-columns: 5rem minmax(0, 1fr); gap: .5rem; padding-bottom: .3rem; border-bottom: 1px solid var(--os-hairline); }
-      .token-metadata dt { color: var(--os-muted); font-size: .65rem; font-weight: 600; }
-      .token-metadata dd { margin: 0; font-size: .68rem; }
-      .token-output { width: 100%; min-height: 8rem; font-family: var(--os-font-mono, monospace); font-size: 0.65rem; overflow-wrap: anywhere; }
       .enrollment-action { margin-left: 0.7rem; }
       @media (max-width: 900px) {
         .details-grid { grid-template-columns: 1fr; gap: 0.5rem; }
@@ -730,21 +640,17 @@ export class MyInfo {
   readonly tab = signal<ProfileTab>('details');
   readonly identityUser = signal<IdUser | null>(null);
   readonly devices = signal<CliDevice[]>([]);
-  readonly apiTokens = signal<ApiToken[]>([]);
   readonly enrollment = signal<Enrollment | null>(null);
   readonly authPolicy = signal<AuthPolicy | null>(null);
   readonly activities = signal<AuditEvent[]>([]);
   readonly credentialsLoading = signal(false);
   readonly credentialError = signal('');
   readonly deviceFilter = signal('');
-  readonly tokenFilter = signal('');
   readonly activityLoading = signal(false);
   readonly busy = signal(false);
   readonly editOpen = signal(false);
-  readonly tokenPanelOpen = signal(false);
-  readonly mintedToken = signal<MintedToken | null>(null);
   readonly credentialRevokeOpen = signal(false);
-  readonly pendingRevoke = signal<{ kind: 'device' | 'token'; id: string; label: string } | null>(null);
+  readonly pendingRevoke = signal<{ id: string; label: string } | null>(null);
   readonly message = signal<{ type: 'success' | 'danger' | 'info' | 'warning'; text: string } | null>(null);
   readonly passwordPanelOpen = signal(false);
   readonly passwordChanged = signal(false);
@@ -753,14 +659,11 @@ export class MyInfo {
   readonly totpQrError = signal(false);
 
   edit = { displayName: '', email: '', reason: '' };
-  tokenLabel = '';
-  tokenReason = '';
   revokeReason = '';
   totpCode = '';
   sessionDurationDraft: SessionDuration = '24h';
   private forcedTotpEnrollmentStarted = false;
   deviceSearchText = '';
-  tokenSearchText = '';
   readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '—';
   readonly language = navigator.language || '—';
   readonly avatarInitial = computed(() => (this.auth.user()?.trim()?.[0] ?? '?').toUpperCase());
@@ -772,8 +675,6 @@ export class MyInfo {
     return `${new Date(exp * 1000).toLocaleString()} (${minutes > 0 ? `${minutes}분 후` : '만료됨'})`;
   });
 
-  readonly activeTokenCount = computed(() => this.apiTokens().filter((token) => token.status === 'active').length);
-  readonly expiredTokenCount = computed(() => this.apiTokens().filter((token) => token.status === 'expired').length);
   readonly activeDeviceCount = computed(() => this.devices().filter((device) => device.status === 'active').length);
   readonly revokedDeviceCount = computed(() => this.devices().filter((device) => device.status === 'revoked').length);
   readonly filteredDevices = computed(() => {
@@ -782,13 +683,6 @@ export class MyInfo {
     return this.devices().filter((device) => [device.label, device.id, device.fingerprint, device.status]
       .some((value) => String(value || '').toLocaleLowerCase().includes(query)));
   });
-  readonly filteredApiTokens = computed(() => {
-    const query = this.tokenFilter();
-    if (!query) return this.apiTokens();
-    return this.apiTokens().filter((token) => [token.label, token.jti, token.scope, token.status]
-      .some((value) => String(value || '').toLocaleLowerCase().includes(query)));
-  });
-
   constructor() {
     this.route.queryParamMap.subscribe((params) => {
       const requested = params.get('tab') as ProfileTab | null;
@@ -800,7 +694,7 @@ export class MyInfo {
           queueMicrotask(() => void this.beginTotpEnrollment());
         }
       }
-		const enrollmentId = params.get('cli_enrollment');
+      const enrollmentId = params.get('cli_enrollment');
       const code = params.get('code');
       if (enrollmentId && code) {
         this.tab.set('credentials');
@@ -875,20 +769,13 @@ export class MyInfo {
     this.credentialsLoading.set(true);
     this.credentialError.set('');
     try {
-      const [deviceResponse, tokenResponse] = await Promise.all([
-        this.http.request('/api/identity/cli/devices'),
-        this.http.request('/api/identity/cli/tokens'),
-      ]);
+      const deviceResponse = await this.http.request('/api/identity/cli/devices');
       if (!deviceResponse.ok) throw new Error(`장치 HTTP ${deviceResponse.status}`);
-      if (!tokenResponse.ok) throw new Error(`API 토큰 HTTP ${tokenResponse.status}`);
       const deviceBody = (await deviceResponse.json()) as { devices?: CliDevice[] };
-      const tokenBody = (await tokenResponse.json()) as { pats?: ApiToken[] };
       this.devices.set(deviceBody.devices ?? []);
-      this.apiTokens.set(tokenBody.pats ?? []);
       await this.auth.loadBrowserSessions();
     } catch (error) {
       this.devices.set([]);
-      this.apiTokens.set([]);
       this.credentialError.set(`자격 증명 상태를 불러오지 못했습니다: ${String(error)}`);
     } finally {
       this.credentialsLoading.set(false);
@@ -902,15 +789,6 @@ export class MyInfo {
   clearDeviceSearch(): void {
     this.deviceSearchText = '';
     this.deviceFilter.set('');
-  }
-
-  searchTokens(): void {
-    this.tokenFilter.set(this.tokenSearchText.trim().toLocaleLowerCase());
-  }
-
-  clearTokenSearch(): void {
-    this.tokenSearchText = '';
-    this.tokenFilter.set('');
   }
 
   private async loadAuthPolicy(): Promise<void> {
@@ -1195,39 +1073,8 @@ export class MyInfo {
     void this.router.navigate([], { relativeTo: this.route, queryParams: { tab: 'credentials' }, replaceUrl: true });
   }
 
-  openTokenPanel(): void {
-    this.tokenLabel = '';
-    this.tokenReason = '';
-    this.mintedToken.set(null);
-    this.tokenPanelOpen.set(true);
-  }
-
-  closeTokenPanel(): void {
-    this.tokenPanelOpen.set(false);
-    this.mintedToken.set(null);
-  }
-
-  async mintToken(): Promise<void> {
-    if (!this.tokenLabel.trim() || this.busy()) return;
-    this.busy.set(true);
-    try {
-      const response = await this.http.request('/api/identity/cli/tokens', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ label: this.tokenLabel.trim(), reason: this.tokenReason.trim() }),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      this.mintedToken.set((await response.json()) as MintedToken);
-      await this.loadCredentials();
-    } catch (error) {
-      this.message.set({ type: 'danger', text: `API 토큰 생성 실패: ${String(error)}` });
-    } finally {
-      this.busy.set(false);
-    }
-  }
-
-  openCredentialRevoke(kind: 'device' | 'token', id: string, label: string): void {
-    this.pendingRevoke.set({ kind, id, label });
+  openCredentialRevoke(id: string, label: string): void {
+    this.pendingRevoke.set({ id, label });
     this.revokeReason = '';
     this.credentialRevokeOpen.set(true);
   }
@@ -1241,20 +1088,16 @@ export class MyInfo {
   async confirmCredentialRevoke(): Promise<void> {
     const credential = this.pendingRevoke();
     if (!credential || this.revokeReason.trim().length < 8) return;
-    const path = credential.kind === 'device'
-      ? `/api/identity/cli/devices/${encodeURIComponent(credential.id)}`
-      : `/api/identity/cli/tokens/${encodeURIComponent(credential.id)}`;
-    const success = credential.kind === 'device' ? 'CLI 장치 신뢰를 해제했습니다.' : '자동화 API 토큰을 폐기했습니다.';
-    await this.deleteCredential(path, success, this.revokeReason.trim());
-  }
-
-  private async deleteCredential(path: string, success: string, reason: string): Promise<void> {
     this.busy.set(true);
     try {
-      const response = await this.http.request(path, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }) });
+      const response = await this.http.request(`/api/identity/cli/devices/${encodeURIComponent(credential.id)}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reason: this.revokeReason.trim() }),
+      });
       if (!response.ok && response.status !== 404) throw new Error(`HTTP ${response.status}`);
       await this.loadCredentials();
-      this.message.set({ type: 'success', text: success });
+      this.message.set({ type: 'success', text: 'CLI 장치 신뢰를 해제했습니다.' });
       this.closeCredentialRevoke();
     } catch (error) {
       this.message.set({ type: 'danger', text: `자격 증명 폐기 실패: ${String(error)}` });

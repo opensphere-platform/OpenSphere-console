@@ -15,11 +15,18 @@ test('foundational Console contracts are internally complete and self-contained'
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 48,
-    browserApiPatterns: 122,
+    browserApiPatterns: 120,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: false,
   });
+});
+
+test('Console Web exposes only the implemented interactive CLI credential surface', async () => {
+  const profileSource = await readFile(new URL('../src/app/pages/my-info.ts', import.meta.url), 'utf8');
+  assert(profileSource.includes("'/api/identity/cli/devices'"));
+  assert(profileSource.includes('/api/identity/cli/enrollments/'));
+  assert(!profileSource.includes('/api/identity/cli/tokens'));
 });
 
 test('official publication remains blocked until every target component boundary is release-ready', async () => {
