@@ -411,6 +411,18 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(promotionWorkflow.includes('opensphere-console-api'), 'Promotion workflow omits the C_API target artifact');
   assert(!promotionWorkflow.includes('opensphere-console-backend'), 'Promotion workflow still promotes the legacy Backend artifact');
 
+  const publishedDockerfiles = [...candidateWorkflow.matchAll(/^\s*file:\s+OpenSphere-console\/(Dockerfile|[^\r\n]+\/Dockerfile)\s*$/gmu)]
+    .map((match) => match[1]);
+  assert(publishedDockerfiles.length > 0, 'Candidate workflow has no Dockerfile inputs');
+  for (const dockerfilePath of publishedDockerfiles) {
+    const dockerfile = await readFile(resolve(root, dockerfilePath), 'utf8');
+    for (const line of dockerfile.split(/\r?\n/u).filter((value) => value.startsWith('FROM '))) {
+      const image = line.slice('FROM '.length).split(/\s+/u)[0];
+      if (image === 'scratch' || image.startsWith('${')) continue;
+      assert(image.includes('@sha256:'), `${dockerfilePath} has an unpinned published base image: ${image}`);
+    }
+  }
+
   const packageJson = await readFile(resolve(root, 'package.json'), 'utf8');
   const sourceFiles = [
     resolve(root, 'src', 'app', 'core', 'extension-host.service.ts'),
