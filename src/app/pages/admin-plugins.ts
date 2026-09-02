@@ -220,7 +220,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 
     <section class="oci-install" aria-labelledby="oci-install-title">
       <h2 id="oci-install-title">Extension 설치</h2>
-      <p class="os-sub">현재 Registry 스냅샷에서 설치 가능한 Extension을 선택합니다. Console은 브라우저 입력 image를 신뢰하지 않고 descriptor와 정확한 catalog revision을 C_REG에서 다시 해석합니다. 사유는 항상 8자 이상 필요합니다.</p>
+      <p class="os-sub">현재 Registry 스냅샷에서 설치 가능한 Extension을 선택합니다. Console은 브라우저 입력 image를 신뢰하지 않고 descriptor와 정확한 catalog revision을 C_REG에서 다시 해석합니다. 개발용 local edge의 설치·업데이트는 MFA를 생략하지만, 다른 환경과 다른 lifecycle 작업은 최근 MFA를 요구합니다. 사유는 항상 8자 이상 필요합니다.</p>
       <div class="registry-access-form registry-access-form--install">
         <div class="clr-form-control">
           <label for="extension-descriptor" class="clr-control-label">Registry Extension</label>
