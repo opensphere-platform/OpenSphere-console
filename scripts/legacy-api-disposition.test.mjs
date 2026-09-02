@@ -23,7 +23,7 @@ test('the reviewed ledger closes all 277 source literals', async () => {
   const result = await verifyLegacyApiDisposition();
   assert.equal(result.status, 'passed');
   assert.equal(result.decisions, 277);
-  assert.deepEqual(result.byDisposition, { adopted: 9, reworked: 238, rejected: 30 });
+  assert.deepEqual(result.byDisposition, { adopted: 9, reworked: 236, rejected: 32 });
 });
 
 test('a missing source literal fails closed', async () => {

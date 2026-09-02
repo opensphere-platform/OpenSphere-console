@@ -51,7 +51,7 @@ export class SearchService {
     { label: '역할/권한(RBAC)', sublabel: 'Identity', path: '/manage/roles', kind: 'result' },
     { label: '콘솔 관리자 온보딩', sublabel: 'Identity', path: '/manage/console-admins', kind: 'result' },
     { label: 'R2D2 관리', sublabel: 'R2D2 · Platform Foundation', path: '/manage/osaa', kind: 'result' },
-    { label: 'Platform Support Profile', sublabel: '플랫폼 수명주기 · PFS 설치 준비', path: '/manage/platform-readiness', kind: 'result' },
+    { label: 'Console Backbone Readiness', sublabel: 'Supabase · Gitea · Release Lock · Beszel', path: '/manage/platform-readiness', kind: 'result' },
   ];
 
   /** 카탈로그 엔티티 캐시(검색 키 입력마다 재요청 방지) — 실패 시 빈 목록(graceful). */
@@ -73,7 +73,7 @@ export class SearchService {
     { label: 'Platform Release', sublabel: '관리 · Upgrade / Rollback', path: '/manage/platform-release', kind: 'page' },
     { label: 'Infrastructure Monitoring', sublabel: '관리 · Beszel 노드 시계열', path: '/manage/infrastructure-monitoring', kind: 'page' },
     { label: 'R2D2', sublabel: '관리 · 플랫폼 기반', path: '/manage/osaa', kind: 'page' },
-    { label: '플랫폼 준비 상태', sublabel: '관리 · 플랫폼 수명주기', path: '/manage/platform-readiness', kind: 'page' },
+    { label: 'Backbone 준비 상태', sublabel: '관리 · 필수 권위 상태', path: '/manage/platform-readiness', kind: 'page' },
   ];
 
   /** 즉시 로컬 인덱스(정적 + 동적 플러그인 페이지 + 워크스페이스) — "이동" 표면 */

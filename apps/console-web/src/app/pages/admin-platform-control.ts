@@ -57,16 +57,10 @@ interface EvidenceRow {
   time: string | null; verdict: Verdict; detail: string; correlation: string;
 }
 interface JourneyStep { column: string; source: 'Supabase' | 'Gitea' | 'Kubernetes'; label: string; evidence: string; time: string | null; state: 'done' | 'current' | 'waiting' | 'failed'; }
-interface HisReadinessProjection {
-  contract: 'opensphere.his.readiness-projection/v1'; authority: string; realizationLayer: string;
-  ready: boolean; state: string; reason: string; checkedAt: string; fresh: boolean; contractValid: boolean;
-  core: { ready: number; total: number }; selectedProfiles: { ready: number; total: number };
-}
-
 /**
  * Cross-authority operations workspace. Supabase and Gitea remain separate
  * sources of truth; this view correlates their read-only status without
- * manufacturing HISS telemetry or treating an unobserved change as complete.
+ * manufacturing telemetry or treating an unobserved change as complete.
  */
 @Component({
   selector: 'os-admin-platform-control',
@@ -94,12 +88,12 @@ interface HisReadinessProjection {
         <div class="rail-cell"><span>상태 변경</span><strong>{{ inFlight() }}</strong><small>요청 · 승인 · 적용 대기</small></div>
         <div class="rail-cell"><span>Runtime drift</span><strong [class]="statusClass(driftVerdict())">{{ driftVerdict() }}</strong><small>Kubernetes observed truth</small></div>
         <div class="rail-cell"><span>Recovery evidence</span><strong [class]="statusClass(recoveryVerdict())"><os-cicon [icon]="recoveryVerdict() === 'Verified' ? icons.check : icons.warning" [size]="14" />{{ recoveryVerdict() }}</strong><small>{{ recoverySummary() }}</small></div>
-        <div class="rail-cell"><span>HISS Preflight</span><strong [class]="statusClass(hisPreflightState())">{{ hisPreflightState() }}</strong><small>{{ hisPreflightSummary() }}</small></div>
+        <div class="rail-cell"><span>Backbone readiness</span><strong [class]="statusClass(backboneState())">{{ backboneState() }}</strong><small>{{ backboneSummary() }}</small></div>
       </section>
 
       <nav class="workspace-tabs" role="tablist" aria-label="Platform Control 관점">
         <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'operations'" [class.active]="activeTab() === 'operations'" (click)="activeTab.set('operations')"><span>01</span>Operations<small>전체 상태와 위험</small></button>
-        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'readiness'" [class.active]="activeTab() === 'readiness'" (click)="activeTab.set('readiness')"><span>02</span>Support Profile<small>HISS 이후 PFS 선행조건</small></button>
+        <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'readiness'" [class.active]="activeTab() === 'readiness'" (click)="activeTab.set('readiness')"><span>02</span>Backbone<small>필수 권위의 읽기 전용 상태</small></button>
         <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'evidence'" [class.active]="activeTab() === 'evidence'" (click)="activeTab.set('evidence')"><span>03</span>Evidence<small>검증과 출처</small></button>
         <button type="button" role="tab" [attr.aria-selected]="activeTab() === 'journey'" [class.active]="activeTab() === 'journey'" (click)="activeTab.set('journey')"><span>04</span>변경 흐름<small>요청에서 검증까지</small></button>
       </nav>
@@ -160,7 +154,7 @@ interface HisReadinessProjection {
               </div>
             }
             <div class="inspector-section"><h3>Sources of truth</h3><dl><div><dt>Data & identity</dt><dd>Supabase</dd></div><div><dt>상태 선언</dt><dd>선언 저장소 (Gitea)</dd></div><div><dt>Runtime truth</dt><dd>Kubernetes observed state</dd></div></dl></div>
-            <div class="inspector-section"><h3>Connection state</h3><dl><div><dt>Supabase</dt><dd [class]="statusClass(supabase() ? 'Connected' : 'Unavailable')">{{ supabase() ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>State Change Authority</dt><dd [class]="statusClass(gitea()?.ready ? 'Connected' : 'Unavailable')">{{ gitea()?.ready ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>HISS Preflight</dt><dd [class]="statusClass(hisPreflightState())">{{ hisPreflightState() }}</dd></div></dl></div>
+            <div class="inspector-section"><h3>Connection state</h3><dl><div><dt>Supabase</dt><dd [class]="statusClass(supabase() ? 'Connected' : 'Unavailable')">{{ supabase() ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>State Change Authority</dt><dd [class]="statusClass(gitea()?.ready ? 'Connected' : 'Unavailable')">{{ gitea()?.ready ? 'Connected' : 'Unavailable' }}</dd></div><div><dt>Backbone readiness</dt><dd [class]="statusClass(backboneState())">{{ backboneState() }}</dd></div></dl></div>
           </aside>
 
           <section class="timeline-panel">
@@ -174,7 +168,7 @@ interface HisReadinessProjection {
       }
 
       @if (activeTab() === 'readiness') {
-        <section class="readiness-workspace" role="tabpanel" aria-label="Platform Support Profile">
+        <section class="readiness-workspace" role="tabpanel" aria-label="Console Backbone readiness">
           <os-admin-platform-readiness [embedded]="true" />
         </section>
       }
@@ -256,16 +250,16 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
     { key: 'all' as const, label: 'All evidence', icon: DocumentSecurity16 },
     { key: 'supabase' as const, label: 'Supabase', icon: DataBase16 },
     { key: 'gitea' as const, label: 'Gitea', icon: Commit16 },
-    { key: 'runtime' as const, label: 'Runtime / HISS', icon: FlowData16 },
+    { key: 'runtime' as const, label: 'Runtime / Beszel', icon: FlowData16 },
   ];
   readonly stageLabels = ['Request', 'Audit', 'Signed PR', 'Approval', 'Merge', 'Outbox', 'Observed'];
   readonly journeyLanes: JourneyStep['source'][] = ['Supabase', 'Gitea', 'Kubernetes'];
 
   readonly lastChecked = computed(() => this.latestTime(this.supabase()?.meta.checkedAt, this.gitea()?.meta.checkedAt, this.readiness()?.observedAt));
-  readonly serviceCount = computed(() => (this.supabase()?.components.length || 0) + (this.gitea() ? 1 : 0));
-  readonly readyServiceCount = computed(() => (this.supabase()?.components.filter((item) => item.ready).length || 0) + (this.gitea()?.ready ? 1 : 0));
+  readonly serviceCount = computed(() => this.readiness()?.components.length || 0);
+  readonly readyServiceCount = computed(() => this.readiness()?.components.filter((item) => item.ready).length || 0);
   readonly inFlight = computed(() => { const value = this.gitea(); return value ? (value.byStatus['intent'] || 0) + (value.byStatus['authorized'] || 0) + (value.byStatus['committed'] || 0) : 0; });
-  readonly overallVerdict = computed(() => !this.supabase() || !this.gitea()?.ready ? 'Attention' : (this.readyServiceCount() === this.serviceCount() ? 'Healthy' : 'Attention'));
+  readonly overallVerdict = computed(() => this.readiness()?.ready ? 'Healthy' : 'Attention');
   readonly recentChanges = computed(() => (this.gitea()?.changes || []).slice(0, 8));
   readonly evidenceRows = computed(() => this.buildEvidenceRows());
   readonly filteredEvidence = computed(() => this.evidenceFilter() === 'all' ? this.evidenceRows() : this.evidenceRows().filter((item) => item.authority === this.evidenceFilter()));
@@ -337,19 +331,12 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   recoverySummary(): string { const rows = this.evidenceRows().filter((item) => /Recovery|restore/i.test(item.source + item.assertion)); const attention = rows.filter((item) => item.verdict !== 'Verified').length; return attention ? `${attention} checks need review` : (rows.length ? `${rows.length} checks verified` : 'evidence 없음'); }
   private unitNeedsAttention(unit: RecoveryUnit): boolean { if (/attention|insufficient|failed|unknown/i.test(unit.state)) return true; if (unit.checks?.some((check) => check.verdict !== 'Verified')) return true; return unit.assertions.some((assertion) => /^(restored object files|users|repositories)=0$/i.test(assertion.trim())); }
   driftVerdict(): string { const changes = this.gitea()?.changes || []; if (changes.some((item) => /drift|failed/i.test(item.execution?.drift_status || '') || item.status === 'failed')) return 'Attention'; if (!changes.length) return 'No evidence'; return changes.every((item) => /none|clean|in_sync|no.?drift/i.test(item.execution?.drift_status || '')) ? 'None' : 'Unknown'; }
-  private hisProjection(): HisReadinessProjection | null {
-    const value = this.readiness()?.evidence?.['his'] as Partial<HisReadinessProjection> | undefined;
-    return value?.contract === 'opensphere.his.readiness-projection/v1' ? value as HisReadinessProjection : null;
+  backboneState(): string {
+    return this.readiness()?.ready ? 'Ready' : 'Attention';
   }
-  hisPreflightState(): string {
-    const his = this.hisProjection();
-    if (!his || !his.contractValid || !his.fresh) return 'Unavailable';
-    return his.ready ? 'Ready' : (his.state || 'Degraded');
-  }
-  hisPreflightSummary(): string {
-    const his = this.hisProjection();
-    if (!his) return 'Cluster Manager HISS evidence unavailable';
-    return `${his.core.ready}/${his.core.total} core · ${his.realizationLayer}`;
+  backboneSummary(): string {
+    const components = this.readiness()?.components || [];
+    return components.filter((component) => component.ready).length + '/' + components.length + ' required authorities Ready';
   }
   latestChangeLabel(value: ChangeControlState): string { const latest = value.changes[0]; return latest ? `${this.shortId(latest.request_id)} · ${this.changeVerdict(latest)}` : 'No governed change yet'; }
   changeVerdict(change: ChangeRequest): Verdict { if (change.status === 'failed' || change.execution?.last_error || change.outbox?.last_error) return 'Failed'; if (change.status === 'applied' && change.k8s_operation_id) return 'Verified'; if (['committed', 'authorized'].includes(change.status) || /await|pending|queued/i.test(change.execution?.reconciler_status || change.outbox?.status || '')) return 'Awaiting consumer'; return change.status === 'intent' ? 'Attention required' : 'Awaiting consumer'; }
@@ -357,7 +344,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
   primaryRisk(): { tone: 'warning' | 'danger'; title: string; detail: string; actionLabel: string; action: () => void } {
     if (this.recoveryVerdict() !== 'Verified') return { tone: 'warning', title: 'Recovery evidence incomplete', detail: this.recoverySummary() + '. 복원 결과와 기대값을 확인해야 합니다.', actionLabel: 'Review evidence', action: () => this.openRecoveryEvidence() };
     if (!this.gitea()?.managementReady) return { tone: 'danger', title: 'Gitea management path unavailable', detail: this.gitea()?.reason || '변경 생성·승인 경로를 사용할 수 없습니다.', actionLabel: 'Open journey', action: () => this.activeTab.set('journey') };
-    if (this.hisPreflightState() !== 'Ready') return { tone: 'warning', title: 'HISS preflight is not ready', detail: this.hisProjection()?.reason || 'Cluster Manager HISS 정본 증거를 확인할 수 없습니다.', actionLabel: 'Review HISS evidence', action: () => this.activeTab.set('evidence') };
+    if (!this.readiness()?.ready) return { tone: 'warning', title: 'Console Backbone needs attention', detail: this.readiness()?.components.find((component) => !component.ready)?.detail || '필수 권위의 현재 증거를 확인할 수 없습니다.', actionLabel: 'Review backbone', action: () => this.activeTab.set('readiness') };
     return { tone: 'warning', title: 'No active platform risk', detail: '현재 읽은 증거 범위에서 즉시 조치가 필요한 항목이 없습니다.', actionLabel: 'Review evidence', action: () => this.activeTab.set('evidence') };
   }
   openRecoveryEvidence(): void { this.evidenceFilter.set('supabase'); this.activeTab.set('evidence'); const row = this.evidenceRows().find((item) => item.verdict !== 'Verified' && /restore|Recovery/i.test(item.source + item.assertion)); if (row) this.selectedEvidenceId.set(row.id); }
@@ -369,14 +356,20 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
 
   private buildEvidenceRows(): EvidenceRow[] {
     const rows: EvidenceRow[] = [];
-    const his = this.hisProjection();
-    rows.push({
-      id: 'runtime-his-preflight', authority: 'runtime', source: his?.authority || 'Cluster Manager HISS',
-      assertion: 'HISS core readiness', expected: 'all effective required capabilities Ready',
-      observed: his ? `${his.core.ready}/${his.core.total} · ${his.state}` : 'Unavailable',
-      time: his?.checkedAt || null, verdict: his?.ready ? 'Verified' : 'Attention required',
-      detail: his ? `${his.contract} · ${his.realizationLayer}` : 'canonical HISS projection unavailable', correlation: 'his-preflight',
-    });
+    for (const component of this.readiness()?.components || []) {
+      rows.push({
+        id: 'runtime-backbone-' + component.id,
+        authority: 'runtime',
+        source: component.authority,
+        assertion: component.label + ' readiness',
+        expected: 'Ready',
+        observed: component.state,
+        time: component.observedAt || null,
+        verdict: component.ready ? 'Verified' : 'Attention required',
+        detail: component.detail,
+        correlation: component.id,
+      });
+    }
     const recovery = this.supabase()?.recovery;
     const units: { key: string; authority: EvidenceFilter; source: string; value?: RecoveryUnit }[] = [
       { key: 'sb-db', authority: 'supabase', source: 'Supabase DB Recovery', value: recovery?.supabase },
@@ -397,7 +390,7 @@ export class AdminPlatformControl implements OnInit, OnDestroy {
     }
     for (const contract of this.gitea()?.contracts || []) {
       const phase = contract.observability?.phase || 'NotConfigured';
-      rows.push({ id: `runtime-${contract.consumer_id}`, authority: 'runtime', source: 'HISS Binding', assertion: `${contract.display_name || contract.consumer_id} telemetry binding`, expected: 'Bound when HISS provides telemetry', observed: phase, time: contract.observability?.observed_at || null, verdict: phase === 'Bound' ? 'Verified' : 'Not configured', detail: contract.observability?.binding_name || 'Console does not create Prometheus', correlation: contract.consumer_id });
+      rows.push({ id: 'runtime-' + contract.consumer_id, authority: 'runtime', source: 'External telemetry binding', assertion: (contract.display_name || contract.consumer_id) + ' telemetry binding', expected: 'Bound when its provider declares telemetry', observed: phase, time: contract.observability?.observed_at || null, verdict: phase === 'Bound' ? 'Verified' : 'Not configured', detail: contract.observability?.binding_name || 'Console provisions only the Beszel baseline', correlation: contract.consumer_id });
     }
     for (const change of (this.gitea()?.changes || []).slice(0, 10)) {
       rows.push({ id: `change-${change.request_id}`, authority: change.status === 'applied' ? 'runtime' : 'gitea', source: change.status === 'applied' ? 'Kubernetes Receipt' : 'State Change Authority', assertion: `${change.action} ${change.target}`, expected: 'observed receipt', observed: change.execution?.reconciler_status || change.status, time: change.completed_at || change.execution?.updated_at || change.created_at, verdict: this.changeVerdict(change), detail: change.execution?.pull_number ? `PR #${change.execution.pull_number}` : 'PR not created', correlation: change.request_id });

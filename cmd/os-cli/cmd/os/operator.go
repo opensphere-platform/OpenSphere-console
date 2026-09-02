@@ -493,7 +493,7 @@ func tableCell(value any) string {
 }
 
 func platformStatus(cfg Config, out io.Writer) error {
-	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/platform-readiness/status"), nil, out)
+	return jsonCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/platform/releases/status"), nil, out)
 }
 
 func describe(cfg Config, args []string, out io.Writer) error {
@@ -541,7 +541,7 @@ func doctor(cfg Config, args []string, out io.Writer) error {
 	}{
 		{"CLI identity", join(cfg.IdentityURL, "/introspect"), "CLI 장치 신뢰 또는 Supabase 인증 상태를 확인하세요.", true},
 		{"Console Registry", cfg.RegistryURL, "Nginx /api/v1/registry 라우팅과 Registry JSON 계약을 확인하세요.", true},
-		{"Platform Control", join(cfg.ConsoleURL, "/api/admin/platform-readiness/status"), "Platform Readiness backend와 현재 Binding을 확인하세요.", true},
+		{"Platform Release", join(cfg.ConsoleURL, "/api/platform/releases/status"), "Release Lock과 target executor 상태를 확인하세요.", true},
 		{"Supabase Data & Identity", join(cfg.ConsoleURL, "/api/identity/supabase/status"), "Supabase Auth/PostgREST/Storage 및 Console Backend를 확인하세요.", true},
 		{"Gitea Change Control", join(cfg.ConsoleURL, "/api/platform/gitea/status"), "Gitea credential, repository 정책, webhook 상태를 확인하세요.", true},
 		{"Beszel Baseline Monitoring", join(cfg.ConsoleURL, "/api/monitoring/baseline/v1/data-health"), "Beszel Hub·Agent와 읽기 전용 reader 구성을 확인하세요.", true},
@@ -571,6 +571,14 @@ func doctor(cfg Config, args []string, out io.Writer) error {
 					}
 					result.Message = semanticStatusMessage(document)
 					result.Hint = check.hint
+				}
+				if check.name == "Platform Release" {
+					execution, _ := document["execution"].(map[string]any)
+					if ready, _ := execution["ready"].(bool); !ready {
+						result.Status = "Failed"
+						result.Message = semanticStatusMessage(execution)
+						result.Hint = check.hint
+					}
 				}
 				if check.name == "Beszel Baseline Monitoring" {
 					if health, _ := document["status"].(string); health != "healthy" {
@@ -1458,7 +1466,7 @@ func supportBundle(cfg Config, args []string, out io.Writer) error {
 	endpoints := []struct{ name, url string }{
 		{"identity", join(cfg.IdentityURL, "/introspect")},
 		{"registry", cfg.RegistryURL},
-		{"platform", join(cfg.ConsoleURL, "/api/admin/platform-readiness/status")},
+		{"platformRelease", join(cfg.ConsoleURL, "/api/platform/releases/status")},
 		{"supabase", join(cfg.ConsoleURL, "/api/identity/supabase/status")},
 		{"gitea", join(cfg.ConsoleURL, "/api/platform/gitea/status")},
 		{"observability", join(cfg.ConsoleURL, "/api/monitoring/baseline/v1/data-health")},

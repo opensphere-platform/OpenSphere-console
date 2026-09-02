@@ -15,15 +15,15 @@ test('foundational Console contracts are internally complete and self-contained'
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 54,
-    browserApiPatterns: 118,
+    browserApiPatterns: 116,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: false,
     legacyApiDispositions: 277,
     legacyApiDispositionCounts: {
       adopted: 9,
-      reworked: 238,
-      rejected: 30,
+      reworked: 236,
+      rejected: 32,
     },
   });
 });
@@ -52,6 +52,19 @@ test('Console Web and CLI use only the bounded Beszel baseline monitoring author
   assert(!handler.includes('/api/admin/observability'));
 });
 
+test('Console Backbone readiness composes target authorities without a mutating HISS profile', async () => {
+  const source = await readFile(new URL('../apps/console-web/src/app/core/platform-readiness.service.ts', import.meta.url), 'utf8');
+  for (const endpoint of [
+    '/api/identity/supabase/status',
+    '/api/platform/gitea/status',
+    '/api/platform/releases/status',
+    '/api/monitoring/baseline/v1/data-health',
+  ]) {
+    assert(source.includes(endpoint), 'Backbone readiness is missing ' + endpoint);
+  }
+  assert(!source.includes('/api/admin/platform-readiness'));
+  assert(!source.includes('preflight') && !source.includes('verify('));
+});
 test('Console Web exposes only target-governed platform changes', async () => {
   const source = await readFile(new URL('../apps/console-web/src/app/pages/admin-change-control.ts', import.meta.url), 'utf8');
   assert(source.includes("'/api/platform/changes'"));

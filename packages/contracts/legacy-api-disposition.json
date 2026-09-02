@@ -18,12 +18,12 @@
   "summary": {
     "byDisposition": {
       "adopted": 9,
-      "reworked": 238,
-      "rejected": 30
+      "reworked": 236,
+      "rejected": 32
     },
     "byTargetOwner": {
       "C_AI": 110,
-      "C_API": 104,
+      "C_API": 102,
       "C_BAK": 4,
       "C_CLI": 6,
       "C_EXT": 5,
@@ -546,10 +546,11 @@
       "targetOwner": "C_API",
       "target": {
         "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "family": "platform",
+        "prefix": "/api/platform",
+        "replacement": "/api/platform/releases/status"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The legacy HISS profile projection is replaced by a read-only Console Backbone view composed from target Supabase, Gitea, Release Lock, and Beszel authorities."
     },
     {
       "path": "/api/admin/platform-readiness/preflight",
@@ -563,14 +564,12 @@
           "line": 7462
         }
       ],
-      "disposition": "reworked",
-      "targetOwner": "C_API",
+      "disposition": "rejected",
+      "targetOwner": null,
       "target": {
-        "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "kind": "none"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The target Console does not manufacture readiness by mutating a HISS profile; Setup and each backbone owner retain their own lifecycle authority."
     },
     {
       "path": "/api/admin/platform-readiness/status",
@@ -608,10 +607,11 @@
       "targetOwner": "C_API",
       "target": {
         "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "family": "platform",
+        "prefix": "/api/platform",
+        "replacement": "/api/platform/releases/status"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The legacy HISS profile projection is replaced by a read-only Console Backbone view composed from target Supabase, Gitea, Release Lock, and Beszel authorities."
     },
     {
       "path": "/api/admin/platform-readiness/verify",
@@ -625,14 +625,12 @@
           "line": 7467
         }
       ],
-      "disposition": "reworked",
-      "targetOwner": "C_API",
+      "disposition": "rejected",
+      "targetOwner": null,
       "target": {
-        "kind": "browser-family",
-        "family": "admin",
-        "prefix": "/api/admin"
+        "kind": "none"
       },
-      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+      "rationale": "The target Console does not manufacture readiness by mutating a HISS profile; Setup and each backbone owner retain their own lifecycle authority."
     },
     {
       "path": "/api/admin/plugins/catalog",

@@ -150,6 +150,27 @@ function decision(path, sources) {
     };
   }
 
+  if (path === '/api/admin/platform-readiness/status' || path === '/api/admin/platform-readiness/lifecycle') {
+    return {
+      disposition: 'reworked',
+      targetOwner: 'C_API',
+      target: {
+        kind: 'browser-family',
+        family: 'platform',
+        prefix: '/api/platform',
+        replacement: '/api/platform/releases/status',
+      },
+      rationale: 'The legacy HISS profile projection is replaced by a read-only Console Backbone view composed from target Supabase, Gitea, Release Lock, and Beszel authorities.',
+    };
+  }
+  if (path === '/api/admin/platform-readiness/preflight' || path === '/api/admin/platform-readiness/verify') {
+    return {
+      disposition: 'rejected',
+      targetOwner: null,
+      target: { kind: 'none' },
+      rationale: 'The target Console does not manufacture readiness by mutating a HISS profile; Setup and each backbone owner retain their own lifecycle authority.',
+    };
+  }
   if (path === '/api/admin/observability/status') {
     return {
       disposition: 'reworked',

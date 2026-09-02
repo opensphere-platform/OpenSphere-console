@@ -400,7 +400,7 @@ func TestBackboneCompatibilityAliasUsesCurrentAuthorities(t *testing.T) {
 	if err := backbone(cfg, []string{"status"}, &out, &errOut); err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 1 || requests[0] != "/api/admin/platform-readiness/status" {
+	if len(requests) != 1 || requests[0] != "/api/platform/releases/status" {
 		t.Fatalf("backbone alias called retired route: %v", requests)
 	}
 	if !strings.Contains(errOut.String(), "호환 alias") {
@@ -436,6 +436,10 @@ func TestDoctorReportsOptionalMissingCRDsWithoutHidingThem(t *testing.T) {
 		}
 		if r.URL.Path == "/api/monitoring/baseline/v1/data-health" {
 			_, _ = w.Write([]byte(`{"status":"healthy"}`))
+			return
+		}
+		if r.URL.Path == "/api/platform/releases/status" {
+			_, _ = w.Write([]byte(`{"execution":{"ready":true,"state":"Ready"},"current":{"releaseDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"status":"Ready","version":3,"schema":"opensphere.registry-catalog/v1","revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","inventory":{"descriptors":[],"coverage":{}},"capabilities":[],"plugins":[],"templates":[],"trustedKeys":{}}`))

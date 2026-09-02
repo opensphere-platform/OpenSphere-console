@@ -113,7 +113,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 /**
  * Admin Control Page (계획서 §7) — Catalog/Installed/Audit 탭.
  * 설치/비활성화/재활성화/삭제를 Control API로만 수행하고, 성공 후 Extension Host를
- * reload하여 메뉴를 런타임 갱신한다. 셸 이미지·파드는 불변(DUPA 합격 기준).
+ * reload하여 메뉴를 런타임 갱신한다. 셸 이미지·파드는 불변(Extension Controller 합격 기준).
  */
 @Component({
   selector: 'os-admin-plugins',
@@ -2008,7 +2008,7 @@ export class AdminPlugins implements OnInit {
     return this.satisfiedCount(r) + (r.status.admission?.pendingCapabilities || []).length;
   }
 
-  /** DUPA 설치/검증 파이프라인 단계(controller verifyPlugin 순서). reason으로 실패 지점 도출. */
+  /** Extension Controller 설치/검증 파이프라인 단계. reason으로 실패 지점 도출. */
   private readonly VSTEPS: { label: string; fail?: string[] }[] = [
     { label: '워크로드 기동 (Pod Running)' },
     { label: 'manifest 도달', fail: ['ManifestUnreachable'] },
@@ -2139,7 +2139,7 @@ export class AdminPlugins implements OnInit {
   registryClassBoundary(className: RegistryDescriptorClass): string {
     return ({
       coreService: '현재 Console을 구성하는 조회 전용 내장 서비스',
-      extension: 'DUPA Package·Registration으로 검증된 확장',
+      extension: 'Extension Controller가 검증한 Package·Registration',
       installableModule: 'OSCE가 exact digest로 resolve할 수 있는 설치 후보',
     })[className];
   }
@@ -2160,7 +2160,7 @@ export class AdminPlugins implements OnInit {
       this.bindings.set(bindings.value);
       this.bindingsLoaded.set(true);
     } else issues.push(names[1]);
-    if (readiness.status === 'fulfilled') this.foundationActivationAllowed.set(readiness.value.admission.foundationActivationAllowed === true);
+    if (readiness.status === 'fulfilled') this.foundationActivationAllowed.set(readiness.value.ready);
     else issues.push(names[2]);
     if (registry.status === 'fulfilled') this.registryStatus.set(registry.value); else issues.push(names[3]);
     if (revocations.status === 'fulfilled') this.revocations.set(revocations.value); else issues.push(names[4]);
