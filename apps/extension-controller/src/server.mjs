@@ -7,9 +7,11 @@ import pg from 'pg';
 import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
 import { createExtensionController } from './controller.mjs';
 import { createKubernetesRegistrationWriter } from './kubernetes-registration-writer.mjs';
+import { createKubernetesExtensionLifecycle } from './kubernetes-extension-lifecycle.mjs';
 import { createConsoleOwnerAdmission } from './owner-admission.mjs';
 import { createPluginProxy } from './plugin-proxy.mjs';
 import { createExtensionPostgresStore } from './postgres-store.mjs';
+import { extensionControllerReady } from './readiness.mjs';
 
 const { Pool } = pg;
 function integer(name, fallback, minimum, maximum) {
@@ -18,6 +20,11 @@ function integer(name, fallback, minimum, maximum) {
     throw new Error(name + ' must be an integer between ' + minimum + ' and ' + maximum);
   }
   return value;
+}
+function flag(name, fallback = false) {
+  const value = String(process.env[name] ?? fallback);
+  if (!['true', 'false'].includes(value)) throw new Error(name + ' must be true or false');
+  return value === 'true';
 }
 
 const databaseUrl = String(process.env.CONSOLE_EXTENSION_DATABASE_URL || '');
@@ -40,15 +47,28 @@ const registryResolver = createRegistryResolver({
   maximumResponseBytes: integer('CONSOLE_REGISTRY_MAX_RESPONSE_BYTES', 65536, 1024, 1024 * 1024),
 });
 const serviceAccountDirectory = String(process.env.KUBERNETES_SERVICE_ACCOUNT_DIRECTORY || '/var/run/secrets/kubernetes.io/serviceaccount');
-const kubernetesToken = await readFile(`${serviceAccountDirectory}/token`, 'utf8').then((value) => value.trim()).catch(() => '');
-const namespaceFromFile = await readFile(`${serviceAccountDirectory}/namespace`, 'utf8').then((value) => value.trim()).catch(() => '');
+const kubernetesToken = await readFile(serviceAccountDirectory + '/token', 'utf8').then((value) => value.trim()).catch(() => '');
+const namespaceFromFile = await readFile(serviceAccountDirectory + '/namespace', 'utf8').then((value) => value.trim()).catch(() => '');
+const extensionNamespace = String(process.env.CONSOLE_EXTENSION_NAMESPACE || namespaceFromFile || 'opensphere-console');
+const kubernetesBaseUrl = String(process.env.KUBERNETES_API_URL
+  || 'https://' + (process.env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc') + ':' + (process.env.KUBERNETES_SERVICE_PORT_HTTPS || '443'));
+const kubernetesTimeoutMs = integer('CONSOLE_KUBERNETES_TIMEOUT_MS', 8000, 100, 30000);
+const kubernetesMaximumResponseBytes = integer('CONSOLE_KUBERNETES_MAX_RESPONSE_BYTES', 131072, 4096, 4 * 1024 * 1024);
 const registrationWriter = kubernetesToken ? createKubernetesRegistrationWriter({
-  baseUrl: String(process.env.KUBERNETES_API_URL
-    || `https://${process.env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc'}:${process.env.KUBERNETES_SERVICE_PORT_HTTPS || '443'}`),
+  baseUrl: kubernetesBaseUrl,
   token: kubernetesToken,
-  namespace: String(process.env.CONSOLE_EXTENSION_NAMESPACE || namespaceFromFile || 'opensphere-console'),
-  timeoutMs: integer('CONSOLE_KUBERNETES_TIMEOUT_MS', 8000, 100, 30000),
-  maximumResponseBytes: integer('CONSOLE_KUBERNETES_MAX_RESPONSE_BYTES', 131072, 1024, 1024 * 1024),
+  namespace: extensionNamespace,
+  timeoutMs: kubernetesTimeoutMs,
+  maximumResponseBytes: Math.min(kubernetesMaximumResponseBytes, 1024 * 1024),
+}) : null;
+const lifecycleEnabled = flag('CONSOLE_EXTENSION_LIFECYCLE_ENABLED');
+const lifecycleReconciler = lifecycleEnabled && kubernetesToken ? createKubernetesExtensionLifecycle({
+  baseUrl: kubernetesBaseUrl,
+  token: kubernetesToken,
+  namespace: extensionNamespace,
+  trustedKeysConfigMap: String(process.env.CONSOLE_EXTENSION_TRUSTED_KEYS_CONFIGMAP || 'opensphere-extension-trusted-keys'),
+  timeoutMs: kubernetesTimeoutMs,
+  maximumResponseBytes: kubernetesMaximumResponseBytes,
 }) : null;
 const controller = createExtensionController({
   store, registryResolver, registrationWriter, workerId, leaseSeconds, maxObservationAttempts,
@@ -58,7 +78,7 @@ const ownerAdmission = createConsoleOwnerAdmission({
   timeoutMs: integer('CONSOLE_OWNER_AUTHORITY_TIMEOUT_MS', 8000, 100, 30000),
 });
 const pluginProxy = createPluginProxy({
-  pluginNamespace: String(process.env.CONSOLE_EXTENSION_NAMESPACE || namespaceFromFile || 'opensphere-console'),
+  pluginNamespace: extensionNamespace,
   timeoutMs: integer('CONSOLE_PLUGIN_PROXY_TIMEOUT_MS', 30000, 100, 120000),
   async resolveTarget(input) {
     if (!registrationWriter) {
@@ -109,10 +129,29 @@ function writeOwnerError(response, error) {
 
 let stopping = false;
 let lastError = null;
+let lastLifecycleError = null;
+let lifecycleObserved = false;
 let timer;
 async function cycle() {
   if (stopping) return;
   try {
+    if (lifecycleReconciler) {
+      try {
+        const lifecycle = await lifecycleReconciler.reconcileOnce();
+        lifecycleObserved = true;
+        lastLifecycleError = null;
+        if (lifecycle.state !== 'Idle') {
+          process.stdout.write(JSON.stringify({ event: 'extension-lifecycle-reconciled', ...lifecycle }) + '\n');
+        }
+      } catch (error) {
+        lastLifecycleError = { code: error?.code || 'AuthorityUnavailable', at: new Date().toISOString() };
+        process.stderr.write(JSON.stringify({ event: 'extension-lifecycle-cycle-failed', ...lastLifecycleError }) + '\n');
+      }
+    } else if (lifecycleEnabled) {
+      lastLifecycleError = { code: 'KubernetesAuthorityUnavailable', at: new Date().toISOString() };
+    } else {
+      lastLifecycleError = null;
+    }
     const result = await controller.runOnce();
     lastError = null;
     if (result.state !== 'Idle') process.stdout.write(JSON.stringify({ event: 'extension-operation-applied', ...result }) + '\n');
@@ -123,7 +162,6 @@ async function cycle() {
     if (!stopping) timer = setTimeout(cycle, pollMilliseconds);
   }
 }
-
 const healthServer = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'extension.local'}`);
   if (url.pathname.startsWith('/api/plugins/')) {
@@ -140,10 +178,24 @@ const healthServer = createServer(async (request, response) => {
     response.writeHead(404).end();
     return;
   }
-  let ready = false;
-  try { ready = await store.health(); } catch { ready = false; }
+  let databaseReady = false;
+  try { databaseReady = await store.health(); } catch { databaseReady = false; }
+  const ready = extensionControllerReady({
+    databaseReady,
+    lifecycleEnabled,
+    lifecycleAvailable: Boolean(lifecycleReconciler),
+    lifecycleObserved,
+    lifecycleError: lastLifecycleError,
+  });
   response.writeHead(ready ? 200 : 503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-  response.end(JSON.stringify({ state: ready ? 'Ready' : 'Unavailable', workerId, lastError }));
+  response.end(JSON.stringify({
+    state: ready ? 'Ready' : 'Unavailable',
+    workerId,
+    lifecycleEnabled,
+    lifecycleObserved,
+    lastError,
+    lastLifecycleError,
+  }));
 });
 
 let shutdownPromise;

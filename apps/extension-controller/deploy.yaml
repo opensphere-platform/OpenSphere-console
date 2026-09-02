@@ -81,6 +81,10 @@ spec:
               value: http://opensphere-registry.opensphere-console.svc.cluster.local:8080
             - name: CONSOLE_EXTENSION_NAMESPACE
               value: opensphere-console
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            - name: CONSOLE_EXTENSION_LIFECYCLE_ENABLED
+              value: 'false'
             - name: CONSOLE_OWNER_AUTHORITY_URL
               value: http://opensphere-console-api.opensphere-console.svc.cluster.local:8080
           ports:
