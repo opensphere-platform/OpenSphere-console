@@ -26,6 +26,7 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.list_owned_browser_sessions',
   'console_identity.prepare_browser_session_preference_update',
   'console_identity.prepare_owned_password_recovery_link',
+  'console_identity.prepare_owned_profile_avatar_access',
   'console_identity.reject_browser_session_refresh',
   'console_identity.resolve_browser_session',
   'console_identity.revoke_all_owned_browser_sessions',
@@ -287,7 +288,18 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(recoveryLink?.responses?.['200']?.content?.['application/json']?.schema?.$ref
     === '../schemas/owned-password-recovery-link-response.schema.json',
   'requestOwnedPasswordRecoveryLink must use the closed same-origin response schema');
-  for (const operationId of ['completeSessionMfa', 'getSession', 'deleteSession', 'getMe', 'requestOwnedPasswordRecoveryLink']) {
+  const avatarOperations = ['getProfileAvatar', 'selectProfileAvatar', 'uploadProfileAvatar', 'getProfileAvatarContent']
+    .map((operationId) => entries.find(({ operation }) => operation.operationId === operationId)?.operation);
+  assert(avatarOperations.every(Boolean), 'profile avatar route family is incomplete');
+  assert(avatarOperations[0]['x-opensphere-authority'] === 'SupabaseAuth', 'profile avatar projection must use Auth authority');
+  assert(avatarOperations[2]['x-opensphere-authority'] === 'SupabaseAuthAndPrivateStorage'
+    && avatarOperations[3]['x-opensphere-authority'] === 'SupabaseAuthAndPrivateStorage',
+  'profile avatar bytes must use Auth and private Storage authority');
+  assert(avatarOperations[1].requestBody?.content?.['application/json']?.schema?.$ref
+    === '../schemas/profile-avatar-selection-request.schema.json', 'profile avatar selection schema is not closed');
+  assert(avatarOperations[2].requestBody?.content?.['application/json']?.schema?.$ref
+    === '../schemas/profile-avatar-upload-request.schema.json', 'profile avatar upload schema is not closed');
+  for (const operationId of ['completeSessionMfa', 'getSession', 'deleteSession', 'getMe', 'requestOwnedPasswordRecoveryLink', 'getProfileAvatar', 'selectProfileAvatar']) {
     const identityRead = entries.find(({ operation }) => operation.operationId === operationId)?.operation;
     assert(identityRead?.['x-opensphere-authority'] === 'SupabaseAuth', operationId + ' must declare Supabase Auth authority');
   }

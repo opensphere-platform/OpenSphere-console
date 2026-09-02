@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -53,6 +54,9 @@ const recoveryAccessToken = integrationAccessToken({
 let recoveryPasswordChanged = false;
 let recoverySessionLoggedOut = false;
 let sessionPreferenceDuration = '24h';
+let avatarMetadata = null;
+let avatarBytes = null;
+let avatarContentType = null;
 let totpEnrollmentState = 'none';
 const mfaAccessToken = [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -105,7 +109,11 @@ let registration = null;
 const authorityServer = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  const requestBody = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+  const rawBody = Buffer.concat(chunks);
+  const requestContentType = String(request.headers['content-type'] || '').toLowerCase();
+  const requestBody = rawBody.length && /(?:^application\/json|[+]json)(?:;|$)/u.test(requestContentType)
+    ? JSON.parse(rawBody.toString('utf8'))
+    : rawBody.length ? rawBody : null;
   if (request.url === '/token?grant_type=password' && request.method === 'POST') {
     const mfaLogin = requestBody?.email === 'mfa@opensphere.test';
     assert.deepEqual(requestBody, mfaLogin
@@ -146,7 +154,11 @@ const authorityServer = createServer(async (request, response) => {
     response.end(JSON.stringify({
       id: loginSubjectId,
       email: 'operator@opensphere.test',
-      user_metadata: { console_session_persistence: sessionPreferenceDuration },
+      user_metadata: {
+        console_session_persistence: sessionPreferenceDuration,
+        ...(avatarMetadata ? { console_avatar: avatarMetadata } : {}),
+      },
+      identities: [{ provider: 'github', identity_data: { avatar_url: 'https://avatars.integration.test/operator#profile' } }],
       factors: bearer === 'Bearer ' + mfaAccessToken
         ? [{ id: 'factor-1', factor_type: 'totp', status: 'verified' }]
         : enrollmentBearer && totpEnrollmentState !== 'none'
@@ -181,6 +193,16 @@ const authorityServer = createServer(async (request, response) => {
       return;
     }
     assert.equal(request.headers.authorization, 'Bearer ' + rotatedLoginAccessToken);
+    if (requestBody?.data?.console_avatar) {
+      avatarMetadata = requestBody.data.console_avatar;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        id: loginSubjectId,
+        user_metadata: { console_session_persistence: sessionPreferenceDuration, console_avatar: avatarMetadata },
+        identities: [{ provider: 'github', identity_data: { avatar_url: 'https://avatars.integration.test/operator#profile' } }],
+      }));
+      return;
+    }
     assert.deepEqual(requestBody, { data: { console_session_persistence: '7d' } });
     sessionPreferenceDuration = '7d';
     response.writeHead(200, { 'content-type': 'application/json' });
@@ -189,6 +211,32 @@ const authorityServer = createServer(async (request, response) => {
       user_metadata: { console_session_persistence: sessionPreferenceDuration },
     }));
     return;
+  }
+  const avatarObjectUrl = `/object/console-uploads/avatars/${loginSubjectId}/profile`;
+  if (request.url === avatarObjectUrl) {
+    assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
+    assert.equal(request.headers.apikey, serviceRoleKey);
+    if (request.method === 'POST') {
+      assert.equal(request.headers['x-upsert'], 'true');
+      assert.ok(['image/webp', 'image/png', 'image/jpeg'].includes(String(request.headers['content-type'])));
+      avatarBytes = rawBody;
+      avatarContentType = String(request.headers['content-type']);
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{}');
+      return;
+    }
+    if (request.method === 'GET' && avatarBytes) {
+      response.writeHead(200, { 'content-type': avatarContentType, 'content-length': String(avatarBytes.length) });
+      response.end(avatarBytes);
+      return;
+    }
+    if (request.method === 'DELETE') {
+      avatarBytes = null;
+      avatarContentType = null;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{}');
+      return;
+    }
   }
   if (request.url === '/logout?scope=global' && request.method === 'POST') {
     assert.equal(request.headers.authorization, 'Bearer ' + recoveryAccessToken);
@@ -601,6 +649,67 @@ try {
   assert.equal(preferenceEvidence.rows[0].event_count, 1);
   assert.match(preferenceEvidence.rows[0].evidence, /"duration":\s*"7d"/);
   assert.doesNotMatch(preferenceEvidence.rows[0].evidence, /integration-signature|supabase-refresh|apikey/i);
+
+  const initialAvatarRead = await fetch(origin + '/api/identity/profile/avatar', {
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-avatar-read-0001' },
+  });
+  assert.equal(initialAvatarRead.status, 200);
+  const automaticAvatar = await initialAvatarRead.json();
+  assert.deepEqual(automaticAvatar.current, {
+    source: 'linked', provider: 'github', url: 'https://avatars.integration.test/operator', digest: null, contentType: null,
+  });
+  assert.deepEqual(automaticAvatar.linkedAccounts, [{ provider: 'github', url: 'https://avatars.integration.test/operator' }]);
+
+  const initialAvatarSelection = await fetch(origin + '/api/identity/profile/avatar', {
+    method: 'PUT',
+    headers: {
+      cookie: loginCookieHeader, 'x-os-csrf-token': loginCsrf, 'content-type': 'application/json',
+      'x-os-correlation-id': 'integration-avatar-select-0001',
+    },
+    body: JSON.stringify({ source: 'initial' }),
+  });
+  assert.equal(initialAvatarSelection.status, 200);
+  assert.equal((await initialAvatarSelection.json()).current.source, 'initial');
+
+  const avatarPng = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  const avatarDigest = `sha256:${createHash('sha256').update(avatarPng).digest('hex')}`;
+  const avatarUpload = await fetch(origin + '/api/identity/profile/avatar/upload', {
+    method: 'POST',
+    headers: {
+      cookie: loginCookieHeader, 'x-os-csrf-token': loginCsrf, 'content-type': 'application/json',
+      'x-os-correlation-id': 'integration-avatar-upload-0001',
+    },
+    body: JSON.stringify({ contentType: 'image/png', dataBase64: avatarPng.toString('base64') }),
+  });
+  const uploadedAvatar = await avatarUpload.json();
+  assert.equal(avatarUpload.status, 200, JSON.stringify(uploadedAvatar));
+  assert.deepEqual(uploadedAvatar.current, {
+    source: 'upload', provider: null,
+    url: `/api/identity/profile/avatar/content?v=${encodeURIComponent(avatarDigest)}`,
+    digest: avatarDigest, contentType: 'image/png',
+  });
+  const avatarContent = await fetch(origin + `/api/identity/profile/avatar/content?v=${encodeURIComponent(avatarDigest)}`, {
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-avatar-content-0001' },
+  });
+  assert.equal(avatarContent.status, 200);
+  assert.equal(avatarContent.headers.get('content-type'), 'image/png');
+  assert.equal(avatarContent.headers.get('cache-control'), 'private, max-age=300, must-revalidate');
+  assert.equal(avatarContent.headers.get('x-content-type-options'), 'nosniff');
+  assert.deepEqual(Buffer.from(await avatarContent.arrayBuffer()), avatarPng);
+  assert.equal((await fetch(origin + `/api/identity/profile/avatar/content?v=sha256:${'0'.repeat(64)}`, {
+    headers: { cookie: loginCookieHeader },
+  })).status, 404);
+  const avatarEvidence = await admin.query(
+    [
+      'SELECT count(*)::int AS event_count,',
+      "COALESCE(string_agg(action || evidence::text, ''), '') AS evidence",
+      'FROM console_audit.event',
+      "WHERE action IN ('console.identity.profile.avatar.select', 'console.identity.profile.avatar.upload')",
+      "AND correlation_id IN ('integration-avatar-select-0001', 'integration-avatar-upload-0001')",
+    ].join(' '),
+  );
+  assert.equal(avatarEvidence.rows[0].event_count, 2);
+  assert.doesNotMatch(avatarEvidence.rows[0].evidence, /integration-signature|supabase-refresh|service-role|dataBase64/i);
 
   const recoveryLinkHeaders = {
     cookie: loginCookieHeader,
@@ -1575,6 +1684,7 @@ try {
     initialAdministratorBootstrapStatus: true,
     passwordLoginSessionLifecycle: true,
     sessionPreferenceLifecycle: true,
+    profileAvatarLifecycle: true,
     ownedPasswordRecoveryLinkLifecycle: true,
     sessionEventHistory: true,
     refreshRotationLifecycle: true,

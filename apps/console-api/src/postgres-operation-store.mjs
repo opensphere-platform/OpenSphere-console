@@ -111,6 +111,12 @@ const PREPARE_OWNED_PASSWORD_RECOVERY_LINK_SQL = [
   ') AS recovery_record',
 ].join(' ');
 
+const PREPARE_OWNED_PROFILE_AVATAR_ACCESS_SQL = [
+  'SELECT console_identity.prepare_owned_profile_avatar_access(',
+  '$1::bytea, $2::bytea, $3::text, $4::text',
+  ') AS avatar_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -518,6 +524,22 @@ export function createPostgresOperationStore({ query }) {
         const record = result?.rows?.[0]?.recovery_record;
         if (!['prepared', 'duplicate'].includes(record?.state) || !record?.subjectId) {
           throw new Error('prepare_owned_password_recovery_link returned no record');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async prepareOwnedProfileAvatarAccess(input) {
+      try {
+        const result = await query(PREPARE_OWNED_PROFILE_AVATAR_ACCESS_SQL, [
+          input.tokenDigest, input.csrfTokenDigest ?? null, input.operation, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.avatar_record;
+        if (!record?.sessionId || !record?.subjectId || !record?.accessTokenCiphertext
+            || (['select', 'upload'].includes(input.operation) && !record?.auditEventId)) {
+          throw new Error('prepare_owned_profile_avatar_access returned no record');
         }
         return record;
       } catch (error) {

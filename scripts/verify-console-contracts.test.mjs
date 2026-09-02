@@ -9,12 +9,12 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 34,
+    operations: 38,
     actionPolicies: 5,
-    schemas: 29,
+    schemas: 32,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 31,
+    consoleApiDatabaseFunctions: 32,
     browserApiPatterns: 122,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
@@ -42,7 +42,11 @@ test('Console API authority verification rejects missing grants and direct table
   const recentAal2Source = await readFile(new URL('../migrations/versions/0009_recent_aal2_enforcement.sql', import.meta.url), 'utf8');
   const passwordRecoverySource = await readFile(new URL('../migrations/versions/0010_password_recovery_session_revocation.sql', import.meta.url), 'utf8');
   const bootstrapSource = await readFile(new URL('../migrations/versions/0011_initial_administrator_bootstrap.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource].join('\n');
+  const preferenceSource = await readFile(new URL('../migrations/versions/0012_browser_session_preference.sql', import.meta.url), 'utf8');
+  const eventSource = await readFile(new URL('../migrations/versions/0013_owned_browser_session_events.sql', import.meta.url), 'utf8');
+  const recoveryLinkSource = await readFile(new URL('../migrations/versions/0014_owned_password_recovery_link.sql', import.meta.url), 'utf8');
+  const avatarSource = await readFile(new URL('../migrations/versions/0015_owned_profile_avatar.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

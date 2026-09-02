@@ -12,6 +12,17 @@ function send(response, status, body, headers = {}) {
   response.end(payload);
 }
 
+function sendAvatar(response, avatar) {
+  response.writeHead(200, {
+    'content-type': avatar.contentType,
+    'content-length': String(avatar.bytes.length),
+    'cache-control': 'private, max-age=300, must-revalidate',
+    'x-content-type-options': 'nosniff',
+    etag: `"${avatar.digest}"`,
+  });
+  response.end(avatar.bytes);
+}
+
 function clearSessionCookies() {
   return [
     '__Host-opensphere-session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0',
@@ -118,6 +129,39 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         return send(response, 200, await identitySessionBroker.listSessionEvents(request, {
           limit: onlyQueryParameter(url, 'limit'),
           correlationId,
+        }));
+      }
+      if (url.pathname === '/api/identity/profile/avatar' && request.method === 'GET') {
+        if (!identitySessionBroker?.getProfileAvatar) {
+          throw Object.assign(new Error('profile avatar is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await identitySessionBroker.getProfileAvatar(request, { correlationId }));
+      }
+      if (url.pathname === '/api/identity/profile/avatar' && request.method === 'PUT') {
+        if (!identitySessionBroker?.selectProfileAvatar) {
+          throw Object.assign(new Error('profile avatar selection is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await identitySessionBroker.selectProfileAvatar(request, {
+          body: await jsonBody(request), correlationId,
+        }));
+      }
+      if (url.pathname === '/api/identity/profile/avatar/upload' && request.method === 'POST') {
+        if (!identitySessionBroker?.uploadProfileAvatar) {
+          throw Object.assign(new Error('profile avatar upload is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await identitySessionBroker.uploadProfileAvatar(request, {
+          body: await jsonBody(request), correlationId,
+        }));
+      }
+      if (url.pathname === '/api/identity/profile/avatar/content' && request.method === 'GET') {
+        if (!identitySessionBroker?.readProfileAvatarContent) {
+          throw Object.assign(new Error('profile avatar content is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return sendAvatar(response, await identitySessionBroker.readProfileAvatarContent(request, {
+          digest: onlyQueryParameter(url, 'v'), correlationId,
         }));
       }
       if (url.pathname === '/api/identity/session/preference' && request.method === 'GET') {

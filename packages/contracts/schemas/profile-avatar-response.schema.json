@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/profile-avatar-response.schema.json",
+  "title": "Profile avatar projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["current", "linkedAccounts"],
+  "properties": {
+    "current": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "provider", "url", "digest", "contentType"],
+      "properties": {
+        "source": { "enum": ["initial", "linked", "upload"] },
+        "provider": { "type": ["string", "null"], "maxLength": 32 },
+        "url": { "type": ["string", "null"], "maxLength": 4096 },
+        "digest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+        "contentType": { "enum": [null, "image/webp", "image/png", "image/jpeg"] }
+      }
+    },
+    "linkedAccounts": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "url"],
+        "properties": {
+          "provider": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
+          "url": { "type": "string", "format": "uri", "maxLength": 2048 }
+        }
+      }
+    }
+  }
+}

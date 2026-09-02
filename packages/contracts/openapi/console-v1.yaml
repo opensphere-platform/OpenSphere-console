@@ -116,6 +116,119 @@ paths:
           $ref: "#/components/responses/PermissionDenied"
         "503":
           $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/profile/avatar:
+    get:
+      operationId: getProfileAvatar
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-002
+      x-opensphere-authority: SupabaseAuth
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      responses:
+        "200":
+          description: Current subject avatar projection and exact linked-account candidates
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/profile-avatar-response.schema.json"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+    put:
+      operationId: selectProfileAvatar
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-002
+      x-opensphere-authority: SupabaseAuth
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: same-value-safe
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/profile-avatar-selection-request.schema.json"
+      responses:
+        "200":
+          description: Same-subject Auth metadata confirmed the exact initial or registered linked avatar
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/profile-avatar-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/profile/avatar/upload:
+    post:
+      operationId: uploadProfileAvatar
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-002
+      x-opensphere-authority: SupabaseAuthAndPrivateStorage
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: content-digest-same-value-safe
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/profile-avatar-upload-request.schema.json"
+      responses:
+        "200":
+          description: Bounded image stored at the fixed subject path and its digest confirmed in Auth metadata
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/profile-avatar-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/profile/avatar/content:
+    get:
+      operationId: getProfileAvatarContent
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-002
+      x-opensphere-authority: SupabaseAuthAndPrivateStorage
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      parameters:
+        - name: v
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^sha256:[a-f0-9]{64}$"
+      responses:
+        "200":
+          description: Authenticated same-subject image whose bytes, MIME type, and digest match Auth metadata
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            image/webp: { schema: { type: string, format: binary, maxLength: 163840 } }
+            image/png: { schema: { type: string, format: binary, maxLength: 163840 } }
+            image/jpeg: { schema: { type: string, format: binary, maxLength: 163840 } }
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/identity/session/events:
     get:
       operationId: listOwnedSessionEvents

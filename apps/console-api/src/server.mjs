@@ -12,6 +12,7 @@ import { createConsoleApiHandler } from './http-handler.mjs';
 import { createIdentitySessionBroker } from './identity-session-broker.mjs';
 import { createSessionCredentialCipher } from './session-credential-cipher.mjs';
 import { createSupabaseAuthClient } from './supabase-auth-client.mjs';
+import { createSupabaseStorageClient } from './supabase-storage-client.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -45,13 +46,20 @@ const operationService = createOperationService({ store, policyCatalog });
 const auditOperations = createAuditOperations({ store });
 const identityOperations = createIdentityOperations({ store });
 const supabaseAuthUrl = String(process.env.CONSOLE_SUPABASE_AUTH_URL || 'http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999');
+const supabaseStorageUrl = String(process.env.CONSOLE_SUPABASE_STORAGE_URL || 'http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000');
+const supabaseServiceRoleKey = String(process.env.CONSOLE_SUPABASE_SERVICE_ROLE_KEY || '');
 const identitySessionBroker = createIdentitySessionBroker({
   store,
   authClient: createSupabaseAuthClient({
     baseUrl: supabaseAuthUrl,
-    serviceRoleKey: String(process.env.CONSOLE_SUPABASE_SERVICE_ROLE_KEY || ''),
+    serviceRoleKey: supabaseServiceRoleKey,
     timeoutMs: positiveInteger('CONSOLE_SUPABASE_AUTH_TIMEOUT_MS', 5000, 30000),
     maximumResponseBytes: positiveInteger('CONSOLE_SUPABASE_AUTH_MAX_RESPONSE_BYTES', 65536, 1024 * 1024),
+  }),
+  storageClient: createSupabaseStorageClient({
+    baseUrl: supabaseStorageUrl,
+    serviceRoleKey: supabaseServiceRoleKey,
+    timeoutMs: positiveInteger('CONSOLE_SUPABASE_STORAGE_TIMEOUT_MS', 5000, 30000),
   }),
   credentialCipher: createSessionCredentialCipher({
     encryptionKey: String(process.env.CONSOLE_SESSION_ENCRYPTION_KEY || ''),
@@ -61,7 +69,7 @@ const identitySessionBroker = createIdentitySessionBroker({
 const supabaseLiveProbes = createSupabaseLiveProbes({
   authUrl: supabaseAuthUrl,
   dataApiUrl: String(process.env.CONSOLE_SUPABASE_REST_URL || 'http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000'),
-  storageUrl: String(process.env.CONSOLE_SUPABASE_STORAGE_URL || 'http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000'),
+  storageUrl: supabaseStorageUrl,
   timeoutMs: positiveInteger('CONSOLE_SUPABASE_PROBE_TIMEOUT_MS', 1500, 10000),
   maximumResponseBytes: positiveInteger('CONSOLE_SUPABASE_PROBE_MAX_RESPONSE_BYTES', 131072, 1024 * 1024),
 });

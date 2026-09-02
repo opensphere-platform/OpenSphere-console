@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/profile-avatar-selection-request.schema.json",
+  "title": "Profile avatar selection request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source"],
+  "properties": {
+    "source": { "enum": ["initial", "linked"] },
+    "provider": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
+    "url": { "type": "string", "format": "uri", "maxLength": 2048 }
+  },
+  "oneOf": [
+    { "properties": { "source": { "const": "initial" } }, "not": { "anyOf": [{ "required": ["provider"] }, { "required": ["url"] }] } },
+    { "properties": { "source": { "const": "linked" } }, "required": ["provider", "url"] }
+  ]
+}

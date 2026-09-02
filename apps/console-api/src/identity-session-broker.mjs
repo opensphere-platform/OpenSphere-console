@@ -1,5 +1,6 @@
 import { createHash, randomBytes as systemRandomBytes } from 'node:crypto';
 import { createDatabaseSessionResolver, readBrowserSessionProof } from './session-resolver.mjs';
+import { validateAvatarSelection, validateAvatarUpload } from './profile-avatar.mjs';
 
 const PENDING_MFA_TTL_MS = 5 * 60 * 1000;
 const IDLE_TTL_MS = 12 * 60 * 60 * 1000;
@@ -142,6 +143,7 @@ function sessionEventLimit(value) {
 export function createIdentitySessionBroker({
   store,
   authClient,
+  storageClient,
   credentialCipher,
   publicOrigin,
   randomBytes = systemRandomBytes,
@@ -182,6 +184,100 @@ export function createIdentitySessionBroker({
   }
 
   const broker = {
+    async getProfileAvatar(request, { correlationId } = {}) {
+      if (!store?.prepareOwnedProfileAvatarAccess || !authClient?.readProfileAvatar) {
+        fail('AuthorityUnavailable', 'profile avatar authority is unavailable', 503);
+      }
+      await broker.resolveSession(request, { requireCsrf: false, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: false });
+      const context = await store.prepareOwnedProfileAvatarAccess({
+        tokenDigest: proof.tokenDigest, csrfTokenDigest: null, operation: 'read', correlationId,
+      });
+      const result = await authClient.readProfileAvatar({
+        accessToken: credentialCipher.decrypt(context.accessTokenCiphertext),
+        expectedSubjectId: context.subjectId,
+      });
+      if (result?.subjectId !== context.subjectId || !result?.projection?.current || !Array.isArray(result?.projection?.linkedAccounts)) {
+        fail('AuthorityUnavailable', 'profile avatar authority changed subject or projection', 503);
+      }
+      return result.projection;
+    },
+
+    async selectProfileAvatar(request, { body, correlationId }) {
+      if (!store?.prepareOwnedProfileAvatarAccess || !authClient?.readProfileAvatar || !authClient?.updateProfileAvatar) {
+        fail('AuthorityUnavailable', 'profile avatar authority is unavailable', 503);
+      }
+      await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const context = await store.prepareOwnedProfileAvatarAccess({
+        tokenDigest: proof.tokenDigest, csrfTokenDigest: proof.csrfTokenDigest, operation: 'select', correlationId,
+      });
+      const accessToken = credentialCipher.decrypt(context.accessTokenCiphertext);
+      const current = await authClient.readProfileAvatar({ accessToken, expectedSubjectId: context.subjectId });
+      const metadata = validateAvatarSelection(body, current?.projection?.linkedAccounts);
+      const updated = await authClient.updateProfileAvatar({ accessToken, expectedSubjectId: context.subjectId, metadata });
+      if (updated?.subjectId !== context.subjectId || !updated?.projection?.current) {
+        fail('AuthorityUnavailable', 'profile avatar authority changed subject or projection', 503);
+      }
+      if (current?.projection?.current?.source === 'upload' && storageClient?.deleteAvatar) {
+        await storageClient.deleteAvatar({ subjectId: context.subjectId }).catch(() => {});
+      }
+      return updated.projection;
+    },
+
+    async uploadProfileAvatar(request, { body, correlationId }) {
+      if (!store?.prepareOwnedProfileAvatarAccess || !authClient?.updateProfileAvatar || !storageClient?.upsertAvatar) {
+        fail('AuthorityUnavailable', 'profile avatar upload authority is unavailable', 503);
+      }
+      const upload = validateAvatarUpload(body);
+      await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const context = await store.prepareOwnedProfileAvatarAccess({
+        tokenDigest: proof.tokenDigest, csrfTokenDigest: proof.csrfTokenDigest, operation: 'upload', correlationId,
+      });
+      const metadata = Object.freeze({ source: 'upload', digest: upload.digest, contentType: upload.contentType });
+      await storageClient.upsertAvatar({ subjectId: context.subjectId, bytes: upload.bytes, contentType: upload.contentType });
+      try {
+        const updated = await authClient.updateProfileAvatar({
+          accessToken: credentialCipher.decrypt(context.accessTokenCiphertext),
+          expectedSubjectId: context.subjectId, metadata,
+        });
+        if (updated?.subjectId !== context.subjectId || updated?.projection?.current?.digest !== upload.digest) {
+          fail('AuthorityUnavailable', 'profile avatar authority changed subject or digest', 503);
+        }
+        return updated.projection;
+      } catch (error) {
+        await storageClient.deleteAvatar({ subjectId: context.subjectId }).catch(() => {});
+        throw error;
+      }
+    },
+
+    async readProfileAvatarContent(request, { digest: expectedDigest, correlationId }) {
+      if (!/^sha256:[a-f0-9]{64}$/u.test(String(expectedDigest || ''))
+          || !store?.prepareOwnedProfileAvatarAccess || !authClient?.readProfileAvatar || !storageClient?.readAvatar) {
+        if (!/^sha256:[a-f0-9]{64}$/u.test(String(expectedDigest || ''))) fail('ValidationFailed', 'profile avatar version is invalid', 400);
+        fail('AuthorityUnavailable', 'profile avatar content authority is unavailable', 503);
+      }
+      await broker.resolveSession(request, { requireCsrf: false, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: false });
+      const context = await store.prepareOwnedProfileAvatarAccess({
+        tokenDigest: proof.tokenDigest, csrfTokenDigest: null, operation: 'content', correlationId,
+      });
+      const current = await authClient.readProfileAvatar({
+        accessToken: credentialCipher.decrypt(context.accessTokenCiphertext), expectedSubjectId: context.subjectId,
+      });
+      if (current?.subjectId !== context.subjectId || current?.projection?.current?.source !== 'upload'
+          || current.projection.current.digest !== expectedDigest) {
+        fail('AvatarNotFound', 'profile avatar content version is unavailable', 404);
+      }
+      const object = await storageClient.readAvatar({ subjectId: context.subjectId });
+      const actualDigest = `sha256:${createHash('sha256').update(object.bytes).digest('hex')}`;
+      if (actualDigest !== expectedDigest || object.contentType !== current.projection.current.contentType) {
+        fail('AuthorityUnavailable', 'stored profile avatar does not match its authority metadata', 503);
+      }
+      return Object.freeze({ bytes: object.bytes, contentType: object.contentType, digest: actualDigest });
+    },
+
     async listSessionEvents(request, { limit } = {}) {
       if (!store?.listOwnedSessionEvents) {
         fail('AuthorityUnavailable', 'session event authority is unavailable', 503);

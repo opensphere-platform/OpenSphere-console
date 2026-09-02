@@ -1,3 +1,5 @@
+import { avatarProjection } from './profile-avatar.mjs';
+
 function fail(code, message, status) {
   throw Object.assign(new Error(message), { code, status });
 }
@@ -121,6 +123,41 @@ export function createSupabaseAuthClient({
   }
 
   return Object.freeze({
+    async readProfileAvatar({ accessToken, expectedSubjectId }) {
+      const claims = jwtClaims(accessToken, now());
+      if (String(claims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'profile avatar subject does not match', 401);
+      }
+      const user = await request('/user', { token: accessToken });
+      if (String(user?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth profile avatar subject changed', 503);
+      }
+      return Object.freeze({ subjectId: String(claims.sub), projection: avatarProjection(user) });
+    },
+
+    async updateProfileAvatar({ accessToken, expectedSubjectId, metadata }) {
+      const claims = jwtClaims(accessToken, now());
+      if (String(claims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'profile avatar subject does not match', 401);
+      }
+      const updated = await request('/user', {
+        method: 'PUT', token: accessToken,
+        body: { data: { console_avatar: metadata } },
+        rejectedCode: 'AvatarRejected', rejectedMessage: 'profile avatar update was rejected',
+        rejectedStatus: 400, rejectedStatuses: [400, 401, 422],
+      });
+      if (String(updated?.id || '') !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth profile avatar subject changed', 503);
+      }
+      const projection = avatarProjection(updated);
+      if (projection.current.source !== metadata.source
+          || (metadata.source === 'linked' && (projection.current.provider !== metadata.provider || projection.current.url !== metadata.url))
+          || (metadata.source === 'upload' && (projection.current.digest !== metadata.digest || projection.current.contentType !== metadata.contentType))) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not confirm the profile avatar', 503);
+      }
+      return Object.freeze({ subjectId: String(claims.sub), projection });
+    },
+
     async readSessionPreference({ accessToken, expectedSubjectId }) {
       const claims = jwtClaims(accessToken, now());
       if (String(claims.sub) !== String(expectedSubjectId || '')) {

@@ -63,6 +63,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0012_browser_session_preference.verify.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0013_owned_browser_session_events.verify.sql
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0014_owned_password_recovery_link.verify.sql
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0015_owned_profile_avatar.verify.sql
       - name: Verify Console API through PostgreSQL
         env:
           PGPASSWORD: console-test
