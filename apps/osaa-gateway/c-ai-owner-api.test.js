@@ -102,10 +102,10 @@ function apiWith(overrides = {}) {
       },
     },
     c_ai_approve_engineering_source: remediationRow({ stage: 'approved' }),
-    c_ai_record_engineering_browser_verification: {
-      passed: true, evidenceDigest: 'sha256:' + '5'.repeat(64),
+    c_ai_record_engineering_browser_verification: (params) => ({
+      passed: params[9], evidenceDigest: params[10],
       observedAt: '2026-09-02T00:05:00.000Z',
-    },
+    }),
     ...(overrides.values || {}),
   };
   const defaultK8s = async (method, resourcePath, body) => {
@@ -113,7 +113,7 @@ function apiWith(overrides = {}) {
     eventOrder.push(method === 'PATCH' ? 'k8s:patch' : 'k8s:' + method.toLowerCase());
     if (method === 'GET' && resourcePath.includes('/deployments/opensphere-osdst')) {
       return { ok: true, status: 200, json: {
-        metadata: { generation: 4, annotations: {} },
+        metadata: { name: 'opensphere-osdst', namespace: 'opensphere-console', generation: 4, resourceVersion: '100', annotations: {} },
         spec: { replicas: 2, template: {
           metadata: { annotations: { 'opensphere.io/osdst-mode': 'shadow' } },
           spec: { containers: [{ name: 'osdst', image: 'ghcr.io/opensphere-platform/opensphere-osdst@sha256:' + '6'.repeat(64) }] },
@@ -123,7 +123,7 @@ function apiWith(overrides = {}) {
     }
     if (method === 'PATCH' && resourcePath.includes('/deployments/opensphere-osdst')) {
       return { ok: true, status: 200, json: {
-        metadata: { generation: 5, annotations: body.metadata.annotations },
+        metadata: { name: 'opensphere-osdst', namespace: 'opensphere-console', generation: 5, resourceVersion: '101', annotations: body.metadata.annotations },
         spec: { replicas: 2, template: { metadata: { annotations: body.spec.template.metadata.annotations } } },
         status: { observedGeneration: 5, updatedReplicas: 2, readyReplicas: 2 },
       } };
@@ -190,6 +190,10 @@ test('remediation reads omit patch bytes and retain exact source/build evidence'
   const status = await instance.remediationStatus();
   assert.equal(status.workerReady, true);
   assert.equal(status.capabilities.repositoryWrite, true);
+  const invalidStatus = apiWith({ values: { c_ai_engineering_remediation_status: null } });
+  await assert.rejects(invalidStatus.instance.remediationStatus(), {
+    code: 503, errorCode: 'c_ai_owner_projection_invalid',
+  });
   const list = await instance.listRemediations('5');
   assert.equal(list.remediations[0].remediationRequestId, REMEDIATION_ID);
   assert.equal(Object.hasOwn(list.remediations[0], 'patch_text'), false);
@@ -270,6 +274,7 @@ test('Dialogue State change audits intent before one exact deployment patch', as
   const patch = k8sCalls.find((call) => call.method === 'PATCH');
   assert.equal(patch.path,
     '/apis/apps/v1/namespaces/opensphere-console/deployments/opensphere-osdst');
+  assert.equal(patch.body.metadata.resourceVersion, '100');
   assert.deepEqual(patch.body.spec.template.metadata.annotations, {
     'opensphere.io/osdst-mode': 'read-enforce',
   });
@@ -286,6 +291,7 @@ test('Dialogue State change audits intent before one exact deployment patch', as
 
 function llmSecret(overrides = {}) {
   return {
+    type: 'Opaque',
     metadata: {
       name: 'osaa-llm-primary', namespace: 'opensphere-osaa-credentials',
       resourceVersion: '90210',

@@ -51,6 +51,14 @@ function requireUuid(value, label) {
   return normalized;
 }
 
+function requireResourceVersion(value, label) {
+  const normalized = String(value || '');
+  if (!normalized || normalized.length > 128 || /[\u0000-\u001f\u007f]/u.test(normalized)) {
+    fail(409, `${label} has no stable Kubernetes resource version`);
+  }
+  return normalized;
+}
+
 function requireAal2Actor(actor, purpose) {
   const subject = String(actor?.subject || actor?.sub || '');
   const sessionId = String(actor?.browserSessionId || '');
@@ -177,6 +185,7 @@ function dialogueProjection(deployment) {
       ready: observedGeneration >= generation && updatedReplicas === desiredReplicas && readyReplicas === desiredReplicas,
       generation, observedGeneration, desiredReplicas, updatedReplicas, readyReplicas,
     },
+    controlRevision: String(deployment?.metadata?.resourceVersion || ''),
     updatedAt: String(deployment?.metadata?.annotations?.['opensphere.io/osdst-updated-at'] || ''),
     updatedBy: String(deployment?.metadata?.annotations?.['opensphere.io/osdst-updated-by'] || ''),
   };
@@ -384,8 +393,9 @@ function createCAiOwnerApi({
     requireAal2Actor(actor, 'Dialogue State change');
     const current = await getDialogueState();
     if (current.mode === mode && current.rollout.ready) return { changed: false, ...current };
+    const resourceVersion = requireResourceVersion(current.controlRevision, 'OSDST Deployment');
     const requestId = randomUUID();
-    const payloadDigest = digest({ from: current.mode, to: mode });
+    const payloadDigest = digest({ from: current.mode, to: mode, resourceVersion });
     await auditMutation(actor, {
       action: 'osaa-dialogue-state-mode-change', target: dialogueDeployment, result: 'attempt', reason,
       requestId, phase: 'intent', targetType: 'osaa-dialogue-state-policy', payloadDigest,
@@ -393,7 +403,7 @@ function createCAiOwnerApi({
     const updatedAt = new Date().toISOString();
     const updatedBy = String(actor?.username || actor?.subject || '').slice(0, 200);
     const patched = await k8s('PATCH', deploymentPath, {
-      metadata: { annotations: {
+      metadata: { resourceVersion, annotations: {
         'opensphere.io/osdst-updated-at': updatedAt,
         'opensphere.io/osdst-updated-by': updatedBy,
         'opensphere.io/osdst-change-reason': reason,
@@ -408,11 +418,19 @@ function createCAiOwnerApi({
       }).catch(() => undefined);
       fail(502, `OSDST mode apply failed (Kubernetes HTTP ${patched.status})`);
     }
+    const applied = dialogueProjection(patched.json);
+    if (applied.mode !== mode) {
+      await auditMutation(actor, {
+        action: 'osaa-dialogue-state-mode-change', target: dialogueDeployment, result: 'failed', reason,
+        requestId, phase: 'failed', targetType: 'osaa-dialogue-state-policy', payloadDigest,
+      }).catch(() => undefined);
+      fail(502, 'OSDST mode apply response did not prove the requested policy');
+    }
     await auditMutation(actor, {
       action: 'osaa-dialogue-state-mode-change', target: dialogueDeployment, result: 'ok', reason,
       requestId, phase: 'applied', targetType: 'osaa-dialogue-state-policy', payloadDigest,
     });
-    return { changed: true, requestId, ...dialogueProjection(patched.json) };
+    return { changed: true, requestId, ...applied };
   }
 
   async function listOperations(limit) {
@@ -425,10 +443,13 @@ function createCAiOwnerApi({
     const id = requireUuid(operationId, 'operationId');
     const value = await rpc('c_ai_get_module_operation', [id]);
     if (!value?.operation) fail(404, 'operation not found');
+    if (!Array.isArray(value.steps) || !Array.isArray(value.approvals)) {
+      fail(503, 'C_AI operation detail projection is invalid', 'c_ai_owner_projection_invalid');
+    }
     return {
       ...publicOperation(value.operation),
-      steps: Array.isArray(value.steps) ? value.steps.map(publicStep) : [],
-      approvals: Array.isArray(value.approvals) ? value.approvals.map(publicApproval) : [],
+      steps: value.steps.map(publicStep),
+      approvals: value.approvals.map(publicApproval),
     };
   }
 
@@ -460,7 +481,10 @@ function createCAiOwnerApi({
 
   async function remediationStatus() {
     const store = await rpc('c_ai_engineering_remediation_status', [repairRepository]);
-    const workerReady = store?.workerReady === true;
+    if (!store || typeof store !== 'object' || typeof store.workerReady !== 'boolean') {
+      fail(503, 'C_AI remediation status projection is invalid', 'c_ai_owner_projection_invalid');
+    }
+    const workerReady = store.workerReady;
     const ready = remediationExecutionEnabled && workerReady;
     return {
       schema: 'osaa-engineering-remediation-status.opensphere.io/v1alpha1',
@@ -499,7 +523,11 @@ function createCAiOwnerApi({
       rpc('c_ai_get_engineering_remediation', [id]), remediationStatus(),
     ]);
     if (!value?.request) fail(404, 'Engineering Remediation request not found');
-    const request = { ...value.request, changed_paths: value.changedPaths || [] };
+    if (!Array.isArray(value.changedPaths) || (value.latestBuild !== null && value.latestBuild !== undefined
+        && typeof value.latestBuild !== 'object')) {
+      fail(503, 'C_AI remediation detail projection is invalid', 'c_ai_owner_projection_invalid');
+    }
+    const request = { ...value.request, changed_paths: value.changedPaths };
     const build = value.latestBuild || null;
     const requiredConfirmation = field(request, 'stage') === 'proposed' || field(request, 'stage') === 'awaiting_approval'
       ? `approve R2D2 source patch ${id} ${field(request, 'approval_binding_digest', 'approvalBindingDigest')}` : null;
@@ -544,7 +572,9 @@ function createCAiOwnerApi({
       id, coordinates.subject, coordinates.sessionId, coordinates.authzRevision,
       bindingDigest, approvalDigest, expiresAt,
     ]);
-    if (!persisted) fail(503, 'Engineering Remediation approval was not durably persisted', 'c_ai_owner_persistence_failed');
+    if (!persisted || field(persisted, 'remediation_request_id', 'remediationRequestId') !== id) {
+      fail(503, 'Engineering Remediation approval was not durably persisted', 'c_ai_owner_persistence_failed');
+    }
     const status = await remediationStatus();
     return publicRemediation(persisted, status.executionEnabled, status.workerReady);
   }
@@ -589,11 +619,14 @@ function createCAiOwnerApi({
       id, subject, profile, route, revision, marker, body.markerPresent,
       consoleErrors, networkFailures, passed, evidenceDigest,
     ]);
-    if (!persisted) fail(503, 'browser verification was not durably persisted', 'c_ai_owner_persistence_failed');
+    const persistedDigest = field(persisted, 'evidence_digest', 'evidenceDigest');
+    if (!persisted || persistedDigest !== evidenceDigest || persisted.passed !== passed) {
+      fail(503, 'browser verification was not durably persisted', 'c_ai_owner_persistence_failed');
+    }
     return {
       accepted: true,
-      passed: persisted.passed === true,
-      evidenceDigest: persisted.evidenceDigest || evidenceDigest,
+      passed,
+      evidenceDigest: persistedDigest,
       observedAt: persisted.observedAt || null,
     };
   }
@@ -609,14 +642,16 @@ function createCAiOwnerApi({
     const secret = response.json;
     const meta = keyMeta(secret);
     if (secret?.metadata?.labels?.['opensphere.io/osaa-llm-key'] !== 'true'
-        || secret?.metadata?.name !== `osaa-llm-${id}` || meta.id !== id) {
+        || secret?.metadata?.name !== `osaa-llm-${id}`
+        || secret?.metadata?.namespace !== keyNamespace || secret?.type !== 'Opaque' || meta.id !== id) {
       fail(409, 'credential Secret does not match the exact C_AI key binding');
     }
-    const resourceVersion = String(secret?.metadata?.resourceVersion || '');
-    if (!resourceVersion || resourceVersion.length > 128 || /[\u0000-\u001f\u007f]/u.test(resourceVersion)) {
-      fail(409, 'credential Secret has no stable Kubernetes resource version');
-    }
+    const resourceVersion = requireResourceVersion(secret?.metadata?.resourceVersion, 'credential Secret');
     const apiKey = Buffer.from(String(secret?.data?.api_key || ''), 'base64').toString('utf8');
+    if (Buffer.byteLength(apiKey, 'utf8') < 8 || Buffer.byteLength(apiKey, 'utf8') > 16384
+        || /[\u0000\r\n]/u.test(apiKey)) {
+      fail(409, 'credential Secret contains invalid provider key material');
+    }
     const reason = 'Operator requested provider credential validation';
     const requestId = randomUUID();
     const payloadDigest = digest({
