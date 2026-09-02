@@ -1,3 +1,5 @@
+import { exactExtensionPackageScope } from './extension-package-scope.mjs';
+
 const EXTENSION_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/;
 
@@ -44,6 +46,7 @@ function packageCoordinates(candidate) {
 }
 
 function assertCurrentPackage(pkg, candidate) {
+  const packageScope = exactExtensionPackageScope(pkg);
   const coordinates = packageCoordinates(candidate);
   const actual = {
     name: pkg?.metadata?.name,
@@ -70,7 +73,7 @@ function assertCurrentPackage(pkg, candidate) {
       || !['plugin', 'subShell'].includes(actual.kind)) {
     throw fault('UIPluginPackage changed after Registry resolution', 'StaleAuthorityRevision');
   }
-  return actual;
+  return Object.freeze({ ...actual, ...packageScope });
 }
 
 function readyRegistration(registration, candidate, expectedUid) {
@@ -302,14 +305,14 @@ export function createKubernetesRegistrationWriter({
         if (error?.code === 'ResourceNotFound') throw fault('UIPluginPackage is unavailable for removal policy evaluation', 'AuthorityUnavailable', true);
         throw error;
       }
+      const { scope: packageScope, core } = exactExtensionPackageScope(pkg);
       const packageResourceVersion = String(pkg?.metadata?.resourceVersion || '');
       const packageGeneration = Number(pkg?.metadata?.generation);
-      const packageScope = String(pkg?.metadata?.labels?.['opensphere.io/scope'] || '');
       if (pkg?.metadata?.name !== id || !RESOURCE_VERSION.test(packageResourceVersion)
           || !Number.isSafeInteger(packageGeneration) || packageGeneration < 1) {
         throw fault('UIPluginPackage removal policy evidence is incomplete', 'AuthorityContractViolation');
       }
-      if (packageScope.startsWith('main-shell')) {
+      if (core) {
         throw fault('shell-pinned core Extension cannot be removed', 'OwnerRejected', false, true);
       }
 

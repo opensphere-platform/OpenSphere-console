@@ -1,4 +1,5 @@
 import { extensionStaticContractSha256 } from './extension-release.mjs';
+import { exactExtensionPackageScope } from './extension-package-scope.mjs';
 
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/u;
@@ -76,7 +77,6 @@ function metadata(resource, { apiVersion, kind, namespace = null } = {}) {
     uid,
     resourceVersion,
     generation: Number.isSafeInteger(Number(source.generation)) ? Number(source.generation) : null,
-    scope: safeText(source.labels?.['opensphere.io/scope'], 128),
   });
 }
 
@@ -85,7 +85,7 @@ function packageIdentity(pkg, expectedName, namespace) {
   if ((expectedName && current.name !== expectedName) || current.generation == null || current.generation < 1) {
     throw fault('UIPluginPackage identity changed', 'AuthorityContractViolation');
   }
-  return current;
+  return Object.freeze({ ...current, ...exactExtensionPackageScope(pkg) });
 }
 function boundedCopy(value, maximumBytes, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -175,8 +175,8 @@ function projectPackage(pkg, registration, preference, namespace) {
     ...(spec.hostApiVersion ? { hostApiVersion: safeText(spec.hostApiVersion, 64) } : {}),
     hostCompat: spec.hostCompat,
     contributions: boundedCopy(spec.contributions, 32768, 'Extension contribution'),
-    scope: current.scope || undefined,
-    core: current.scope.startsWith('main-shell'),
+    scope: current.scope,
+    core: current.core,
     requestedChannel: safeText(spec.resolution?.requestedChannel, 32),
     installedDigest: safeText(registration?.status?.currentDigest, 80),
     currentChannelDigest: safeText(registration?.status?.currentChannelDigest, 80),
@@ -346,7 +346,7 @@ export function createKubernetesExtensionManagementAuthority({
       const packageMetadata = packageIdentity(pkg, id, namespace);
       const current = registrationIdentity(registration, id, namespace);
       if (packageMetadata.name !== id) throw fault('UIPluginPackage identity changed', 'AuthorityContractViolation');
-      if (packageMetadata.scope.startsWith('main-shell') && ['Disabled', 'Uninstalled'].includes(desiredState)) {
+      if (packageMetadata.core && ['Disabled', 'Uninstalled'].includes(desiredState)) {
         throw fault('shell-pinned core Extension cannot be disabled or uninstalled', 'CoreExtensionImmutable', 409);
       }
       const patched = await request('PATCH', `${registrations}/${id}`, {

@@ -282,7 +282,7 @@ test('Binding mutation uses a compare-and-set resourceVersion and verifies the r
 
 test('management rejects duplicate identities, truncation, oversized preferences, and control characters', async () => {
   const duplicatePackage = pkg({
-    metadata: { name: 'metrics', namespace: 'opensphere-console', uid: 'duplicate-package-uid', resourceVersion: '12', generation: 2 },
+    metadata: { ...pkg().metadata, uid: 'duplicate-package-uid', resourceVersion: '12' },
   });
   const duplicate = authority(async (url) => pathOf(url).endsWith('/uipluginpackages')
     ? json({ items: [pkg(), duplicatePackage] }) : json({ items: [registration()] }));
@@ -332,4 +332,23 @@ test('management mutations reject UID replacement evidence', async () => {
   })));
   await assert.rejects(bindingReplacement.setBindingEnabled({ name: 'workforce-cli', enabled: false }),
     (error) => error.code === 'AuthorityContractViolation' && error.sideEffect === 'present');
+});
+
+
+test('management rejects missing, unknown, or malformed Package scope before mutation', async () => {
+  for (const scope of [undefined, 'unknown-scope', 'workspace-extension\u0000']) {
+    const calls = [];
+    const labels = scope === undefined ? {} : { 'opensphere.io/scope': scope };
+    const malformed = pkg({ metadata: { ...pkg().metadata, labels } });
+    const target = authority(async (url, options) => {
+      calls.push({ method: options.method, path: pathOf(url) });
+      if (pathOf(url).endsWith('/uipluginpackages/metrics')) return json(malformed);
+      if (pathOf(url).endsWith('/uipluginregistrations/metrics')) return json(registration());
+      return json({}, 404);
+    });
+    await assert.rejects(target.setDesiredState({
+      id: 'metrics', desiredState: 'Uninstalled', actorRef: 'actor', reason: 'remove obsolete module',
+    }), { code: 'PackageScopeInvalid', status: 409, sideEffect: 'none' });
+    assert.equal(calls.filter((call) => call.method !== 'GET').length, 0);
+  }
 });

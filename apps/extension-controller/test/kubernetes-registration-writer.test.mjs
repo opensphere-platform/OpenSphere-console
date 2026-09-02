@@ -92,7 +92,7 @@ test('existing compatible Registration is an idempotent success without mutation
 test('Package drift and conflicting Registration fail closed', async () => {
   const drifted = createKubernetesRegistrationWriter({
     baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
-    fetchImpl: async () => json(200, packageObject({ metadata: { name: 'workspace', resourceVersion: '18', generation: 2 } })),
+    fetchImpl: async () => json(200, packageObject({ metadata: { ...packageObject().metadata, resourceVersion: '18' } })),
   });
   await assert.rejects(drifted.applyInstall({ candidate, operationId: 'op', requestedBy: 'actor', reason: 'reason' }), { code: 'StaleAuthorityRevision' });
 
@@ -132,7 +132,7 @@ test('install observation accepts only generation-current exact release readines
 test('install observation rejects Package replacement and Registration UID substitution', async () => {
   const packageDrift = createKubernetesRegistrationWriter({
     baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
-    fetchImpl: async () => json(200, packageObject({ metadata: { name: 'workspace', resourceVersion: '20', generation: 3 } })),
+    fetchImpl: async () => json(200, packageObject({ metadata: { ...packageObject().metadata, resourceVersion: '20', generation: 3 } })),
   });
   await assert.rejects(packageDrift.observeInstall({ candidate, registrationUid: 'registration-uid' }), { code: 'StaleAuthorityRevision' });
 
@@ -230,4 +230,36 @@ test('Kubernetes writer rejects remote cleartext and malformed credentials', () 
   assert.throws(() => createKubernetesRegistrationWriter({
     baseUrl: 'https://kubernetes.test', token: 'token with whitespace value',
   }), /bearer token/);
+});
+
+
+test('writer rejects missing, unknown, or malformed Package scope before Registration access', async () => {
+  const operations = [
+    (writer) => writer.applyInstall({
+      candidate, operationId: 'operation', requestedBy: 'actor', reason: 'install workspace extension',
+    }),
+    (writer) => writer.applyRemove({
+      descriptorId: 'extension.workspace', operationId: 'operation', requestedBy: 'actor',
+      reason: 'remove retired workspace extension',
+    }),
+  ];
+  for (const scope of [undefined, 'unknown-scope', 'workspace-extension\u0000']) {
+    for (const operation of operations) {
+      const calls = [];
+      const labels = scope === undefined ? {} : { 'opensphere.io/scope': scope };
+      const writer = createKubernetesRegistrationWriter({
+        baseUrl: 'https://kubernetes.test', token: 'service-account-token-value',
+        fetchImpl: async (url, options) => {
+          calls.push({ url, method: options.method });
+          return json(200, packageObject({
+            metadata: { name: 'workspace', resourceVersion: '17', generation: 2, labels },
+          }));
+        },
+      });
+      await assert.rejects(operation(writer), {
+        code: 'PackageScopeInvalid', terminal: true, sideEffect: 'none',
+      });
+      assert.deepEqual(calls.map((call) => call.method), ['GET']);
+    }
+  }
 });

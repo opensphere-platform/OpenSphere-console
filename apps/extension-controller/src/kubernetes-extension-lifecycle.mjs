@@ -314,18 +314,20 @@ export function createKubernetesExtensionLifecycle({
 
   async function markFailure(registration, error) {
     const current = exactRegistration(registration, namespace);
-    const terminal = TERMINAL_VERIFICATION.has(String(error?.code || ''));
+    const reason = String(error?.code || 'AuthorityUnavailable');
+    const terminal = TERMINAL_VERIFICATION.has(reason);
+    const permissions = reason === 'UnsupportedPermissionProfile' ? 'Failed' : 'Pending';
     await patchStatus(registration, {
       observedGeneration: current.generation,
       phase: terminal ? 'Failed' : 'DependencyPending',
       retryable: !terminal,
-      reason: String(error?.code || 'AuthorityUnavailable').slice(0, 128),
+      reason: reason.slice(0, 128),
       workload: { phase: 'NotReady' },
-      verification: { manifest: 'Failed', signature: 'Failed', entryDigest: 'Failed', permissions: 'Approved' },
+      verification: { manifest: 'Failed', signature: 'Failed', entryDigest: 'Failed', permissions },
       serving: { phase: 'Unavailable' },
       revalidation: { phase: 'Failed' },
     });
-    return Object.freeze({ state: terminal ? 'Failed' : 'Pending', extensionId: current.name, reason: String(error?.code || 'AuthorityUnavailable') });
+    return Object.freeze({ state: terminal ? 'Failed' : 'Pending', extensionId: current.name, reason });
   }
 
   let lastRegistrationName = '';

@@ -630,3 +630,44 @@ test('changed workload PATCH requires a new RV and Uninstalled stays pending unt
   });
   assert.equal(registrationDelete, 0);
 });
+
+
+test('permission verification evidence never reports approval for pre-approval failures', async () => {
+  const scenarios = [
+    {
+      change: (fixture) => { fixture.pkg.spec.permissionProfile = 'namespace-write'; },
+      reason: 'UnsupportedPermissionProfile',
+      permissionEvidence: 'Failed',
+    },
+    {
+      change: (fixture) => { fixture.pkg.spec.image.digest = 'latest'; },
+      reason: 'PackageContractViolation',
+      permissionEvidence: 'Pending',
+    },
+  ];
+  for (const scenario of scenarios) {
+    const fixture = makeReleaseFixture();
+    scenario.change(fixture);
+    let observedStatus;
+    const lifecycle = createKubernetesExtensionLifecycle({
+      baseUrl: origin,
+      token: 'service-account-token-value',
+      fetchImpl: async (url, options = {}) => {
+        const path = new URL(url).pathname;
+        const method = options.method || 'GET';
+        if (path === registrations && method === 'GET') return json(200, { items: [registration()] });
+        if (path === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
+        if (path === registrations + '/workspace/status' && method === 'PATCH') {
+          observedStatus = JSON.parse(options.body).status;
+          return json(200, statusPatched(registration(), observedStatus));
+        }
+        throw new Error('unexpected permission evidence call ' + method + ' ' + path);
+      },
+    });
+    const result = await lifecycle.reconcileOnce();
+    assert.equal(result.state, 'Failed');
+    assert.equal(result.reason, scenario.reason);
+    assert.equal(observedStatus.reason, scenario.reason);
+    assert.equal(observedStatus.verification.permissions, scenario.permissionEvidence);
+  }
+});
