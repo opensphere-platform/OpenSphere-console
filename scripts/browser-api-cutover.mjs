@@ -64,9 +64,12 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
   const contractPath = resolve(root, 'packages', 'contracts', 'browser-api-cutover.json');
   const contract = JSON.parse(await readFile(contractPath, 'utf8'));
   assert.equal(contract.schemaVersion, '1.0');
-  assert.equal(contract.status, 'target-migration');
+  assert(['target-migration', 'release-ready'].includes(contract.status), 'invalid browser API cutover status');
   assert.equal(contract.cutoverPolicy, 'atomic-authenticated-browser-session-authority');
-  assert.equal(contract.currentSessionAuthority, 'legacy-browser-session-broker');
+  assert(
+    ['legacy-browser-session-broker', contract.targetSessionAuthority].includes(contract.currentSessionAuthority),
+    'invalid current browser session authority',
+  );
   assert.equal(contract.targetSessionAuthority, 'console_identity.browser_session');
   assert(Array.isArray(contract.targetSessionCapabilities) && contract.targetSessionCapabilities.length > 0);
   assert.equal(new Set(contract.targetSessionCapabilities.map(({ id }) => id)).size, contract.targetSessionCapabilities.length);
@@ -100,6 +103,10 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
     assert(targetSessionReady, 'authenticated browser families require the complete target session authority');
   }
   const authenticatedCutoverReady = targetSessionReady && authenticatedFamiliesTargetRouted;
+  if (contract.status === 'release-ready') {
+    assert(authenticatedCutoverReady, 'release-ready browser API contract requires atomic authenticated cutover');
+    assert.equal(contract.currentSessionAuthority, contract.targetSessionAuthority, 'release-ready browser API contract must name the target session authority');
+  }
   if (!authenticatedCutoverReady) {
     assert(!nginxSource.includes(targetConsoleApi), 'partial authenticated Web cutover is forbidden before target session authority completion');
   } else {
@@ -111,6 +118,8 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
   const familyCounts = Object.fromEntries(contract.families.map(({ id }) => [id, inventory.records.filter((record) => record.familyId === id).length]));
   return Object.freeze({
     status: 'passed',
+    contractStatus: contract.status,
+    currentSessionAuthority: contract.currentSessionAuthority,
     routePatternCount: inventory.routePatternCount,
     setDigest: inventory.setDigest,
     familyCount: contract.families.length,

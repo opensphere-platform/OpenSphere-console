@@ -113,6 +113,9 @@ jobs:
           - image: opensphere-console-api
             context: OpenSphere-console
             file: OpenSphere-console/apps/console-api/Dockerfile
+          - image: opensphere-extension-controller
+            context: OpenSphere-console
+            file: OpenSphere-console/apps/extension-controller/Dockerfile
           - image: opensphere-console-dupa-controller
             context: OpenSphere-console/backend/dupa-control
             file: OpenSphere-console/backend/dupa-control/Dockerfile
@@ -283,6 +286,7 @@ jobs:
           images=(
             opensphere-console
             opensphere-console-api
+            opensphere-extension-controller
             opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway
@@ -300,6 +304,7 @@ jobs:
           component_keys=(
             console
             consoleApi
+            extensionController
             dupaController
             registry
             osaaGateway
@@ -372,7 +377,7 @@ jobs:
             > "$RUNNER_TEMP/opensphere-release-bom.json"
 
           jq -e --arg revision "$GITHUB_SHA" \
-            '.sourceRevision == $revision and (.components | length) == 15
+            '.sourceRevision == $revision and (.components | length) == 16
               and (.artifacts.supabaseMigrationManifest.sha256 | test("^sha256:[0-9a-f]{64}$"))' \
             "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
           echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
@@ -406,6 +411,7 @@ jobs:
           }
           images=(
             opensphere-console-api
+            opensphere-extension-controller
             opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway
@@ -422,6 +428,7 @@ jobs:
           )
           component_keys=(
             consoleApi
+            extensionController
             dupaController
             registry
             osaaGateway
@@ -451,7 +458,7 @@ jobs:
           # Downloadable CLI artifacts have an independent lifecycle so a UI
           # change never recompiles or rolls them. They remain exact-digest,
           # provenance/SBOM-attested candidate output, but are intentionally outside
-          # the 15-component Console runtime BOM.
+          # the 16-component Console runtime BOM.
           cli_repository="ghcr.io/opensphere-platform/opensphere-os-cli"
           cli_source="$cli_repository:sha-${GITHUB_SHA:0:7}"
           cli_digest="$(crane digest "$cli_source")"

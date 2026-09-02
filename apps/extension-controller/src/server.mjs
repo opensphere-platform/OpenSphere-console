@@ -68,6 +68,11 @@ async function cycle() {
 }
 
 const healthServer = createServer(async (request, response) => {
+  if (request.url === '/livez') {
+    response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    response.end(JSON.stringify({ state: 'Alive', workerId }));
+    return;
+  }
   if (request.url !== '/healthz') {
     response.writeHead(404).end();
     return;

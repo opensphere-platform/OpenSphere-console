@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import yaml from 'js-yaml';
-import { verifyConsoleApiAuthority, verifyConsoleApiDeployment, verifyContracts } from './verify-console-contracts.mjs';
+import { verifyConsoleApiAuthority, verifyConsoleApiDeployment, verifyContracts, verifyExtensionControllerDeployment, verifyReleaseReadiness } from './verify-console-contracts.mjs';
 
 test('foundational Console contracts are internally complete and self-contained', async () => {
   const result = await verifyContracts();
@@ -34,6 +34,28 @@ test('official publication remains blocked until every target component boundary
     verifyContracts(process.cwd(), { requireReleaseReady: true }),
     /Official publication is blocked while component boundaries remain target-migration/,
   );
+});
+
+test('a release-ready label cannot bypass incomplete API and browser cutover evidence', async () => {
+  const boundary = {
+    status: 'release-ready',
+    components: [{ id: 'C_API', path: 'apps/console-api', legacySources: [] }],
+  };
+  await assert.rejects(
+    verifyReleaseReadiness({
+      root: process.cwd(),
+      boundary,
+      denominator: { status: 'foundational-slice', targetStatus: 'complete', remaining: { legacyProductionApiLiterals: 277 } },
+      browserApiCutover: { contractStatus: 'target-migration', authenticatedCutoverReady: false },
+    }),
+    /complete API contract denominator/,
+  );
+});
+
+test('Extension Controller deployment keeps its exact image, database secret, probes, and scoped RBAC', async () => {
+  const documents = [];
+  yaml.loadAll(await readFile(new URL('../apps/extension-controller/deploy.yaml', import.meta.url), 'utf8'), (document) => documents.push(document));
+  assert.doesNotThrow(() => verifyExtensionControllerDeployment({ documents }));
 });
 
 test('Console API authority verification rejects missing grants and direct table mutation', async () => {

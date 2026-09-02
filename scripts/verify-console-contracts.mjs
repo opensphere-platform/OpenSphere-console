@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import yaml from 'js-yaml';
@@ -6,6 +6,21 @@ import { verifyBrowserApiCutover } from './browser-api-cutover.mjs';
 
 const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
+
+export async function verifyReleaseReadiness({ root, boundary, denominator, browserApiCutover }) {
+  assert(boundary.status === 'release-ready', 'Official publication is blocked while component boundaries remain target-migration');
+  assert(denominator.status === denominator.targetStatus, 'Official publication requires the complete API contract denominator');
+  assert(denominator.remaining?.legacyProductionApiLiterals === 0, 'Official publication requires disposition of every legacy production API literal');
+  assert(browserApiCutover.contractStatus === 'release-ready', 'Official publication requires a release-ready browser API cutover contract');
+  assert(browserApiCutover.authenticatedCutoverReady, 'Official publication requires atomic authenticated browser API cutover');
+  for (const component of boundary.components) {
+    assert(Array.isArray(component.legacySources) && component.legacySources.length === 0, `${component.id} still depends on legacy source paths`);
+    const targetPath = resolve(root, component.path);
+    assert(targetPath.startsWith(resolve(root)), `${component.id} target path escapes the repository`);
+    const target = await stat(targetPath).catch(() => null);
+    assert(target?.isDirectory(), `${component.id} target path is absent: ${component.path}`);
+  }
+}
 const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_audit.list_events',
   'console_extension.get_registry_connection',
@@ -174,6 +189,34 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
     assert(boundary.includes('opensphere-console-backend.opensphere-console.svc.cluster.local'), `Legacy ${name} exception lost its explicit upstream`);
     assert(!boundary.includes('opensphere-console-api.opensphere-console.svc.cluster.local'), `Legacy ${name} exception leaked into C_API`);
   }
+}
+
+export function verifyExtensionControllerDeployment({ documents }) {
+  const find = (kind, name) => documents.find((document) => document?.kind === kind && document.metadata?.name === name);
+  const serviceAccount = find('ServiceAccount', 'opensphere-extension-controller');
+  const role = find('Role', 'opensphere-extension-controller');
+  const roleBinding = find('RoleBinding', 'opensphere-extension-controller');
+  const deployment = find('Deployment', 'opensphere-extension-controller');
+  assert(serviceAccount && role && roleBinding && deployment, 'C_EXT deployment contract is incomplete');
+  assert(serviceAccount.automountServiceAccountToken === true, 'C_EXT requires its scoped Kubernetes service-account token');
+  assert(roleBinding.roleRef?.kind === 'Role' && roleBinding.roleRef?.name === 'opensphere-extension-controller', 'C_EXT RoleBinding has the wrong role');
+  assert(roleBinding.subjects?.length === 1 && roleBinding.subjects[0]?.name === 'opensphere-extension-controller', 'C_EXT RoleBinding has an unexpected subject');
+  const permissions = Object.fromEntries((role.rules || []).map((rule) => [rule.resources?.join(','), [...(rule.verbs || [])].sort()]));
+  assert(JSON.stringify(permissions.uipluginpackages) === JSON.stringify(['get']), 'C_EXT Package RBAC exceeds its read contract');
+  assert(JSON.stringify(permissions.uipluginregistrations) === JSON.stringify(['create', 'get', 'patch']), 'C_EXT Registration RBAC differs from its apply contract');
+  const pod = deployment.spec?.template?.spec;
+  const container = pod?.containers?.find(({ name }) => name === 'controller');
+  assert(pod?.serviceAccountName === 'opensphere-extension-controller' && pod?.automountServiceAccountToken === true, 'C_EXT pod lost its scoped Kubernetes identity');
+  assert(container?.image === '__OPENSPHERE_EXTENSION_CONTROLLER_IMAGE__', 'C_EXT image must remain an exact-digest installer render input');
+  assert(container?.securityContext?.allowPrivilegeEscalation === false, 'C_EXT must disable privilege escalation');
+  assert(container?.securityContext?.readOnlyRootFilesystem === true, 'C_EXT must use a read-only root filesystem');
+  assert(JSON.stringify(container?.securityContext?.capabilities?.drop) === JSON.stringify(['ALL']), 'C_EXT must drop all Linux capabilities');
+  assert(container?.readinessProbe?.httpGet?.path === '/healthz', 'C_EXT readiness must verify PostgreSQL authority');
+  assert(container?.livenessProbe?.httpGet?.path === '/livez', 'C_EXT liveness must remain independent of PostgreSQL availability');
+  const databaseEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_EXTENSION_DATABASE_URL');
+  assert(databaseEnv?.value === undefined, 'C_EXT database credential must not be a literal value');
+  assert(databaseEnv?.valueFrom?.secretKeyRef?.name === 'opensphere-extension-controller-runtime', 'C_EXT database Secret name differs from the install contract');
+  assert(databaseEnv?.valueFrom?.secretKeyRef?.key === 'database-url', 'C_EXT database Secret key differs from the install contract');
 }
 
 export async function verifyContracts(repoRoot = process.cwd(), { requireReleaseReady = false } = {}) {
@@ -384,7 +427,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(consoleApiBoundary?.path === 'apps/console-api', 'C_API path differs from the target component boundary');
   assert(consoleApiBoundary?.artifact === 'opensphere-console-api', 'C_API artifact differs from the target component boundary');
   if (requireReleaseReady) {
-    assert(boundary.status === 'release-ready', 'Official publication is blocked while component boundaries remain target-migration');
+    await verifyReleaseReadiness({ root, boundary, denominator, browserApiCutover });
   }
 
   const consoleApiStore = await readFile(resolve(root, 'apps', 'console-api', 'src', 'postgres-operation-store.mjs'), 'utf8');
@@ -400,6 +443,9 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   yaml.loadAll(await readFile(resolve(root, 'apps', 'console-api', 'deploy.yaml'), 'utf8'), (document) => consoleApiDeployment.push(document));
   const consoleWebProxy = await readFile(resolve(root, 'nginx', 'default.conf.template'), 'utf8');
   verifyConsoleApiDeployment({ documents: consoleApiDeployment, nginxSource: consoleWebProxy });
+  const extensionControllerDeployment = [];
+  yaml.loadAll(await readFile(resolve(root, 'apps', 'extension-controller', 'deploy.yaml'), 'utf8'), (document) => extensionControllerDeployment.push(document));
+  verifyExtensionControllerDeployment({ documents: extensionControllerDeployment });
 
   const candidateWorkflow = await readFile(resolve(root, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
   const promotionWorkflow = await readFile(resolve(root, '.github', 'workflows', 'promote-release.yml'), 'utf8');
@@ -407,8 +453,12 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(candidateWorkflow.includes('- image: opensphere-console-api'), 'Candidate workflow does not publish the C_API target artifact');
   assert(candidateWorkflow.includes('file: OpenSphere-console/apps/console-api/Dockerfile'), 'Candidate workflow does not build the C_API target Dockerfile');
   assert(candidateWorkflow.includes('consoleApi'), 'Candidate BOM has no consoleApi component identity');
+  assert(candidateWorkflow.includes('- image: opensphere-extension-controller'), 'Candidate workflow does not publish the C_EXT target artifact');
+  assert(candidateWorkflow.includes('file: OpenSphere-console/apps/extension-controller/Dockerfile'), 'Candidate workflow does not build the C_EXT target Dockerfile');
+  assert(candidateWorkflow.includes('extensionController'), 'Candidate BOM has no extensionController component identity');
   assert(!candidateWorkflow.includes('opensphere-console-backend'), 'Candidate workflow still publishes the legacy Backend artifact');
   assert(promotionWorkflow.includes('opensphere-console-api'), 'Promotion workflow omits the C_API target artifact');
+  assert(promotionWorkflow.includes('opensphere-extension-controller'), 'Promotion workflow omits the C_EXT target artifact');
   assert(!promotionWorkflow.includes('opensphere-console-backend'), 'Promotion workflow still promotes the legacy Backend artifact');
 
   const publishedDockerfiles = [...candidateWorkflow.matchAll(/^\s*file:\s+OpenSphere-console\/(Dockerfile|[^\r\n]+\/Dockerfile)\s*$/gmu)]
