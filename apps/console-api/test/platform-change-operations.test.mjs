@@ -68,7 +68,8 @@ function record(input) {
 }
 
 function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBinding = false,
-  rejectMergeBinding = false, giteaReady = true, argocdReady = false } = {}) {
+  rejectMergeBinding = false, giteaReady = true, argocdReady = false,
+  postMergeOwnerReady = true, wirePostMergeOwner = true } = {}) {
   const order = [];
   const accepted = [];
   const proposed = [];
@@ -76,6 +77,7 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
   const proposalBindings = [];
   const mergeBindings = [];
   let operationRecord = null;
+  let ownerReady = postMergeOwnerReady;
   const store = {
     async accept(input) {
       order.push('intent');
@@ -214,10 +216,15 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
       return { merged: true, mergeRevision: 'b'.repeat(40), pullNumber: 17, branch: `control/${operationId}` };
     },
   };
-  const operations = createPlatformChangeOperations({
+  const dependencies = {
     operationService, policyRevision: policyCatalog.policyRevision, projectionStore: store, giteaClient, clock: () => current,
-  });
-  return { operations, order, accepted, proposed, approvals, proposalBindings, mergeBindings };
+  };
+  if (wirePostMergeOwner) dependencies.postMergeOwnerReady = () => ownerReady;
+  const operations = createPlatformChangeOperations(dependencies);
+  return {
+    operations, order, accepted, proposed, approvals, proposalBindings, mergeBindings,
+    setPostMergeOwnerReady(value) { ownerReady = value === true; },
+  };
 }
 
 function bootstrapRequest() {
@@ -280,6 +287,35 @@ test('HTTP Gitea status is a CSRF-free authenticated read with no query surface'
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('Unconfigured post-merge owner keeps proposal paths fail-closed without durable or Gitea mutation', async () => {
+  const state = fixture({ wirePostMergeOwner: false });
+  await assert.rejects(state.operations.propose({
+    session,
+    body: request(),
+    idempotencyKey: 'platform-change-owner-unavailable-0001',
+    correlationId: 'platform-change-owner-unavailable-correlation-0001',
+  }), {
+    code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
+    details: { managementReady: false },
+  });
+  assert.deepEqual(state.order, []);
+  assert.equal(state.accepted.length, 0);
+  assert.equal(state.proposed.length, 0);
+
+  await assert.rejects(state.operations.bootstrapArgocdVerification({
+    session,
+    body: bootstrapRequest(),
+    idempotencyKey: 'argocd-owner-unavailable-0001',
+    correlationId: 'argocd-owner-unavailable-correlation-0001',
+  }), {
+    code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
+    details: { managementReady: false },
+  });
+  assert.deepEqual(state.order, ['argocd-status']);
+  assert.equal(state.accepted.length, 0);
+  assert.equal(state.proposed.length, 0);
 });
 
 test('Platform change persists authorized intent before the first Gitea call', async () => {
@@ -569,6 +605,29 @@ test('Argo CD bootstrap approval rejects a stored fixed-plan substitution before
   assert.deepEqual(state.order, ['approval-read']);
 });
 
+test('Owner readiness loss blocks approval before operation, proposal, or merge mutation', async () => {
+  const state = fixture();
+  await state.operations.propose({
+    session, body: request(), idempotencyKey: 'platform-change-owner-loss-proposal-0001',
+    correlationId: 'platform-change-owner-loss-proposal-correlation-0001',
+  });
+  state.setPostMergeOwnerReady(false);
+  state.order.length = 0;
+  await assert.rejects(state.operations.approve({
+    session: approverSession,
+    operationId,
+    body: { reason: 'approve reviewed Console settings declaration' },
+    idempotencyKey: 'platform-change-owner-loss-approval-0001',
+    correlationId: 'platform-change-owner-loss-approval-correlation-0001',
+  }), {
+    code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
+    details: { managementReady: false },
+  });
+  assert.deepEqual(state.order, []);
+  assert.equal(state.approvals.length, 0);
+  assert.equal(state.mergeBindings.length, 0);
+});
+
 test('Platform change approval records independent approval before protected merge and binds its revision', async () => {
   const { operations, order, approvals, mergeBindings } = fixture();
   await operations.propose({
@@ -656,4 +715,14 @@ test('HTTP platform change approval keeps the shared CSRF and idempotency bounda
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('Change-control UI disables both mutations while management is unavailable and makes no automatic-apply promise', async () => {
+  const source = await readFile(
+    new URL('../../console-web/src/app/pages/admin-change-control.ts', import.meta.url), 'utf8',
+  );
+  assert.match(source, /current\.managementReady && change\.status === 'authorized'/u);
+  assert.match(source, /async submitChange\(\): Promise<void> \{ if \(!this\.managementReady\(\)\)/u);
+  assert.match(source, /async approveSelected\(reason: string\): Promise<void> \{[^\n]+if \(!this\.managementReady\(\)\)/u);
+  assert.doesNotMatch(source, /자동 적용|자동 실행/u);
 });

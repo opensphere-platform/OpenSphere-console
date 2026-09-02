@@ -10,9 +10,25 @@ const CONSUMER = /^[a-z][a-z0-9._-]{1,127}$/u;
 const ACTIONS = new Set(['apply', 'configure', 'delete', 'rollback']);
 const MAX_DESIRED_STATE_BYTES = 64 * 1024;
 const SECRET_FIELD = /(?:^|[_-])(authorization|credential|password|privatekey|secret|token)(?:$|[_-])/iu;
+const POST_MERGE_OWNER_UNAVAILABLE = 'post-merge platform change owner is not configured; status remains read-only';
 
 function fail(message) {
   throw Object.assign(new Error(message), { code: 'ValidationFailed', status: 400, sideEffect: 'none' });
+}
+
+function assertPostMergeOwnerReady(postMergeOwnerReady) {
+  let ready = false;
+  try {
+    ready = postMergeOwnerReady() === true;
+  } catch {
+    ready = false;
+  }
+  if (!ready) {
+    throw Object.assign(new Error(POST_MERGE_OWNER_UNAVAILABLE), {
+      code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
+      details: { managementReady: false },
+    });
+  }
 }
 
 function exact(value, fields, label) {
@@ -245,7 +261,14 @@ function ensurePlanProposal(giteaClient, plan, input) {
   });
 }
 
-export function createPlatformChangeOperations({ operationService, policyRevision, projectionStore, giteaClient, clock = () => new Date() }) {
+export function createPlatformChangeOperations({
+  operationService,
+  policyRevision,
+  projectionStore,
+  giteaClient,
+  postMergeOwnerReady = () => false,
+  clock = () => new Date(),
+}) {
   if (!operationService?.accept || !operationService?.approve || !operationService?.assertApprovalAuthority) {
     throw new TypeError('operation service is required');
   }
@@ -258,6 +281,7 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
       || !giteaClient?.argocdVerificationStatus || !giteaClient?.ensureArgocdVerificationProposal) {
     throw new TypeError('Gitea change client is required');
   }
+  if (typeof postMergeOwnerReady !== 'function') throw new TypeError('post-merge owner readiness probe is required');
   const planRevision = text(policyRevision, 'policyRevision', 1, 128);
 
   return Object.freeze({
@@ -274,6 +298,8 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
 
     async propose({ session, body, idempotencyKey, correlationId }) {
       const proposal = validateProposal(body);
+      assertStatusAuthority(session);
+      assertPostMergeOwnerReady(postMergeOwnerReady);
       const supplyChain = await giteaClient.supplyChainStatus();
       if (!supplyChain.ready) {
         throw Object.assign(new Error(supplyChain.reason || 'Gitea change authority is unavailable'), {
@@ -372,6 +398,7 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
           mergeRevision: currentStatus.mainRevision,
         });
       }
+      assertPostMergeOwnerReady(postMergeOwnerReady);
       const submittedAt = clock().toISOString();
       const plan = {
         schemaVersion: '1.0',
@@ -449,6 +476,7 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
     async approve({ session, operationId, body, idempotencyKey, correlationId }) {
       const approval = validateApproval(body);
       const authority = operationService.assertApprovalAuthority({ session, reason: approval.reason });
+      assertPostMergeOwnerReady(postMergeOwnerReady);
       const record = await projectionStore.getGiteaOperationForApproval({
         sessionId: session.sessionId,
         actorRef: authority.actorRef,
