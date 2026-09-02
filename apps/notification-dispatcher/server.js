@@ -3,8 +3,11 @@
 const http = require('node:http');
 const net = require('node:net');
 const tls = require('node:tls');
-const { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } = require('node:crypto');
+const { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
 const { channelInput, classifyHttp, emailList, messageFor } = require('./contract');
+const { createNotificationApi } = require('./browser-api');
+const { createConsoleOwnerAdmission } = require('./owner-admission');
+const { authorizeNotification, notificationRequestAllowed } = require('./owner-policy');
 
 const PORT = Number(process.env.PORT || 8081);
 const REST_URL = String(process.env.SUPABASE_REST_URL || '').replace(/\/$/, '');
@@ -17,6 +20,8 @@ const WORKER_ID = process.env.HOSTNAME || `notification-dispatcher-${process.pid
 const POLL_MS = Math.max(1000, Number(process.env.NOTIFICATION_POLL_MS || 3000));
 const MAX_ATTEMPTS = Math.max(1, Number(process.env.NOTIFICATION_MAX_ATTEMPTS || 8));
 const SMTP_ALLOWED_HOSTS = String(process.env.NOTIFICATION_SMTP_ALLOWED_HOSTS || '').split(',').map((value) => value.trim().toLowerCase()).filter(Boolean);
+const CONSOLE_OWNER_AUTHORITY_URL = String(process.env.CONSOLE_OWNER_AUTHORITY_URL || 'http://opensphere-console-api.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const NOTIFICATION_REQUIRE_AAL2 = process.env.NOTIFICATION_REQUIRE_AAL2 !== 'false';
 
 function base64url(value) { return Buffer.from(value).toString('base64url'); }
 function dispatcherToken() {
@@ -28,15 +33,15 @@ function dispatcherToken() {
   return `${signed}.${createHmac('sha256', JWT_SECRET).update(signed).digest('base64url')}`;
 }
 
-function headers() {
+function headers(profile = 'console') {
   if (!REST_URL || !SERVICE_KEY) throw { code: 503, msg: 'dispatcher Supabase REST configuration is missing' };
-  return { apikey: SERVICE_KEY, Authorization: `Bearer ${dispatcherToken()}`, accept: 'application/json', 'content-type': 'application/json', 'accept-profile': 'console', 'content-profile': 'console' };
+  return { apikey: SERVICE_KEY, Authorization: `Bearer ${dispatcherToken()}`, accept: 'application/json', 'content-type': 'application/json', 'accept-profile': profile, 'content-profile': profile };
 }
 
-async function rest(resource, { method = 'GET', query = '', body, prefer = 'return=representation' } = {}) {
+async function rest(resource, { method = 'GET', query = '', body, prefer = 'return=representation', profile = 'console' } = {}) {
   const url = new URL(`${REST_URL}/${resource}`);
   if (query) url.search = query;
-  const response = await fetch(url, { method, headers: { ...headers(), Prefer: prefer }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+  const response = await fetch(url, { method, headers: { ...headers(profile), Prefer: prefer }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10000) });
   const text = await response.text();
   let output = [];
   try { output = text ? JSON.parse(text) : []; } catch { output = text; }
@@ -284,11 +289,137 @@ function readBody(req) {
 function json(res, code, value) { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); }
 function internal(req) { return Boolean(INTERNAL_TOKEN) && safeEqual(req.headers['x-notification-dispatcher-token'], INTERNAL_TOKEN); }
 
+async function logAudit(actor, action, target, result, reason, options = {}) {
+  const requestId = options.requestId || randomUUID();
+  const actorId = String(actor?.sub || '');
+  if (!actorId) throw { code: 401, msg: 'notification audit actor is unavailable' };
+  const row = {
+    request_id: requestId,
+    correlation_id: String(options.correlationId || requestId),
+    actor_type: 'human',
+    actor_id: actorId,
+    auth_session_id: actor.browserSessionId || null,
+    action,
+    target_type: options.targetType || 'notification',
+    target_id: String(target || ''),
+    reason: String(reason || '').slice(0, 240),
+    phase: options.phase || 'applied',
+    result,
+    payload_digest: options.payloadDigest ? `sha256:${options.payloadDigest}` : null,
+    event_hash: `sha256:${createHash('sha256').update(JSON.stringify({ requestId, actorId, action, target, reason, result })).digest('hex')}`,
+  };
+  const output = await rest('event', {
+    profile: 'audit', method: 'POST', query: 'select=request_id,correlation_id', body: [row], prefer: 'return=representation',
+  });
+  if (!Array.isArray(output) || !output[0]?.request_id) throw { code: 503, msg: 'notification audit append failed' };
+  return output[0];
+}
+
+async function testChannelDelivery(channelId, input = {}) {
+  const channels = await rest('notification_channel', { query: `select=*&id=eq.${encodeURIComponent(channelId)}&deleted_at=is.null` });
+  if (!channels[0]) throw { code: 404, msg: 'notification channel not found' };
+  const rawTestRecipient = String(input?.testRecipient || '').trim();
+  const testRecipient = rawTestRecipient ? emailList([rawTestRecipient])[0] : '';
+  if (testRecipient && channels[0].provider !== 'smtp') throw { code: 400, msg: 'a test recipient is supported only for SMTP channels' };
+  const testChannel = testRecipient
+    ? { ...channels[0], config: { ...(channels[0].config || {}), recipients: [testRecipient] } }
+    : channels[0];
+  const result = await send(testChannel, await secretFor(channels[0].id), {
+    source: 'OpenSphere Console', severity: 'info', title: 'OpenSphere 외부 채널 테스트',
+    body: '이 메시지는 채널 연결 검증용 테스트입니다.', route: '',
+  });
+  const accepted = result.kind === 'accepted' || result.kind === 'delivered';
+  await rest('notification_channel', {
+    method: 'PATCH', query: `id=eq.${encodeURIComponent(channels[0].id)}`,
+    body: {
+      last_test_status: accepted ? 'accepted' : 'failed', last_test_at: new Date().toISOString(),
+      last_test_error_code: accepted ? null : result.code || 'test-failed',
+      health_state: accepted ? 'Healthy' : (result.kind === 'permanent' ? 'Misconfigured' : 'Degraded'),
+      updated_at: new Date().toISOString(),
+    }, prefer: 'return=minimal',
+  });
+  return { accepted, code: result.code || '', providerMessageId: result.providerMessageId || '' };
+}
+
+async function dispatcherRequest(path, body) {
+  let match = path.match(/^\/internal\/channels\/([0-9a-f-]+)\/credentials$/i);
+  if (match) return storeSecret(match[1], body);
+  match = path.match(/^\/internal\/channels\/([0-9a-f-]+)\/configuration$/i);
+  if (match) return updateChannelConfiguration(match[1], body);
+  match = path.match(/^\/internal\/channels\/([0-9a-f-]+)\/test$/i);
+  if (match) return testChannelDelivery(match[1], body);
+  throw { code: 500, msg: 'notification browser API requested an unknown dispatcher operation' };
+}
+
+const verifyNotificationOwner = createConsoleOwnerAdmission({
+  baseUrl: CONSOLE_OWNER_AUTHORITY_URL,
+  marker: 'notification-dispatcher-v1',
+  familyPrefix: '/api/notifications',
+  allowRequest: notificationRequestAllowed,
+});
+const notificationApi = createNotificationApi({
+  restRequest: rest,
+  logAudit,
+  newOpId: () => randomUUID(),
+  dispatcherRequest,
+});
+
+async function verifyNotificationAdmin(req) {
+  return authorizeNotification(await verifyNotificationOwner(req), req.method, {
+    requireAal2: NOTIFICATION_REQUIRE_AAL2,
+  });
+}
+
+async function handleNotificationBrowserApi(req, res, url) {
+  const path = url.pathname;
+  if (path === '/api/notifications/summary' && req.method === 'GET') {
+    await verifyNotificationAdmin(req); json(res, 200, await notificationApi.summary()); return true;
+  }
+  if (path === '/api/notifications/channels' && req.method === 'GET') {
+    await verifyNotificationAdmin(req); json(res, 200, { items: await notificationApi.channels() }); return true;
+  }
+  if (path === '/api/notifications/channels' && req.method === 'POST') {
+    const actor = await verifyNotificationAdmin(req); json(res, 201, await notificationApi.createChannel(actor, await readBody(req))); return true;
+  }
+  const channelItem = path.match(/^\/api\/notifications\/channels\/([0-9a-f-]+)$/i);
+  if (channelItem) {
+    const actor = await verifyNotificationAdmin(req);
+    if (req.method === 'GET') { json(res, 200, await notificationApi.smtpChannelConfiguration(channelItem[1])); return true; }
+    if (req.method === 'PUT') { json(res, 200, await notificationApi.updateSmtpChannel(actor, channelItem[1], await readBody(req))); return true; }
+    json(res, 405, { error: 'method not allowed' }); return true;
+  }
+  const channelAction = path.match(/^\/api\/notifications\/channels\/([0-9a-f-]+)\/(enable|disable|test)$/i);
+  if (channelAction && req.method === 'POST') {
+    const actor = await verifyNotificationAdmin(req); const body = await readBody(req);
+    const value = channelAction[2] === 'test'
+      ? await notificationApi.testChannel(actor, channelAction[1], body)
+      : await notificationApi.setChannelEnabled(actor, channelAction[1], channelAction[2] === 'enable', body);
+    json(res, 200, value); return true;
+  }
+  if (path === '/api/notifications/rules' && req.method === 'GET') {
+    await verifyNotificationAdmin(req); json(res, 200, { items: await notificationApi.rules() }); return true;
+  }
+  if (path === '/api/notifications/rules' && req.method === 'POST') {
+    const actor = await verifyNotificationAdmin(req); json(res, 201, await notificationApi.createRule(actor, await readBody(req))); return true;
+  }
+  if (path === '/api/notifications/deliveries' && req.method === 'GET') {
+    await verifyNotificationAdmin(req); json(res, 200, { items: await notificationApi.deliveries({ limit: url.searchParams.get('limit') }) }); return true;
+  }
+  const retry = path.match(/^\/api\/notifications\/deliveries\/([0-9a-f-]+)\/retry$/i);
+  if (retry && req.method === 'POST') {
+    const actor = await verifyNotificationAdmin(req); json(res, 202, await notificationApi.retryDelivery(actor, retry[1], await readBody(req))); return true;
+  }
+  return false;
+}
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname === '/healthz') { res.writeHead(200); return res.end('ok'); }
     if (url.pathname === '/readyz') { encryptionKey(); headers(); return json(res, 200, { ready: true, workerId: WORKER_ID }); }
+    if (url.pathname === '/api/notifications' || url.pathname.startsWith('/api/notifications/')) {
+      if (await handleNotificationBrowserApi(req, res, url)) return;
+      return json(res, 404, { error: 'not found' });
+    }
     const credential = url.pathname.match(/^\/internal\/channels\/([0-9a-fA-F-]+)\/credentials$/);
     if (credential && req.method === 'POST') {
       if (!internal(req)) return json(res, 401, { error: 'internal dispatcher authentication required' });
@@ -302,16 +433,8 @@ const server = http.createServer(async (req, res) => {
     const testPath = url.pathname.match(/^\/internal\/channels\/([0-9a-fA-F-]+)\/test$/);
     if (testPath && req.method === 'POST') {
       if (!internal(req)) return json(res, 401, { error: 'internal dispatcher authentication required' });
-      const channels = await rest('notification_channel', { query: `select=*&id=eq.${encodeURIComponent(testPath[1])}&deleted_at=is.null` });
-      if (!channels[0]) return json(res, 404, { error: 'notification channel not found' });
-      const rawTestRecipient = String((await readBody(req))?.testRecipient || '').trim();
-      const testRecipient = rawTestRecipient ? emailList([rawTestRecipient])[0] : '';
-      if (testRecipient && channels[0].provider !== 'smtp') throw { code: 400, msg: 'a test recipient is supported only for SMTP channels' };
-      const testChannel = testRecipient ? { ...channels[0], config: { ...(channels[0].config || {}), recipients: [testRecipient] } } : channels[0];
-      const result = await send(testChannel, await secretFor(channels[0].id), { source: 'OpenSphere Console', severity: 'info', title: 'OpenSphere 외부 채널 테스트', body: '이 메시지는 채널 연결 검증용 테스트입니다.', route: '' });
-      const accepted = result.kind === 'accepted' || result.kind === 'delivered';
-      await rest('notification_channel', { method: 'PATCH', query: `id=eq.${encodeURIComponent(channels[0].id)}`, body: { last_test_status: accepted ? 'accepted' : 'failed', last_test_at: new Date().toISOString(), last_test_error_code: accepted ? null : result.code || 'test-failed', health_state: accepted ? 'Healthy' : (result.kind === 'permanent' ? 'Misconfigured' : 'Degraded'), updated_at: new Date().toISOString() }, prefer: 'return=minimal' });
-      return json(res, accepted ? 200 : 502, { accepted, code: result.code || '', providerMessageId: result.providerMessageId || '' });
+      const result = await testChannelDelivery(testPath[1], await readBody(req));
+      return json(res, result.accepted ? 200 : 502, result);
     }
     return json(res, 404, { error: 'not found' });
   } catch (error) { return json(res, error?.code || 500, { error: error?.msg || error?.message || 'dispatcher failed' }); }

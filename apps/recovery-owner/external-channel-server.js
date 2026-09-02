@@ -9,8 +9,12 @@ const {
   createHmac,
   timingSafeEqual,
   randomBytes,
+  randomUUID,
   X509Certificate,
 } = require('crypto');
+const { createExternalChannelApi } = require('./external-channel-api');
+const { createConsoleOwnerAdmission } = require('./owner-admission');
+const { authorizeExternalChannel, externalChannelRequestAllowed } = require('./owner-policy');
 
 const PORT = Number(process.env.PORT || 8082);
 const REST_URL = String(process.env.SUPABASE_REST_URL || '').replace(/\/$/, '');
@@ -20,6 +24,8 @@ const ISSUER = process.env.SUPABASE_AUTH_ISSUER || '';
 const AUDIENCE = process.env.SUPABASE_AUTH_AUDIENCE || 'authenticated';
 const INTERNAL_TOKEN = process.env.EXTERNAL_CHANNEL_EXECUTOR_TOKEN || '';
 const MAX_SNAPSHOT_BYTES = Number(process.env.EXTERNAL_BACKUP_MAX_BYTES || 12 * 1024 * 1024);
+const CONSOLE_OWNER_AUTHORITY_URL = String(process.env.CONSOLE_OWNER_AUTHORITY_URL || 'http://opensphere-console-api.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const EXTERNAL_CHANNEL_REQUIRE_AAL2 = process.env.EXTERNAL_CHANNEL_REQUIRE_AAL2 !== 'false';
 
 function safeEqual(left, right) {
   const a = Buffer.from(String(left || ''));
@@ -47,24 +53,24 @@ function executorToken() {
   return `${signed}.${createHmac('sha256', JWT_SECRET).update(signed).digest('base64url')}`;
 }
 
-function restHeaders() {
+function restHeaders(profile = 'console') {
   if (!REST_URL || !SERVICE_KEY) throw { code: 503, msg: 'external executor Supabase REST configuration is missing' };
   return {
     apikey: SERVICE_KEY,
     Authorization: `Bearer ${executorToken()}`,
     accept: 'application/json',
     'content-type': 'application/json',
-    'accept-profile': 'console',
-    'content-profile': 'console',
+    'accept-profile': profile,
+    'content-profile': profile,
   };
 }
 
-async function rest(resource, { method = 'GET', query = '', body, prefer = 'return=representation' } = {}) {
+async function rest(resource, { method = 'GET', query = '', body, prefer = 'return=representation', profile = 'console' } = {}) {
   const url = new URL(`${REST_URL}/${resource}`);
   if (query) url.search = query;
   const response = await fetch(url, {
     method,
-    headers: { ...restHeaders(), Prefer: prefer },
+    headers: { ...restHeaders(profile), Prefer: prefer },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(12000),
   });
@@ -651,6 +657,103 @@ function internal(req) {
   return Boolean(INTERNAL_TOKEN) && safeEqual(req.headers['x-external-channel-executor-token'], INTERNAL_TOKEN);
 }
 
+async function logAudit(actor, action, target, result, reason, options = {}) {
+  const requestId = options.requestId || randomUUID();
+  const actorId = String(actor?.sub || '');
+  if (!actorId) throw { code: 401, msg: 'recovery audit actor is unavailable' };
+  const row = {
+    request_id: requestId,
+    correlation_id: String(options.correlationId || requestId),
+    actor_type: 'human', actor_id: actorId,
+    auth_session_id: actor.browserSessionId || null,
+    action, target_type: options.targetType || 'external-backup', target_id: String(target || ''),
+    reason: String(reason || '').slice(0, 240), phase: options.phase || 'applied', result,
+    payload_digest: options.payloadDigest ? `sha256:${options.payloadDigest}` : null,
+    event_hash: `sha256:${createHash('sha256').update(JSON.stringify({ requestId, actorId, action, target, reason, result })).digest('hex')}`,
+  };
+  const output = await rest('event', {
+    profile: 'audit', method: 'POST', query: 'select=request_id,correlation_id', body: [row], prefer: 'return=representation',
+  });
+  if (!Array.isArray(output) || !output[0]?.request_id) throw { code: 503, msg: 'recovery audit append failed' };
+  return output[0];
+}
+
+async function executorRequest(path, body) {
+  let match = path.match(/^\/internal\/targets\/([0-9a-f-]+)\/credentials$/i);
+  if (match) return storeCredential(match[1], body);
+  match = path.match(/^\/internal\/targets\/([0-9a-f-]+)\/test$/i);
+  if (match) return testTarget(match[1]);
+  match = path.match(/^\/internal\/targets\/([0-9a-f-]+)\/backups\/([0-9a-f-]+)$/i);
+  if (match) return uploadBackup(match[1], match[2], body?.snapshot);
+  match = path.match(/^\/internal\/targets\/([0-9a-f-]+)\/backups\/([0-9a-f-]+)\/read$/i);
+  if (match) return readBackup(match[1], match[2]);
+  throw { code: 500, msg: 'external channel API requested an unknown executor operation' };
+}
+
+const verifyExternalChannelOwner = createConsoleOwnerAdmission({
+  baseUrl: CONSOLE_OWNER_AUTHORITY_URL,
+  marker: 'external-channel-executor-v1',
+  familyPrefix: '/api/external-channels',
+  allowRequest: externalChannelRequestAllowed,
+});
+const externalChannelApi = createExternalChannelApi({
+  restRequest: rest,
+  logAudit,
+  newOpId: () => randomUUID(),
+  executorRequest,
+});
+
+async function verifyExternalChannelAdmin(req) {
+  return authorizeExternalChannel(await verifyExternalChannelOwner(req), req.method, {
+    requireAal2: EXTERNAL_CHANNEL_REQUIRE_AAL2,
+  });
+}
+
+async function handleExternalChannelBrowserApi(req, res, url) {
+  const path = url.pathname;
+  if (path === '/api/external-channels/summary' && req.method === 'GET') {
+    await verifyExternalChannelAdmin(req); json(res, 200, await externalChannelApi.summary()); return true;
+  }
+  if (path === '/api/external-channels/backup-targets' && req.method === 'GET') {
+    await verifyExternalChannelAdmin(req); json(res, 200, { items: await externalChannelApi.targets() }); return true;
+  }
+  if (path === '/api/external-channels/backup-targets' && req.method === 'POST') {
+    const actor = await verifyExternalChannelAdmin(req); json(res, 201, await externalChannelApi.createTarget(actor, await readBody(req))); return true;
+  }
+  const targetItem = path.match(/^\/api\/external-channels\/backup-targets\/([0-9a-f-]+)$/i);
+  if (targetItem && ['PUT', 'DELETE'].includes(req.method)) {
+    const actor = await verifyExternalChannelAdmin(req); const body = await readBody(req);
+    json(res, 200, req.method === 'PUT'
+      ? await externalChannelApi.updateTarget(actor, targetItem[1], body)
+      : await externalChannelApi.removeTarget(actor, targetItem[1], body));
+    return true;
+  }
+  const targetAction = path.match(/^\/api\/external-channels\/backup-targets\/([0-9a-f-]+)\/(test|backup|enable|disable)$/i);
+  if (targetAction && req.method === 'POST') {
+    const actor = await verifyExternalChannelAdmin(req); const body = await readBody(req); const action = targetAction[2];
+    if (action === 'enable' || action === 'disable') {
+      json(res, 200, await externalChannelApi.setTargetEnabled(actor, targetAction[1], action === 'enable', body));
+    } else {
+      json(res, action === 'test' ? 200 : 201, action === 'test'
+        ? await externalChannelApi.test(actor, targetAction[1], body)
+        : await externalChannelApi.backupNow(actor, targetAction[1], body));
+    }
+    return true;
+  }
+  if (path === '/api/external-channels/backups' && req.method === 'GET') {
+    await verifyExternalChannelAdmin(req); json(res, 200, { items: await externalChannelApi.backups() }); return true;
+  }
+  const preview = path.match(/^\/api\/external-channels\/backups\/([0-9a-f-]+)\/restore-preview$/i);
+  if (preview && req.method === 'POST') {
+    const actor = await verifyExternalChannelAdmin(req); json(res, 201, await externalChannelApi.previewRestore(actor, preview[1], await readBody(req))); return true;
+  }
+  const apply = path.match(/^\/api\/external-channels\/restores\/([0-9a-f-]+)\/apply$/i);
+  if (apply && req.method === 'POST') {
+    const actor = await verifyExternalChannelAdmin(req); json(res, 200, await externalChannelApi.applyRestore(actor, apply[1], await readBody(req))); return true;
+  }
+  return false;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
@@ -661,6 +764,11 @@ const server = http.createServer(async (req, res) => {
       restHeaders();
       return json(res, 200, { ready: true });
     }
+    if (url.pathname === '/api/external-channels' || url.pathname.startsWith('/api/external-channels/')) {
+      if (await handleExternalChannelBrowserApi(req, res, url)) return;
+      return json(res, 404, { error: 'not found' });
+    }
+
     if (!internal(req)) return json(res, 401, { error: 'internal external-channel executor authentication required' });
     const credential = url.pathname.match(/^\/internal\/targets\/([0-9a-fA-F-]+)\/credentials$/);
     if (credential && req.method === 'POST') {

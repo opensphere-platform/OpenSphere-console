@@ -22,7 +22,7 @@ const {
   signedS3Request,
   targetInput,
   tlsFailure,
-} = require('../../notification-dispatcher/external-backup-server');
+} = require('../../recovery-owner/external-channel-server');
 
 const read = (value) => fs.readFileSync(path.join(__dirname, value), 'utf8');
 

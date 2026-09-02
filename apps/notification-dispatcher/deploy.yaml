@@ -11,12 +11,14 @@ spec:
       imagePullSecrets: [{ name: opensphere-ghcr-pull }]
       containers:
         - name: dispatcher
-          image: ghcr.io/opensphere-platform/opensphere-console-notification-dispatcher@sha256:2951943bf0fecd4a1e2b2810fcd22ff0dbe19c832ae4c5d6822cd0890afddaa2
+          image: __OPENSPHERE_NOTIFICATION_DISPATCHER_IMAGE__
           imagePullPolicy: IfNotPresent
           env:
             - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
             - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:1114/auth/v1" }
             - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
+            - { name: CONSOLE_OWNER_AUTHORITY_URL, value: http://opensphere-console-api.opensphere-console.svc.cluster.local:8080 }
+            - { name: NOTIFICATION_REQUIRE_AAL2, value: "true" }
             # Comma-separated exact hosts or wildcards (for example
             # smtp.example.com,*.mail.example.com). SMTP is deny-by-default.
             - { name: NOTIFICATION_SMTP_ALLOWED_HOSTS, value: "smtp.gmail.com" }
@@ -40,52 +42,16 @@ spec:
   selector: { app: opensphere-notification-dispatcher }
   ports: [{ name: http, port: 8081, targetPort: 8081 }]
 ---
-# Same governed OCI artifact, separate process and trust boundary. This runtime
-# has no Kubernetes service-account token and cannot read notification secrets.
-apiVersion: apps/v1
-kind: Deployment
-metadata: { name: opensphere-external-channel-executor, namespace: opensphere-console, labels: { app: opensphere-external-channel-executor } }
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensphere-notification-dispatcher-ingress
+  namespace: opensphere-console
 spec:
-  replicas: 2
-  selector: { matchLabels: { app: opensphere-external-channel-executor } }
-  template:
-    metadata: { labels: { app: opensphere-external-channel-executor } }
-    spec:
-      automountServiceAccountToken: false
-      imagePullSecrets: [{ name: opensphere-ghcr-pull }]
-      containers:
-        - name: executor
-          image: ghcr.io/opensphere-platform/opensphere-console-notification-dispatcher@sha256:2951943bf0fecd4a1e2b2810fcd22ff0dbe19c832ae4c5d6822cd0890afddaa2
-          imagePullPolicy: IfNotPresent
-          command: ["node", "external-backup-server.js"]
-          env:
-            - { name: PORT, value: "8082" }
-            - { name: SUPABASE_REST_URL, value: "http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000" }
-            - { name: SUPABASE_AUTH_ISSUER, value: "https://localhost:1114/auth/v1" }
-            - { name: SUPABASE_AUTH_AUDIENCE, value: authenticated }
-            - name: SUPABASE_SERVICE_ROLE_KEY
-              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: service-role-key } }
-            - name: SUPABASE_JWT_SECRET
-              valueFrom: { secretKeyRef: { name: opensphere-supabase-runtime, key: jwt-secret } }
-            - name: EXTERNAL_CREDENTIAL_ENCRYPTION_KEY
-              valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: credential-encryption-key } }
-            - name: EXTERNAL_BACKUP_ENCRYPTION_KEY
-              valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: backup-encryption-key } }
-            - name: EXTERNAL_CHANNEL_EXECUTOR_TOKEN
-              valueFrom: { secretKeyRef: { name: opensphere-external-channel-runtime, key: internal-token } }
-          ports: [{ containerPort: 8082 }]
-          readinessProbe: { httpGet: { path: /readyz, port: 8082 }, initialDelaySeconds: 2, periodSeconds: 5 }
-          livenessProbe: { httpGet: { path: /healthz, port: 8082 }, initialDelaySeconds: 10, periodSeconds: 10 }
-          resources:
-            requests: { cpu: 20m, memory: 48Mi }
-            limits: { cpu: 300m, memory: 192Mi }
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
----
-apiVersion: v1
-kind: Service
-metadata: { name: opensphere-external-channel-executor, namespace: opensphere-console }
-spec:
-  selector: { app: opensphere-external-channel-executor }
-  ports: [{ name: http, port: 8082, targetPort: 8082 }]
+  podSelector:
+    matchLabels: { app: opensphere-notification-dispatcher }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
+      ports: [{ protocol: TCP, port: 8081 }]

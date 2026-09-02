@@ -13,6 +13,7 @@ RUN apk add --no-cache \
 
 WORKDIR /opt/opensphere-recovery
 COPY entrypoint.mjs ./entrypoint.mjs
+COPY external-channel-api.js external-channel-server.js owner-admission.js owner-policy.js ./
 
 RUN addgroup -S -g 10001 recovery \
     && adduser -S -D -H -u 10001 -G recovery recovery \
