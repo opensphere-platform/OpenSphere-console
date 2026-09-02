@@ -75,6 +75,7 @@ const {
 } = require('./r2d2-incident-relay');
 const { projectAuthorityAdapters } = require('./r2d2-source-adapters');
 const { createConsoleIdentityVerifier } = require('./console-identity-client');
+const { createCAiOwnerApi } = require('./c-ai-owner-api');
 const {
   RUNTIME_RESOURCE_KINDS,
   WATCH_RESOURCE_KINDS,
@@ -140,6 +141,11 @@ const R2D2_GRAPH_ENABLED = process.env.R2D2_GRAPH_ENABLED === 'true';
 const R2D2_INCIDENT_ENABLED = process.env.R2D2_INCIDENT_ENABLED === 'true';
 const R2D2_GLOBAL_RISK_ENABLED = process.env.R2D2_GLOBAL_RISK_ENABLED === 'true';
 const R2D2_INCIDENT_RELAY_ENABLED = process.env.R2D2_INCIDENT_RELAY_ENABLED === 'true';
+const R2D2_DURABLE_OPERATION_ENABLED = process.env.R2D2_DURABLE_OPERATION_ENABLED === 'true';
+const R2D2_ENGINEERING_PROPOSAL_ENABLED = process.env.R2D2_ENGINEERING_PROPOSAL_ENABLED === 'true';
+const R2D2_ENGINEERING_EXECUTION_ENABLED = process.env.R2D2_ENGINEERING_EXECUTION_ENABLED === 'true';
+const OSAA_PROVIDER_ALLOWED_ORIGINS = String(process.env.OSAA_PROVIDER_ALLOWED_ORIGINS || 'https://api.openai.com,https://api.deepseek.com')
+  .split(',').map((value) => value.trim()).filter(Boolean).slice(0, 32);
 const R2D2_CLUSTER_ID = String(process.env.R2D2_CLUSTER_ID || 'local').trim().slice(0, 128);
 const R2D2_OBSERVER_PG_USER = String(process.env.R2D2_OBSERVER_PG_USER || '').trim();
 const R2D2_OBSERVER_PG_PASSWORD = String(process.env.R2D2_OBSERVER_PG_PASSWORD || '');
@@ -9189,6 +9195,46 @@ function audit(actor, action, target, result, reason) {
   }
 }
 
+async function persistCAiOwnerMutationAudit(actor, event) {
+  const pool = getPgPool();
+  if (!pool) throw { code: 503, msg: 'C_AI audit owner store is unavailable' };
+  const actorId = String(actor?.subject || actor?.sub || '');
+  const browserSessionId = String(actor?.browserSessionId || '');
+  const requestId = String(event?.requestId || '');
+  const action = String(event?.action || '');
+  const targetType = String(event?.targetType || '');
+  const target = String(event?.target || '');
+  const reason = String(event?.reason || '');
+  const phase = String(event?.phase || '');
+  const result = String(event?.result || '');
+  const payloadDigest = String(event?.payloadDigest || '');
+  if (!UUID_RE.test(actorId) || !UUID_RE.test(browserSessionId) || !UUID_RE.test(requestId)
+      || !/^[a-z][a-z0-9-]{2,159}$/u.test(action)
+      || !/^[a-z][a-z0-9-]{2,127}$/u.test(targetType)
+      || !target || target.length > 300 || /[\u0000-\u001f\u007f]/u.test(target)
+      || reason.trim().length < 8 || reason.length > 1000
+      || !['intent', 'applied', 'failed'].includes(phase)
+      || !/^[a-z][a-z0-9-]{1,63}$/u.test(result)
+      || !/^sha256:[0-9a-f]{64}$/u.test(payloadDigest)) {
+    throw { code: 503, msg: 'C_AI mutation audit coordinates are invalid' };
+  }
+  try {
+    const written = await pool.query(
+      `SELECT osaa.c_ai_append_audit_event(
+         $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text
+       ) AS value`,
+      [requestId, actorId, browserSessionId, action, targetType, target, reason, phase, result, payloadDigest],
+    );
+    const receipt = written.rows?.[0]?.value;
+    if (!receipt || String(receipt.requestId || receipt.request_id || '') !== requestId) {
+      throw new Error('C_AI audit RPC returned no bound receipt');
+    }
+    return receipt;
+  } catch (error) {
+    console.error('[c-ai-owner-audit] durable audit write failed:', error?.message || error);
+    throw { code: 503, msg: 'C_AI mutation audit could not be durably recorded' };
+  }
+}
 // Retrieval evidence is deliberately separate from the Console audit event.
 // The latter records a user-visible operation; this table preserves the exact
 // (ACL-filtered) corpus evidence used to answer it.  Some authenticated
@@ -9646,6 +9692,19 @@ async function streamIncidentEvents(req, res, actor) {
   await poll();
 }
 
+const cAiOwnerApi = createCAiOwnerApi({
+  getPool: getPgPool,
+  k8s,
+  osdstStatus: refreshOsdstPolicy,
+  auditMutation: persistCAiOwnerMutationAudit,
+  namespace: OSAA_NAMESPACE,
+  keyNamespace: OSAA_KEY_NAMESPACE,
+  durableOperationsEnabled: R2D2_DURABLE_OPERATION_ENABLED,
+  remediationProposalEnabled: R2D2_ENGINEERING_PROPOSAL_ENABLED,
+  remediationExecutionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
+  embeddingDim: OSAA_EMBED_DIM,
+  providerAllowedOrigins: OSAA_PROVIDER_ALLOWED_ORIGINS,
+});
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
@@ -9734,6 +9793,61 @@ const server = http.createServer(async (req, res) => {
         mutationNamespaces: OSAA_MUTATION_NAMESPACES,
         scaleMax: OSAA_SCALE_MAX,
       });
+    }
+    if (url.pathname === '/api/osaa/admin/dialogue-state' && req.method === 'GET') {
+      const actor = await verifyAdmin(req);
+      assertPermission(actor, 'osaa.system.read');
+      return json(res, 200, await cAiOwnerApi.getDialogueState());
+    }
+    if (url.pathname === '/api/osaa/admin/dialogue-state' && req.method === 'POST') {
+      const actor = await verifyAdmin(req);
+      assertPermission(actor, 'osaa.action.execute.high');
+      return json(res, 202, await cAiOwnerApi.setDialogueState(actor, await readBody(req)));
+    }
+    if (url.pathname === '/api/osaa/operations' && req.method === 'GET') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.system.read');
+      return json(res, 200, await cAiOwnerApi.listOperations(url.searchParams.get('limit')));
+    }
+    const cAiOperationApproval = url.pathname.match(/^\/api\/osaa\/operations\/([0-9a-f-]{36})\/approvals$/i);
+    if (cAiOperationApproval && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.action.execute.high');
+      return json(res, 200, await cAiOwnerApi.approveOperation(actor, cAiOperationApproval[1], await readBody(req)));
+    }
+    const cAiOperationDetail = url.pathname.match(/^\/api\/osaa\/operations\/([0-9a-f-]{36})$/i);
+    if (cAiOperationDetail && req.method === 'GET') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.system.read');
+      return json(res, 200, await cAiOwnerApi.operationDetails(cAiOperationDetail[1]));
+    }
+    if (url.pathname === '/api/osaa/remediations/status' && req.method === 'GET') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.system.read');
+      return json(res, 200, await cAiOwnerApi.remediationStatus());
+    }
+    if ((url.pathname === '/api/osaa/remediations' || url.pathname === '/api/osaa/remediations/') && req.method === 'GET') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.system.read');
+      return json(res, 200, await cAiOwnerApi.listRemediations(url.searchParams.get('limit')));
+    }
+    const cAiRemediationSourceApproval = url.pathname.match(/^\/api\/osaa\/remediations\/([0-9a-f-]{36})\/approvals\/source$/i);
+    if (cAiRemediationSourceApproval && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.action.execute.high');
+      return json(res, 202, await cAiOwnerApi.approveRemediationSource(actor, cAiRemediationSourceApproval[1], await readBody(req)));
+    }
+    const cAiRemediationBrowserVerification = url.pathname.match(/^\/api\/osaa\/remediations\/([0-9a-f-]{36})\/browser-verifications$/i);
+    if (cAiRemediationBrowserVerification && req.method === 'POST') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.action.execute.high');
+      return json(res, 202, await cAiOwnerApi.recordBrowserVerification(actor, cAiRemediationBrowserVerification[1], await readBody(req)));
+    }
+    const cAiRemediationDetail = url.pathname.match(/^\/api\/osaa\/remediations\/([0-9a-f-]{36})$/i);
+    if (cAiRemediationDetail && req.method === 'GET') {
+      const actor = await verifyAuthed(req);
+      assertPermission(actor, 'osaa.system.read');
+      return json(res, 200, await cAiOwnerApi.remediationDetails(cAiRemediationDetail[1]));
     }
     if (url.pathname === '/api/osaa/conversations' && req.method === 'GET') {
       const actor = await verifyAuthed(req);
@@ -10131,6 +10245,11 @@ const server = http.createServer(async (req, res) => {
       const out = await upsertKey(body, actor);
       audit(actor, out.created ? 'llm-key-create' : 'llm-key-rotate', out.item.id, 'ok', body.reason);
       return json(res, out.created ? 201 : 200, out);
+    }
+    const cAiLlmKeyTest = url.pathname.match(/^\/api\/osaa\/admin\/llm-keys\/([a-z0-9-]+)\/test$/);
+    if (cAiLlmKeyTest && req.method === 'POST') {
+      const actor = await verifyAdmin(req);
+      return json(res, 200, await cAiOwnerApi.testLlmKey(actor, cAiLlmKeyTest[1], await readBody(req)));
     }
     if (url.pathname === '/api/osaa/chat' && req.method === 'POST') {
       const actor = await verifyAuthed(req);
