@@ -97,3 +97,52 @@ test('C_REG client enforces a bounded timeout and rejects invalid configured ori
   assert.throws(() => createRegistryResolver({ baseUrl: 'file:///etc/passwd' }), /HTTP\(S\) origin/);
   assert.throws(() => createRegistryResolver({ baseUrl: 'https://user:secret@registry.test' }), /without credentials/);
 });
+
+test('C_REG client reads a bounded, current descriptor projection for Console catalog', async () => {
+  const requests = [];
+  const document = {
+    schema: 'opensphere.registry-catalog/v1', revision: catalogRevision, stale: false,
+    inventory: {
+      descriptors: [{
+        id: 'cbss.opensphere-console', class: 'coreService', displayName: 'OpenSphere Console', domain: 'console',
+        owner: { id: 'cbss.console', lifecycleApi: '/api/health' }, capabilities: ['main-shell', 'administration'],
+      }],
+    },
+  };
+  const resolver = createRegistryResolver({
+    baseUrl: 'http://registry.test',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return new Response(JSON.stringify(document), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  const snapshot = await resolver.readCatalogSnapshot({ correlationId: 'catalog-read-0001' });
+  assert.deepEqual(snapshot, {
+    schema: 'opensphere.registry-catalog/v1', revision: catalogRevision,
+    descriptors: [{
+      id: 'cbss.opensphere-console', class: 'coreService', displayName: 'OpenSphere Console', domain: 'console',
+      owner: { id: 'cbss.console', lifecycleApi: '/api/health' }, capabilities: ['main-shell', 'administration'],
+    }],
+  });
+  assert.equal(requests[0].url, 'http://registry.test/api/v1/registry');
+  assert.equal(requests[0].options.method, 'GET');
+  assert.equal(requests[0].options.headers['x-correlation-id'], 'catalog-read-0001');
+});
+
+test('C_REG catalog reader rejects stale, malformed, and oversized projections', async () => {
+  for (const document of [
+    { schema: 'opensphere.registry-catalog/v1', revision: catalogRevision, stale: true, inventory: { descriptors: [] } },
+    { schema: 'wrong', revision: catalogRevision, stale: false, inventory: { descriptors: [] } },
+    { schema: 'opensphere.registry-catalog/v1', revision: catalogRevision, stale: false, inventory: { descriptors: [{ id: 'x' }] } },
+  ]) {
+    const resolver = createRegistryResolver({
+      baseUrl: 'http://registry.test', fetchImpl: async () => new Response(JSON.stringify(document)),
+    });
+    await assert.rejects(resolver.readCatalogSnapshot(), { code: 'AuthorityContractViolation', status: 502 });
+  }
+  const resolver = createRegistryResolver({
+    baseUrl: 'http://registry.test', maximumResponseBytes: 1024,
+    fetchImpl: async () => new Response('x'.repeat(2048)),
+  });
+  await assert.rejects(resolver.readCatalogSnapshot(), { code: 'AuthorityContractViolation', status: 502 });
+});

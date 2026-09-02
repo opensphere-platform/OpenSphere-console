@@ -87,7 +87,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -601,6 +601,35 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           location: '/api/platform/operations/' + result.receipt.operationId,
           'x-idempotent-replay': String(result.replayed),
         });
+      }
+      if (url.pathname === '/api/catalog/entities' && request.method === 'GET') {
+        if (!catalogOperations?.listEntities) {
+          throw Object.assign(new Error('catalog projection is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        const queryKeys = [...url.searchParams.keys()];
+        if (queryKeys.some((key) => !['filter', 'limit'].includes(key))
+          || url.searchParams.getAll('filter').length > 1 || url.searchParams.getAll('limit').length > 1) {
+          throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        }
+        await resolveSession(request, { requireCsrf: false, correlationId });
+        return send(response, 200, await catalogOperations.listEntities({
+          filter: url.searchParams.get('filter'),
+          limit: url.searchParams.get('limit'),
+          correlationId,
+        }));
+      }
+      const runtimeResourcesMatch = url.pathname.match(/^\/api\/kubernetes\/services\/([^/]+)$/u);
+      if (runtimeResourcesMatch && request.method === 'POST') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!catalogOperations?.runtimeResources) {
+          throw Object.assign(new Error('runtime resource projection is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        await resolveSession(request, { requireCsrf: false, correlationId });
+        return send(response, 200, await catalogOperations.runtimeResources({
+          entityName: runtimeResourcesMatch[1],
+          body: await jsonBody(request),
+          correlationId,
+        }));
       }
       return send(response, 404, errorEnvelope(Object.assign(new Error('route was not found'), { code: 'NotFound' }), correlationId));
     } catch (error) {

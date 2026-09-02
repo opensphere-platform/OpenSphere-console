@@ -16,6 +16,7 @@ import { createSupabaseStorageClient } from './supabase-storage-client.mjs';
 import { createCliIdentityBroker } from './cli-identity-broker.mjs';
 import { createGiteaChangeClient } from './gitea-change-client.mjs';
 import { createPlatformChangeOperations } from './platform-change-operations.mjs';
+import { createCatalogOperations } from './catalog-operations.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -93,6 +94,7 @@ const registryOperations = createRegistryOperations({
   projectionStore: store,
   registryResolver,
 });
+const catalogOperations = createCatalogOperations({ registryResolver });
 const giteaChangeClient = createGiteaChangeClient({
   baseUrl: String(process.env.CONSOLE_GITEA_URL || ''),
   controlToken: String(process.env.CONSOLE_GITEA_CONTROL_TOKEN || ''),
@@ -113,6 +115,7 @@ const handler = createConsoleApiHandler({
   resolveSession: identitySessionBroker.resolveSession,
   operationService,
   registryOperations,
+  catalogOperations,
   auditOperations,
   identityOperations,
   identitySessionBroker,

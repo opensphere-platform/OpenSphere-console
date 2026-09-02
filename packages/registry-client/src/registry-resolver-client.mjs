@@ -4,6 +4,7 @@ const IMAGE = /^ghcr\.io\/opensphere-platform\/[a-z0-9][a-z0-9._-]*@sha256:[0-9a
 const SOURCE_REVISION = /^[0-9a-f]{40}$/;
 const SEMVER = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 const EVIDENCE_REF = /^[^\u0000-\u001f\u007f]{3,512}$/;
+const CATALOG_SCHEMA = 'opensphere.registry-catalog/v1';
 
 function fault(message, code, status) {
   return Object.assign(new Error(message), { code, status });
@@ -119,6 +120,48 @@ function mapResolution(document) {
   throw fault('Registry returned an unknown resolution result', 'AuthorityContractViolation', 502);
 }
 
+function catalogText(value, label, maximum = 256) {
+  if (typeof value !== 'string' || value.length < 1 || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw fault('Registry catalog ' + label + ' is invalid', 'AuthorityContractViolation', 502);
+  }
+  return value;
+}
+
+function validateCatalogSnapshot(document) {
+  if (!document || typeof document !== 'object' || Array.isArray(document)
+    || document.schema !== CATALOG_SCHEMA || !CATALOG_REVISION.test(String(document.revision || ''))
+    || document.stale !== false || !document.inventory || typeof document.inventory !== 'object'
+    || !Array.isArray(document.inventory.descriptors) || document.inventory.descriptors.length > 2000) {
+    throw fault('Registry returned an invalid or stale catalog snapshot', 'AuthorityContractViolation', 502);
+  }
+  const descriptors = document.inventory.descriptors.map((descriptor) => {
+    if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)
+      || !descriptor.owner || typeof descriptor.owner !== 'object' || Array.isArray(descriptor.owner)
+      || !Array.isArray(descriptor.capabilities) || descriptor.capabilities.length > 128) {
+      throw fault('Registry catalog descriptor is invalid', 'AuthorityContractViolation', 502);
+    }
+    const capabilities = descriptor.capabilities.map((capability) => catalogText(capability, 'capability', 128));
+    return Object.freeze({
+      id: catalogText(descriptor.id, 'descriptor id'),
+      class: catalogText(descriptor.class, 'descriptor class', 64),
+      displayName: catalogText(descriptor.displayName, 'display name'),
+      domain: catalogText(descriptor.domain, 'domain', 128),
+      owner: Object.freeze({
+        id: catalogText(descriptor.owner.id, 'owner id', 128),
+        lifecycleApi: typeof descriptor.owner.lifecycleApi === 'string'
+          ? catalogText(descriptor.owner.lifecycleApi, 'lifecycle API', 512)
+          : '',
+      }),
+      capabilities: Object.freeze(capabilities),
+    });
+  });
+  return Object.freeze({
+    schema: CATALOG_SCHEMA,
+    revision: document.revision,
+    descriptors: Object.freeze(descriptors),
+  });
+}
+
 export function createRegistryResolver({
   baseUrl,
   fetchImpl = globalThis.fetch,
@@ -132,6 +175,33 @@ export function createRegistryResolver({
   }
   const origin = configuredOrigin(baseUrl);
   return Object.freeze({
+    async readCatalogSnapshot({ correlationId } = {}) {
+      let response;
+      try {
+        response = await fetchImpl(origin + '/api/v1/registry', {
+          method: 'GET',
+          headers: {
+            accept: 'application/json',
+            'x-correlation-id': String(correlationId || '').slice(0, 128),
+          },
+          redirect: 'error',
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (error) {
+        if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+          throw fault('Registry catalog read timed out', 'DependencyTimeout', 504);
+        }
+        throw fault('Registry & Catalog Service is unavailable', 'AuthorityUnavailable', 503);
+      }
+      if (!response.ok) {
+        throw fault(
+          response.status >= 500 ? 'Registry & Catalog Service is unavailable' : 'Registry rejected the catalog request',
+          response.status >= 500 ? 'AuthorityUnavailable' : 'AuthorityContractViolation',
+          response.status >= 500 ? 503 : 502,
+        );
+      }
+      return validateCatalogSnapshot(await boundedJson(response, maximumResponseBytes));
+    },
     async resolveExtension({ descriptorId, catalogRevision, correlationId }) {
       if (!DESCRIPTOR_ID.test(String(descriptorId || '')) || !CATALOG_REVISION.test(String(catalogRevision || ''))) {
         throw fault('descriptorId and exact catalogRevision are required', 'ValidationFailed', 400);
