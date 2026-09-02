@@ -5,6 +5,11 @@ import test from 'node:test';
 import { createOperationService } from '../src/operation-service.mjs';
 import { createPlatformChangeOperations } from '../src/platform-change-operations.mjs';
 import { createConsoleApiHandler } from '../src/http-handler.mjs';
+import {
+  ARGOCD_VERIFICATION_CONFIRMATION,
+  ARGOCD_VERIFICATION_PATH,
+  ARGOCD_VERIFICATION_TEMPLATE_ID,
+} from '../src/argocd-verification-contract.mjs';
 
 const actorRef = '11111111-1111-4111-8111-111111111111';
 const operationId = '33333333-3333-4333-8333-333333333333';
@@ -63,7 +68,7 @@ function record(input) {
 }
 
 function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBinding = false,
-  rejectMergeBinding = false, giteaReady = true } = {}) {
+  rejectMergeBinding = false, giteaReady = true, argocdReady = false } = {}) {
   const order = [];
   const accepted = [];
   const proposed = [];
@@ -179,6 +184,28 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
         replayed: false,
       };
     },
+    async argocdVerificationStatus() {
+      order.push('argocd-status');
+      return {
+        ready: argocdReady,
+        path: ARGOCD_VERIFICATION_PATH,
+        mainRevision: 'c'.repeat(40),
+        sourceSha: 'd'.repeat(40),
+      };
+    },
+    async ensureArgocdVerificationProposal(input) {
+      order.push('argocd-gitea');
+      proposed.push(input);
+      if (rejectGitea) throw Object.assign(new Error('Gitea unavailable'), {
+        code: 'AuthorityUnavailable', status: 503, sideEffect: 'unknown',
+      });
+      return {
+        branch: `control/${operationId}`,
+        pullRequest: { number: 17, url: 'https://gitea.example/pulls/17' },
+        desiredRevision: 'a'.repeat(40),
+        replayed: false,
+      };
+    },
     async approveAndMerge(input) {
       order.push('gitea-merge');
       if (rejectGitea) throw Object.assign(new Error('Gitea merge unavailable'), {
@@ -191,6 +218,13 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
     operationService, policyRevision: policyCatalog.policyRevision, projectionStore: store, giteaClient, clock: () => current,
   });
   return { operations, order, accepted, proposed, approvals, proposalBindings, mergeBindings };
+}
+
+function bootstrapRequest() {
+  return {
+    reason: 'establish the fixed Argo CD verification declaration',
+    confirm: ARGOCD_VERIFICATION_CONFIRMATION,
+  };
 }
 
 function request() {
@@ -396,6 +430,143 @@ test('HTTP platform change route requires the shared CSRF and idempotency bounda
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('Argo CD bootstrap fixes path and declaration before durable proposal creation', async () => {
+  const state = fixture();
+  const result = await state.operations.bootstrapArgocdVerification({
+    session,
+    body: bootstrapRequest(),
+    idempotencyKey: 'argocd-verification-bootstrap-0001',
+    correlationId: 'argocd-verification-bootstrap-correlation-0001',
+  });
+  assert.deepEqual(state.order, ['argocd-status', 'intent', 'argocd-gitea', 'proposal-binding']);
+  assert.equal(result.changed, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.path, ARGOCD_VERIFICATION_PATH);
+  assert.equal(state.accepted[0].executionPlan.templateId, ARGOCD_VERIFICATION_TEMPLATE_ID);
+  assert.equal(state.accepted[0].executionPlan.target, ARGOCD_VERIFICATION_PATH);
+  assert.equal(state.proposed[0].sourceSha, 'd'.repeat(40));
+  assert.deepEqual(Object.keys(state.proposed[0]).sort(), ['operationId', 'reason', 'sourceSha']);
+});
+
+test('Argo CD bootstrap returns an observed no-op and performs no durable mutation when main already matches', async () => {
+  const state = fixture({ argocdReady: true });
+  const result = await state.operations.bootstrapArgocdVerification({
+    session,
+    body: bootstrapRequest(),
+    idempotencyKey: 'argocd-verification-bootstrap-noop-0001',
+    correlationId: 'argocd-verification-bootstrap-noop-correlation-0001',
+  });
+  assert.deepEqual(state.order, ['argocd-status']);
+  assert.deepEqual(result, {
+    ready: true,
+    changed: false,
+    path: ARGOCD_VERIFICATION_PATH,
+    mergeRevision: 'c'.repeat(40),
+  });
+  assert.equal(state.accepted.length, 0);
+  assert.equal(state.proposed.length, 0);
+});
+
+test('Argo CD bootstrap rejects input expansion and reserved template impersonation', async () => {
+  const state = fixture();
+  await assert.rejects(state.operations.bootstrapArgocdVerification({
+    session,
+    body: { ...bootstrapRequest(), path: 'operator/controlled.json' },
+    idempotencyKey: 'argocd-verification-bootstrap-0002',
+    correlationId: 'argocd-verification-bootstrap-correlation-0002',
+  }), { code: 'ValidationFailed' });
+  await assert.rejects(state.operations.bootstrapArgocdVerification({
+    session,
+    body: { ...bootstrapRequest(), confirm: 'yes' },
+    idempotencyKey: 'argocd-verification-bootstrap-0003',
+    correlationId: 'argocd-verification-bootstrap-correlation-0003',
+  }), { code: 'Conflict', status: 409 });
+  await assert.rejects(state.operations.propose({
+    session,
+    body: { ...request(), templateId: ARGOCD_VERIFICATION_TEMPLATE_ID },
+    idempotencyKey: 'argocd-verification-bootstrap-0004',
+    correlationId: 'argocd-verification-bootstrap-correlation-0004',
+  }), { code: 'ValidationFailed' });
+  await assert.rejects(state.operations.propose({
+    session,
+    body: { ...request(), target: ARGOCD_VERIFICATION_PATH },
+    idempotencyKey: 'argocd-verification-bootstrap-0005',
+    correlationId: 'argocd-verification-bootstrap-correlation-0005',
+  }), { code: 'ValidationFailed' });
+  assert.deepEqual(state.order, []);
+});
+
+test('HTTP Argo CD bootstrap uses the shared CSRF and idempotency boundary', async () => {
+  const state = fixture();
+  const sessionChecks = [];
+  const handler = createConsoleApiHandler({
+    resolveSession: async (_request, options) => { sessionChecks.push(options); return session; },
+    platformChangeOperations: state.operations,
+  });
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/platform/gitea/bootstrap/argocd-verification`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-os-csrf-token': 'csrf-proof-for-argocd-bootstrap',
+        'x-os-idempotency-key': 'argocd-verification-bootstrap-http-0001',
+        'x-os-correlation-id': 'argocd-verification-bootstrap-http-correlation-0001',
+      },
+      body: JSON.stringify(bootstrapRequest()),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(response.headers.get('location'), `/api/platform/operations/${operationId}`);
+    assert.equal(body.path, ARGOCD_VERIFICATION_PATH);
+    assert.deepEqual(sessionChecks, [{ requireCsrf: true, correlationId: 'argocd-verification-bootstrap-http-correlation-0001' }]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('Argo CD bootstrap uses the fixed writer again during independent approval', async () => {
+  const state = fixture();
+  await state.operations.bootstrapArgocdVerification({
+    session,
+    body: bootstrapRequest(),
+    idempotencyKey: 'argocd-verification-bootstrap-approval-0001',
+    correlationId: 'argocd-verification-bootstrap-approval-correlation-0001',
+  });
+  state.order.length = 0;
+  const result = await state.operations.approve({
+    session: approverSession,
+    operationId,
+    body: { reason: 'approve the fixed Argo CD verification declaration' },
+    idempotencyKey: 'argocd-verification-bootstrap-approval-0002',
+    correlationId: 'argocd-verification-bootstrap-approval-correlation-0002',
+  });
+  assert.deepEqual(state.order, ['approval-read', 'approval', 'argocd-gitea', 'proposal-binding', 'gitea-merge', 'merge-binding']);
+  assert.equal(result.merged, true);
+});
+
+test('Argo CD bootstrap approval rejects a stored fixed-plan substitution before Gitea', async () => {
+  const state = fixture();
+  await state.operations.bootstrapArgocdVerification({
+    session,
+    body: bootstrapRequest(),
+    idempotencyKey: 'argocd-verification-bootstrap-tamper-0001',
+    correlationId: 'argocd-verification-bootstrap-tamper-correlation-0001',
+  });
+  state.accepted[0].executionPlan.target = 'operator/controlled.json';
+  state.order.length = 0;
+  await assert.rejects(state.operations.approve({
+    session: approverSession,
+    operationId,
+    body: { reason: 'approve the fixed Argo CD verification declaration' },
+    idempotencyKey: 'argocd-verification-bootstrap-tamper-0002',
+    correlationId: 'argocd-verification-bootstrap-tamper-correlation-0002',
+  }), { code: 'ClaimBindingMismatch', status: 409 });
+  assert.deepEqual(state.order, ['approval-read']);
 });
 
 test('Platform change approval records independent approval before protected merge and binds its revision', async () => {

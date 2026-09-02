@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:argocd-verification-bootstrap-request:v1",
+  "title": "Argo CD Verification Bootstrap Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason", "confirm"],
+  "properties": {
+    "reason": { "type": "string", "minLength": 8, "maxLength": 500, "pattern": "^[^\\r\\n]+$" },
+    "confirm": { "const": "bootstrap argocd verification" }
+  }
+}

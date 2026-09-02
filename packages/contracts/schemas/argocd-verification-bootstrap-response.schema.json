@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:argocd-verification-bootstrap-response:v1",
+  "title": "Argo CD Verification Bootstrap Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ready", "changed", "path"],
+  "properties": {
+    "ready": { "type": "boolean" },
+    "changed": { "type": "boolean" },
+    "path": { "const": "platform-delivery/verification/opensphere-platform-delivery-verification.json" },
+    "mergeRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "accepted": { "const": true },
+    "duplicate": { "type": "boolean" },
+    "requestId": { "type": "string", "format": "uuid" },
+    "operation": { "$ref": "./operation-receipt.schema.json" },
+    "status": { "const": "authorized" },
+    "branch": { "type": "string", "pattern": "^control/[0-9a-f-]{36}$" },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "url"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "url": { "type": ["string", "null"], "format": "uri" }
+      }
+    },
+    "desiredRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "changed": { "const": true } }, "required": ["changed"] },
+      "then": {
+        "properties": { "ready": { "const": false } },
+        "required": ["accepted", "duplicate", "requestId", "operation", "status", "branch", "pullRequest", "desiredRevision"]
+      },
+      "else": {
+        "properties": { "ready": { "const": true }, "changed": { "const": false } },
+        "required": ["mergeRevision"]
+      }
+    }
+  ]
+}

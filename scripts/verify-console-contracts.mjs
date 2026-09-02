@@ -339,6 +339,15 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(giteaStatus?.['x-opensphere-permission'] === 'console.git.change', 'getGiteaStatus must declare its read permission');
   assert(giteaStatus?.responses?.['200']?.content?.['application/json']?.schema?.$ref
     === '../schemas/gitea-status-response.schema.json', 'getGiteaStatus must use the closed status schema');
+  const argocdBootstrap = entries.find(({ operation }) => operation.operationId === 'bootstrapArgocdVerification')?.operation;
+  assert(argocdBootstrap?.['x-opensphere-action'] === 'console.platform.change.propose@1.0',
+    'bootstrapArgocdVerification must reuse the governed Gitea proposal action');
+  assert(argocdBootstrap?.requestBody?.content?.['application/json']?.schema?.$ref
+    === '../schemas/argocd-verification-bootstrap-request.schema.json',
+  'bootstrapArgocdVerification must use the fixed closed input schema');
+  assert(argocdBootstrap?.responses?.['201']?.content?.['application/json']?.schema?.$ref
+    === '../schemas/argocd-verification-bootstrap-response.schema.json',
+  'bootstrapArgocdVerification must expose the bounded proposal response');
   const installOperation = entries.find(({ operation }) => operation.operationId === 'installExtensionCandidate')?.operation;
   assert(
     installOperation?.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/extension-install-request.schema.json',

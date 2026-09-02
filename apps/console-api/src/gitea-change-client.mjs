@@ -1,3 +1,9 @@
+import {
+  ARGOCD_VERIFICATION_PATH,
+  argocdVerificationDeclaration,
+  isArgocdVerificationDeclaration,
+} from './argocd-verification-contract.mjs';
+
 const SHA = /^[0-9a-f]{40,64}$/u;
 
 function failure(code, message, status, sideEffect = 'none', details = {}) {
@@ -200,6 +206,103 @@ export function createGiteaChangeClient({
     return (Array.isArray(pulls.body) ? pulls.body : []).find((pull) => pull?.head?.ref === branch || pull?.head?.label === `${organizationName}:${branch}`) || null;
   }
 
+  async function argocdVerificationStatus() {
+    if (`${organizationName}/${repositoryName}` !== 'opensphere/platform-declarations') {
+      throw failure('AuthorityUnavailable', 'Argo CD verification bootstrap requires opensphere/platform-declarations', 503);
+    }
+    await requireReady();
+    let file = null;
+    try {
+      file = (await request(`${repoPath}/contents/${encodedPath(ARGOCD_VERIFICATION_PATH)}?ref=${encodeURIComponent(branchName)}`)).body;
+    } catch (error) {
+      if (error?.code !== 'NotFound') throw error;
+    }
+    const branch = (await request(`${repoPath}/branches/${encodeURIComponent(branchName)}`)).body;
+    const revision = String(branch?.commit?.id || branch?.commit?.sha || '').toLowerCase();
+    if (!SHA.test(revision)) throw failure('AuthorityUnavailable', 'Gitea did not return the default branch revision', 503);
+    const sourceSha = file?.sha ? String(file.sha).toLowerCase() : null;
+    if (file && !SHA.test(sourceSha || '')) {
+      throw failure('AuthorityUnavailable', 'Gitea did not return the fixed declaration revision', 503);
+    }
+    let matches = false;
+    if (file?.content) {
+      try {
+        const decoded = Buffer.from(String(file.content).replace(/\s+/gu, ''), 'base64').toString('utf8');
+        matches = isArgocdVerificationDeclaration(JSON.parse(decoded));
+      } catch {
+        matches = false;
+      }
+    }
+    return Object.freeze({
+      ready: matches,
+      path: ARGOCD_VERIFICATION_PATH,
+      mainRevision: revision,
+      sourceSha,
+    });
+  }
+
+  async function ensureArgocdVerificationProposal({ operationId, reason, sourceSha = null }) {
+    if (`${organizationName}/${repositoryName}` !== 'opensphere/platform-declarations') {
+      throw failure('AuthorityUnavailable', 'Argo CD verification bootstrap requires opensphere/platform-declarations', 503);
+    }
+    await requireReady();
+    const operation = boundedText(operationId, 'operationId', 36, 36);
+    if (!/^[0-9a-f-]{36}$/u.test(operation)) throw failure('ValidationFailed', 'operationId must be a UUID', 400);
+    const changeReason = boundedText(reason, 'reason', 8, 500);
+    if (sourceSha !== null && !SHA.test(String(sourceSha).toLowerCase())) {
+      throw failure('ValidationFailed', 'sourceSha is invalid', 400);
+    }
+    const branch = `control/${operation}`;
+    let existingBranch = null;
+    try {
+      existingBranch = (await request(`${repoPath}/branches/${encodeURIComponent(branch)}`)).body;
+    } catch (error) {
+      if (error?.code !== 'NotFound') throw error;
+    }
+    let desiredRevision = String(existingBranch?.commit?.id || existingBranch?.commit?.sha || '').toLowerCase();
+    if (!existingBranch) {
+      const title = '[Console] Bootstrap Argo CD verification declaration';
+      const created = await request(`${repoPath}/contents/${encodedPath(ARGOCD_VERIFICATION_PATH)}`, {
+        method: sourceSha ? 'PUT' : 'POST',
+        mutation: true,
+        body: {
+          branch: branchName,
+          new_branch: branch,
+          message: `${title} (${operation})`,
+          content: Buffer.from(`${JSON.stringify(argocdVerificationDeclaration(), null, 2)}\n`).toString('base64'),
+          ...(sourceSha ? { sha: sourceSha } : {}),
+        },
+      });
+      desiredRevision = String(created.body?.commit?.sha || '').toLowerCase();
+    }
+    let pull = await findPull(branch);
+    if (!pull) {
+      pull = (await request(`${repoPath}/pulls`, {
+        method: 'POST',
+        mutation: true,
+        body: {
+          title: '[Console] Bootstrap Argo CD verification declaration',
+          head: branch,
+          base: branchName,
+          body: `Fixed Console bootstrap contract ${operation}.\n\nReason: ${changeReason}`,
+        },
+      })).body;
+    }
+    const pullNumber = Number(pull?.number);
+    if (!Number.isSafeInteger(pullNumber) || pullNumber < 1 || !SHA.test(desiredRevision)) {
+      throw failure('AuthorityUnavailable', 'Gitea did not return a durable fixed declaration proposal', 503, 'unknown');
+    }
+    return Object.freeze({
+      repository: `${organizationName}/${repositoryName}`,
+      defaultBranch: branchName,
+      branch,
+      filePath: ARGOCD_VERIFICATION_PATH,
+      desiredRevision,
+      pullRequest: Object.freeze({ number: pullNumber, url: String(pull?.html_url || '') || null }),
+      replayed: Boolean(existingBranch),
+    });
+  }
+
   async function ensureProposal({ operationId, consumerId, action, target, reason, desiredState, submittedAt }) {
     await requireReady();
     const operation = boundedText(operationId, 'operationId', 36, 36);
@@ -308,6 +411,8 @@ export function createGiteaChangeClient({
     configured,
     supplyChainStatus,
     ensureProposal,
+    argocdVerificationStatus,
+    ensureArgocdVerificationProposal,
     approveAndMerge,
     repository: `${organizationName}/${repositoryName}`,
     organization: organizationName,

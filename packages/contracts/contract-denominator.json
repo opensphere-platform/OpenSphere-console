@@ -49,6 +49,7 @@
     "getSupabaseStatus",
     "listAuditEvents",
     "getGiteaStatus",
+    "bootstrapArgocdVerification",
     "proposePlatformChange",
     "approvePlatformChange",
     "createOperation",
@@ -84,6 +85,8 @@
   ],
   "requiredSchemas": [
     "gitea-status-response.schema.json",
+    "argocd-verification-bootstrap-request.schema.json",
+    "argocd-verification-bootstrap-response.schema.json",
     "platform-change-proposal-request.schema.json",
     "platform-change-proposal-response.schema.json",
     "platform-change-approval-request.schema.json",

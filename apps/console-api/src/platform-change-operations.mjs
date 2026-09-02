@@ -1,3 +1,11 @@
+import {
+  ARGOCD_VERIFICATION_CONFIRMATION,
+  ARGOCD_VERIFICATION_PATH,
+  ARGOCD_VERIFICATION_TEMPLATE_ID,
+  argocdVerificationDeclaration,
+  isArgocdVerificationDeclaration,
+} from './argocd-verification-contract.mjs';
+
 const CONSUMER = /^[a-z][a-z0-9._-]{1,127}$/u;
 const ACTIONS = new Set(['apply', 'configure', 'delete', 'rollback']);
 const MAX_DESIRED_STATE_BYTES = 64 * 1024;
@@ -55,7 +63,21 @@ function validateProposal(body) {
     }
   }
   const templateId = body.templateId == null ? null : text(body.templateId, 'templateId', 1, 128);
+  if (templateId === ARGOCD_VERIFICATION_TEMPLATE_ID || target === ARGOCD_VERIFICATION_PATH) {
+    fail('templateId and target are reserved for the fixed Console bootstrap contract');
+  }
   return Object.freeze({ consumerId, action, target, reason, desiredState: body.desiredState, templateId });
+}
+
+function validateArgocdVerificationBootstrap(body) {
+  exact(body, ['reason', 'confirm'], 'Argo CD verification bootstrap request');
+  const reason = text(body.reason, 'reason', 8, 500);
+  if (String(body.confirm || '').trim() !== ARGOCD_VERIFICATION_CONFIRMATION) {
+    throw Object.assign(new Error(`confirmation must exactly equal: ${ARGOCD_VERIFICATION_CONFIRMATION}`), {
+      code: 'Conflict', status: 409, sideEffect: 'none',
+    });
+  }
+  return Object.freeze({ reason });
 }
 
 function validateApproval(body) {
@@ -193,7 +215,34 @@ function approvalPlan(record, giteaClient) {
       code: 'ClaimBindingMismatch', status: 409, sideEffect: 'none',
     });
   }
+  if ((plan.templateId === ARGOCD_VERIFICATION_TEMPLATE_ID || plan.target === ARGOCD_VERIFICATION_PATH)
+      && (plan.consumerId !== 'platform-delivery' || plan.action !== 'configure'
+        || plan.target !== ARGOCD_VERIFICATION_PATH || plan.templateId !== ARGOCD_VERIFICATION_TEMPLATE_ID
+        || !isArgocdVerificationDeclaration(plan.desiredState))) {
+    throw Object.assign(new Error('stored fixed Argo CD verification plan is invalid'), {
+      code: 'ClaimBindingMismatch', status: 409, sideEffect: 'none',
+    });
+  }
   return plan;
+}
+
+function ensurePlanProposal(giteaClient, plan, input) {
+  if (plan.templateId === ARGOCD_VERIFICATION_TEMPLATE_ID) {
+    return giteaClient.ensureArgocdVerificationProposal({
+      operationId: input.operationId,
+      reason: input.reason,
+      sourceSha: input.sourceSha,
+    });
+  }
+  return giteaClient.ensureProposal({
+    operationId: input.operationId,
+    consumerId: plan.consumerId,
+    action: plan.action,
+    target: plan.target,
+    reason: input.reason,
+    desiredState: plan.desiredState,
+    submittedAt: plan.submittedAt,
+  });
 }
 
 export function createPlatformChangeOperations({ operationService, policyRevision, projectionStore, giteaClient, clock = () => new Date() }) {
@@ -205,7 +254,8 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
       || !projectionStore?.recordGiteaMerge) {
     throw new TypeError('Gitea operation projection store is required');
   }
-  if (!giteaClient?.supplyChainStatus || !giteaClient?.ensureProposal || !giteaClient?.approveAndMerge) {
+  if (!giteaClient?.supplyChainStatus || !giteaClient?.ensureProposal || !giteaClient?.approveAndMerge
+      || !giteaClient?.argocdVerificationStatus || !giteaClient?.ensureArgocdVerificationProposal) {
     throw new TypeError('Gitea change client is required');
   }
   const planRevision = text(policyRevision, 'policyRevision', 1, 128);
@@ -305,6 +355,97 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
       }
     },
 
+    async bootstrapArgocdVerification({ session, body, idempotencyKey, correlationId }) {
+      const request = validateArgocdVerificationBootstrap(body);
+      assertStatusAuthority(session);
+      if (session.aal !== 'aal2') {
+        throw Object.assign(new Error('Argo CD verification bootstrap requires MFA assurance aal2'), {
+          code: 'StepUpRequired', status: 428, sideEffect: 'none',
+        });
+      }
+      const currentStatus = await giteaClient.argocdVerificationStatus();
+      if (currentStatus.ready) {
+        return Object.freeze({
+          ready: true,
+          changed: false,
+          path: ARGOCD_VERIFICATION_PATH,
+          mergeRevision: currentStatus.mainRevision,
+        });
+      }
+      const submittedAt = clock().toISOString();
+      const plan = {
+        schemaVersion: '1.0',
+        authority: 'Gitea',
+        repository: giteaClient.repository,
+        defaultBranch: giteaClient.defaultBranch,
+        consumerId: 'platform-delivery',
+        action: 'configure',
+        target: ARGOCD_VERIFICATION_PATH,
+        desiredState: argocdVerificationDeclaration(),
+        templateId: ARGOCD_VERIFICATION_TEMPLATE_ID,
+        submittedAt,
+      };
+      const accepted = await operationService.accept({
+        session,
+        idempotencyKey,
+        correlationId,
+        executionPlan: plan,
+        request: {
+          schemaVersion: '1.0',
+          actionId: 'console.platform.change.propose',
+          actionVersion: '1.0',
+          targetRef: `gitea-change:platform-delivery:${ARGOCD_VERIFICATION_PATH}`,
+          payload: {
+            consumerId: plan.consumerId,
+            action: plan.action,
+            target: plan.target,
+            desiredState: plan.desiredState,
+            templateId: plan.templateId,
+          },
+          reason: request.reason,
+          risk: 'R2',
+          planRevision,
+        },
+      });
+      try {
+        const git = await ensurePlanProposal(giteaClient, plan, {
+          operationId: accepted.receipt.operationId,
+          reason: request.reason,
+          sourceSha: currentStatus.sourceSha,
+        });
+        let proposalReceipt;
+        try {
+          proposalReceipt = await projectionStore.recordGiteaProposal({
+            operationId: accepted.receipt.operationId,
+            desiredRevision: git.desiredRevision,
+            branch: git.branch,
+            pullNumber: git.pullRequest.number,
+            correlationId,
+          });
+        } catch (error) {
+          error.operationId = accepted.receipt.operationId;
+          error.sideEffect = 'present';
+          throw error;
+        }
+        return Object.freeze({
+          ready: false,
+          changed: true,
+          path: ARGOCD_VERIFICATION_PATH,
+          accepted: true,
+          duplicate: Boolean(accepted.replayed || git.replayed || proposalReceipt.replayed),
+          requestId: accepted.receipt.operationId,
+          operation: accepted.receipt,
+          status: 'authorized',
+          branch: git.branch,
+          pullRequest: git.pullRequest,
+          desiredRevision: git.desiredRevision,
+        });
+      } catch (error) {
+        error.operationId = accepted.receipt.operationId;
+        throw error;
+      }
+    },
+
     async approve({ session, operationId, body, idempotencyKey, correlationId }) {
       const approval = validateApproval(body);
       const authority = operationService.assertApprovalAuthority({ session, reason: approval.reason });
@@ -336,14 +477,9 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
         });
       }
       try {
-        const proposal = await giteaClient.ensureProposal({
+        const proposal = await ensurePlanProposal(giteaClient, plan, {
           operationId,
-          consumerId: plan.consumerId,
-          action: plan.action,
-          target: plan.target,
           reason: record.reason,
-          desiredState: plan.desiredState,
-          submittedAt: plan.submittedAt,
         });
         try {
           await projectionStore.recordGiteaProposal({

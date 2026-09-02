@@ -2,12 +2,18 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { createGiteaChangeClient } from '../src/gitea-change-client.mjs';
+import {
+  ARGOCD_VERIFICATION_PATH,
+  argocdVerificationDeclaration,
+} from '../src/argocd-verification-contract.mjs';
 
 const operationId = '33333333-3333-4333-8333-333333333333';
 const desiredRevision = 'a'.repeat(40);
 const mergeRevision = 'b'.repeat(40);
 
-async function withGitea(run, { protectedBranch = true, privateRepository = true, omitDesiredRevision = false } = {}) {
+async function withGitea(run, {
+  protectedBranch = true, privateRepository = true, omitDesiredRevision = false, argocdState = 'missing',
+} = {}) {
   const calls = [];
   let branchExists = false;
   let pullExists = false;
@@ -37,6 +43,15 @@ async function withGitea(run, { protectedBranch = true, privateRepository = true
         require_signed_commits: true, block_on_rejected_reviews: true,
       }] : []);
     }
+    if (request.url === '/api/v1/repos/opensphere/platform-declarations/branches/main') {
+      return send(200, { name: 'main', commit: { id: 'c'.repeat(40) } });
+    }
+    const fixedPath = `/api/v1/repos/opensphere/platform-declarations/contents/${ARGOCD_VERIFICATION_PATH}?ref=main`;
+    if (request.method === 'GET' && request.url === fixedPath) {
+      if (argocdState === 'missing') return send(404, { message: 'not found' });
+      const value = argocdState === 'ready' ? argocdVerificationDeclaration() : { drifted: true };
+      return send(200, { sha: 'd'.repeat(40), content: Buffer.from(`${JSON.stringify(value)}\n`).toString('base64') });
+    }
     if (request.url === `/api/v1/repos/opensphere/platform-declarations/branches/control%2F${operationId}`) {
       return branchExists ? send(200, {
         name: `control/${operationId}`, commit: { id: omitDesiredRevision ? null : desiredRevision },
@@ -49,7 +64,7 @@ async function withGitea(run, { protectedBranch = true, privateRepository = true
         base: { ref: 'main' }, state: merged ? 'closed' : 'open', merged, merge_commit_sha: merged ? mergeRevision : null,
       }] : []);
     }
-    if (request.method === 'POST' && request.url?.includes('/contents/')) {
+    if (['POST', 'PUT'].includes(request.method) && request.url?.includes('/contents/')) {
       branchExists = true;
       return send(201, { commit: { sha: omitDesiredRevision ? null : desiredRevision } });
     }
@@ -236,4 +251,53 @@ test('Gitea change management is disabled when control and review credentials ar
   assert.equal(status.configured, false);
   assert.equal(status.ready, false);
   assert.match(status.reason, /distinct/u);
+});
+
+test('Fixed Argo CD verification inspection recognizes the exact declaration on main without mutation', async () => {
+  await withGitea(async ({ client, calls }) => {
+    const status = await client.argocdVerificationStatus();
+    assert.deepEqual(status, {
+      ready: true,
+      path: ARGOCD_VERIFICATION_PATH,
+      mainRevision: 'c'.repeat(40),
+      sourceSha: 'd'.repeat(40),
+    });
+    assert.equal(calls.filter((call) => ['POST', 'PUT'].includes(call.method)).length, 0);
+  }, { argocdState: 'ready' });
+});
+
+test('Fixed Argo CD verification proposal replaces drift only through an operation-bound branch', async () => {
+  await withGitea(async ({ client, calls }) => {
+    const status = await client.argocdVerificationStatus();
+    assert.equal(status.ready, false);
+    const proposal = await client.ensureArgocdVerificationProposal({
+      operationId,
+      reason: 'restore the fixed Argo CD verification declaration',
+      sourceSha: status.sourceSha,
+    });
+    assert.equal(proposal.filePath, ARGOCD_VERIFICATION_PATH);
+    assert.equal(proposal.branch, `control/${operationId}`);
+    const write = calls.find((call) => call.method === 'PUT' && call.url?.includes('/contents/'));
+    assert.ok(write);
+    assert.equal(write.body.branch, 'main');
+    assert.equal(write.body.new_branch, `control/${operationId}`);
+    assert.equal(write.body.sha, 'd'.repeat(40));
+    assert.deepEqual(
+      JSON.parse(Buffer.from(write.body.content, 'base64').toString('utf8')),
+      argocdVerificationDeclaration(),
+    );
+  }, { argocdState: 'drifted' });
+});
+
+test('Fixed Argo CD verification bootstrap refuses a configurable repository substitution', async () => {
+  const client = createGiteaChangeClient({
+    baseUrl: 'https://gitea.example',
+    controlToken: 'control',
+    reviewToken: 'review',
+    repository: 'operator-selected',
+    fetchImpl: async () => { throw new Error('must not be called'); },
+  });
+  await assert.rejects(client.argocdVerificationStatus(), {
+    code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
+  });
 });
