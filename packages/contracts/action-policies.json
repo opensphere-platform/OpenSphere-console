@@ -4,6 +4,17 @@
   "policyRevision": "console-operation-policy-2026-09-02.1",
   "actions": [
     {
+      "actionId": "console.platform.change.propose",
+      "actionVersion": "1.0",
+      "requirement": "CON-FR-010",
+      "permission": "console.git.change",
+      "risk": "R2",
+      "approvalRequired": true,
+      "dispatchMode": "gitea-reviewed-declaration",
+      "ownerRef": "API_GIT",
+      "targetPattern": "^gitea-change:[a-z][a-z0-9._-]{1,127}:[^\\r\\n]{1,300}$"
+    },
+    {
       "actionId": "console.registry.connection.replace",
       "actionVersion": "1.0",
       "requirement": "CON-FR-007",
