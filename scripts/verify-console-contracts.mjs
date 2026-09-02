@@ -169,6 +169,14 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   assert(serviceRoleEnv?.valueFrom?.secretKeyRef?.key === 'supabase-service-role-key', 'C_API Supabase administrator Secret key differs from the install contract');
   const publicOriginEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_PUBLIC_ORIGIN');
   assert(publicOriginEnv?.value === '__OPENSPHERE_CONSOLE_URL__', 'C_API public origin must remain an installer-validated render input');
+  const beszelUrlEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_BESZEL_URL');
+  assert(beszelUrlEnv?.value === 'http://beszel-hub.opensphere-monitoring.svc.cluster.local:8090', 'C_API Beszel origin differs from the private governed Hub');
+  for (const [name, key] of [['CONSOLE_BESZEL_READER_EMAIL', 'email'], ['CONSOLE_BESZEL_READER_PASSWORD', 'password']]) {
+    const entry = container?.env?.find((candidate) => candidate.name === name);
+    assert(entry?.value === undefined, name + ' must not be a literal value');
+    assert(entry?.valueFrom?.secretKeyRef?.name === 'opensphere-baseline-monitoring-reader', name + ' uses the wrong projected Secret');
+    assert(entry?.valueFrom?.secretKeyRef?.key === key, name + ' uses the wrong projected Secret key');
+  }
   assert(service.spec?.type === 'ClusterIP', 'C_API Service must remain cluster-internal');
 
   assert(JSON.stringify(networkPolicy.spec?.policyTypes) === JSON.stringify(['Ingress', 'Egress']), 'C_API NetworkPolicy must select both directions');
@@ -186,6 +194,13 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   for (const destination of ['kube-system', 'opensphere-console-data', 'opensphere-supabase-postgres', 'opensphere-supabase-auth', 'opensphere-supabase-rest', 'opensphere-supabase-storage', 'opensphere-registry']) {
     assert(egress.includes(destination), `C_API NetworkPolicy omits required destination ${destination}`);
   }
+  assert(
+    (networkPolicy.spec?.egress || []).some((rule) => JSON.stringify(rule.to) === JSON.stringify([{
+      namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'opensphere-monitoring' } },
+      podSelector: { matchLabels: { 'app.kubernetes.io/name': 'beszel-hub' } },
+    }]) && JSON.stringify(rule.ports) === JSON.stringify([{ protocol: 'TCP', port: 8090 }])),
+    'C_API egress to Beszel must be limited to the private Hub pod on TCP/8090',
+  );
   assert(!egress.includes('ipBlock'), 'C_API NetworkPolicy must not add an unbounded IP egress escape');
 
   assert(
@@ -436,6 +451,11 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   const consoleApiBoundary = boundary.components.find((component) => component.id === 'C_API');
   assert(consoleApiBoundary?.path === 'apps/console-api', 'C_API path differs from the target component boundary');
   assert(consoleApiBoundary?.artifact === 'opensphere-console-api', 'C_API artifact differs from the target component boundary');
+  assert(JSON.stringify(consoleApiBoundary?.auxiliaryArtifacts) === JSON.stringify([
+    'opensphere-console-beszel-hub',
+    'opensphere-console-beszel-agent',
+    'opensphere-console-beszel-bootstrap',
+  ]), 'C_API boundary omits its governed Beszel runtime artifacts');
   if (requireReleaseReady) {
     await verifyReleaseReadiness({ root, boundary, denominator, browserApiCutover });
   }
@@ -459,6 +479,23 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
 
   const candidateWorkflow = await readFile(resolve(root, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
   const promotionWorkflow = await readFile(resolve(root, '.github', 'workflows', 'promote-release.yml'), 'utf8');
+  const beszelReleaseContract = await json(resolve(root, 'deploy', 'baseline-monitoring', 'release-contract.json'));
+  assert(beszelReleaseContract.ownerComponent === 'C_API' && beszelReleaseContract.authoritySystem === 'S_HOBS'
+    && beszelReleaseContract.adapterComponent === 'API_HOBS' && beszelReleaseContract.requirement === 'CON-FR-011',
+  'Beszel release contract differs from the Console host-observation authority boundary');
+  assert(beszelReleaseContract.bootstrapCore === true, 'Beszel must remain a Console Backbone bootstrap component');
+  const beszelArtifacts = Object.fromEntries((beszelReleaseContract.artifacts || []).map((artifact) => [artifact.key, artifact]));
+  for (const [key, image, dockerfile] of [
+    ['beszelHub', 'opensphere-console-beszel-hub', 'deploy/baseline-monitoring/images/hub/Dockerfile'],
+    ['beszelAgent', 'opensphere-console-beszel-agent', 'deploy/baseline-monitoring/images/agent/Dockerfile'],
+    ['beszelBootstrap', 'opensphere-console-beszel-bootstrap', 'deploy/baseline-monitoring/images/bootstrap/Dockerfile'],
+  ]) {
+    assert(beszelArtifacts[key]?.artifact === image && beszelArtifacts[key]?.dockerfile === dockerfile,
+      `Beszel release artifact ${key} differs from the closed release contract`);
+    assert(candidateWorkflow.includes(`- image: ${image}`) && candidateWorkflow.includes(`file: OpenSphere-console/${dockerfile}`),
+      `Candidate workflow omits governed Beszel artifact ${key}`);
+    assert(promotionWorkflow.includes(image), `Promotion workflow omits governed Beszel artifact ${key}`);
+  }
   assert(candidateWorkflow.includes('node scripts/verify-console-contracts.mjs --release-ready'), 'Candidate workflow has no target-migration publication gate');
   assert(candidateWorkflow.includes('file: OpenSphere-console/apps/console-web/Dockerfile'), 'Candidate workflow does not build the C_WEB target Dockerfile');
   assert(candidateWorkflow.includes('- image: opensphere-console-api'), 'Candidate workflow does not publish the C_API target artifact');
