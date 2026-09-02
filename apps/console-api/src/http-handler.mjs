@@ -17,6 +17,15 @@ function sendEmpty(response, status, headers = {}) {
   response.end();
 }
 
+function sendOwnerAdmission(response, admission, headers = {}) {
+  return sendEmpty(response, 204, {
+    'x-os-owner-authorization': admission.authorization,
+    'x-os-owner-admission': admission.ownerMarker,
+    ...(admission.csrfVerified ? { 'x-os-owner-csrf-verified': 'true' } : {}),
+    ...headers,
+  });
+}
+
 function sendAvatar(response, avatar) {
   response.writeHead(200, {
     'content-type': avatar.contentType,
@@ -125,7 +134,35 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           throw Object.assign(new Error('OSAA owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         }
         const admission = await ownerAdmissionOperations.authorizeOsaa(request, { correlationId });
-        return sendEmpty(response, 204, { 'x-os-r2d2-authorization': admission.authorization });
+        return sendOwnerAdmission(response, admission, { 'x-os-r2d2-authorization': admission.authorization });
+      }
+      if (url.pathname === '/api/internal/notification-owner-authn' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!ownerAdmissionOperations?.authorizeNotification) {
+          throw Object.assign(new Error('Notification owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return sendOwnerAdmission(response, await ownerAdmissionOperations.authorizeNotification(request, { correlationId }));
+      }
+      if (url.pathname === '/api/internal/external-channel-owner-authn' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!ownerAdmissionOperations?.authorizeExternalChannel) {
+          throw Object.assign(new Error('External Channel owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return sendOwnerAdmission(response, await ownerAdmissionOperations.authorizeExternalChannel(request, { correlationId }));
+      }
+      if (url.pathname === '/api/internal/os-shell-authn' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!ownerAdmissionOperations?.authorizeOsShell) {
+          throw Object.assign(new Error('OS Shell owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return sendOwnerAdmission(response, await ownerAdmissionOperations.authorizeOsShell(request, { correlationId }));
+      }
+      if (url.pathname === '/api/internal/plugin-proxy-authz' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!ownerAdmissionOperations?.authorizeExtension) {
+          throw Object.assign(new Error('Extension owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return sendOwnerAdmission(response, await ownerAdmissionOperations.authorizeExtension(request, { correlationId }));
       }
       if (url.pathname === '/api/identity/bootstrap/status' && request.method === 'GET') {
         if (!identitySessionBroker?.initialAdministratorStatus) {

@@ -4,59 +4,96 @@ import test from 'node:test';
 import { createConsoleApiHandler } from '../src/http-handler.mjs';
 import { createOwnerAdmissionOperations } from '../src/owner-admission-operations.mjs';
 
-function fixture() {
+const id = '33333333-3333-4333-8333-333333333333';
+const families = Object.freeze([
+  { name: 'OSAA', operation: 'authorizeOsaa', endpoint: '/api/internal/r2d2-proxy-authn', internalMarker: 'r2d2-proxy-v1', ownerMarker: 'osaa-gateway-v1', safe: '/api/manual/documents', unsafe: '/api/osaa/chat' },
+  { name: 'Notification', operation: 'authorizeNotification', endpoint: '/api/internal/notification-owner-authn', internalMarker: 'notification-dispatcher-v1', ownerMarker: 'notification-dispatcher-v1', safe: '/api/notifications/channels', unsafe: `/api/notifications/channels/${id}/test` },
+  { name: 'External Channel', operation: 'authorizeExternalChannel', endpoint: '/api/internal/external-channel-owner-authn', internalMarker: 'external-channel-executor-v1', ownerMarker: 'external-channel-executor-v1', safe: '/api/external-channels/backups', unsafe: `/api/external-channels/backups/${id}/restore-preview` },
+  { name: 'OS Shell', operation: 'authorizeOsShell', endpoint: '/api/internal/os-shell-authn', internalMarker: 'os-shell-v1', ownerMarker: 'os-shell-control-v1', safe: `/api/os-shell/sessions/${id}/attach`, unsafe: `/api/os-shell/sessions/${id}/attach-ticket` },
+  { name: 'Extension', operation: 'authorizeExtension', endpoint: '/api/internal/plugin-proxy-authz', internalMarker: 'plugin-proxy-v1', ownerMarker: 'extension-controller-v1', safe: '/api/plugins/metrics/assets/main.js', unsafe: '/api/plugins/metrics/api/settings' },
+]);
+
+function fixture(authorization = 'Bearer header.payload.signature') {
   const exchanges = [];
   const operations = createOwnerAdmissionOperations({
     identitySessionBroker: {
       async exchangeOwnerAccessCredential(request, options) {
         exchanges.push({ request, options });
-        return { authorization: 'Bearer header.payload.signature', expiresAt: '2026-09-03T00:00:00.000Z' };
+        return { authorization, expiresAt: '2026-09-03T00:00:00.000Z' };
       },
     },
   });
   return { operations, exchanges };
 }
 
-test('OSAA owner admission binds the original family, method, session proof, and CSRF policy', async () => {
-  const { operations, exchanges } = fixture();
-  const headers = {
-    'x-os-internal-authn-subrequest': 'r2d2-proxy-v1',
-    'x-os-original-method': 'POST',
-    'x-os-original-uri': '/api/osaa/chat?mode=operator',
+function headers(family, method, uri) {
+  return {
+    'x-os-internal-authn-subrequest': family.internalMarker,
+    'x-os-original-method': method,
+    'x-os-original-uri': uri,
     cookie: '__Host-opensphere-session=opaque',
     'x-os-csrf-token': 'csrf-proof',
   };
-  const result = await operations.authorizeOsaa({ headers }, { correlationId: 'owner-admission-0001' });
-  assert.equal(result.authorization, 'Bearer header.payload.signature');
-  assert.equal(exchanges[0].request.method, 'POST');
-  assert.equal(exchanges[0].request.url, '/api/osaa/chat?mode=operator');
-  assert.deepEqual(exchanges[0].options, { requireCsrf: true, correlationId: 'owner-admission-0001' });
-});
+}
 
-test('OSAA owner admission rejects external, bearer, and cross-family requests', async () => {
-  const { operations } = fixture();
-  for (const headers of [
-    { 'x-os-original-method': 'GET', 'x-os-original-uri': '/api/osaa/health' },
-    { 'x-os-internal-authn-subrequest': 'r2d2-proxy-v1', 'x-os-original-method': 'GET', 'x-os-original-uri': '/api/osaa/health', authorization: 'Bearer supplied' },
-    { 'x-os-internal-authn-subrequest': 'r2d2-proxy-v1', 'x-os-original-method': 'GET', 'x-os-original-uri': '/api/admin/plugins/catalog' },
-  ]) {
-    await assert.rejects(operations.authorizeOsaa({ headers }), { status: 403 });
+test('each Owner admission binds only its exact routes, method, browser session, and CSRF policy', async () => {
+  for (const family of families) {
+    const { operations, exchanges } = fixture();
+    const safe = await operations[family.operation]({ headers: headers(family, 'GET', family.safe + '?page=1') }, { correlationId: `${family.operation}-safe` });
+    const unsafe = await operations[family.operation]({ headers: headers(family, 'POST', family.unsafe) }, { correlationId: `${family.operation}-unsafe` });
+    assert.deepEqual(safe, { authorization: 'Bearer header.payload.signature', ownerMarker: family.ownerMarker, csrfVerified: false });
+    assert.deepEqual(unsafe, { authorization: 'Bearer header.payload.signature', ownerMarker: family.ownerMarker, csrfVerified: true });
+    assert.equal(exchanges[0].request.method, 'GET');
+    assert.equal(exchanges[0].request.url, family.safe + '?page=1');
+    assert.deepEqual(exchanges[0].options, { requireCsrf: false, correlationId: `${family.operation}-safe` });
+    assert.equal(exchanges[1].request.method, 'POST');
+    assert.equal(exchanges[1].request.url, family.unsafe);
+    assert.deepEqual(exchanges[1].options, { requireCsrf: true, correlationId: `${family.operation}-unsafe` });
   }
 });
 
-test('internal OSAA auth_request returns only the exchanged bearer header', async (t) => {
+test('Owner admission rejects external calls, bearer input, wrong internal markers, and cross-family replay', async () => {
+  const { operations } = fixture();
+  for (const family of families) {
+    const base = headers(family, 'GET', family.safe);
+    for (const invalid of [
+      { ...base, 'x-os-internal-authn-subrequest': undefined },
+      { ...base, 'x-os-internal-authn-subrequest': 'wrong-owner-v1' },
+      { ...base, authorization: 'Bearer browser.supplied.token' },
+      { ...base, 'x-os-original-uri': '/api/admin/plugins/catalog' },
+      { ...base, 'x-os-original-uri': 'http://attacker.invalid' + family.safe },
+      { ...base, 'x-os-original-method': 'TRACE' },
+    ]) {
+      await assert.rejects(operations[family.operation]({ headers: invalid }), (error) => [400, 403].includes(error.status));
+    }
+  }
+});
+
+test('Owner admission rejects a malformed credential exchange result', async () => {
+  const { operations } = fixture('Bearer not-a-jwt');
+  await assert.rejects(
+    operations.authorizeNotification({ headers: headers(families[1], 'GET', families[1].safe) }),
+    { code: 'AuthorityUnavailable', status: 503 },
+  );
+});
+
+test('internal auth_request endpoints return only exchanged Owner headers', async (t) => {
   const { operations } = fixture();
   const server = createServer(createConsoleApiHandler({ resolveSession: async () => ({}), ownerAdmissionOperations: operations }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/internal/r2d2-proxy-authn`, {
-    headers: {
-      'x-os-internal-authn-subrequest': 'r2d2-proxy-v1',
-      'x-os-original-method': 'GET',
-      'x-os-original-uri': '/api/manual/documents',
-    },
-  });
-  assert.equal(response.status, 204);
-  assert.equal(response.headers.get('x-os-r2d2-authorization'), 'Bearer header.payload.signature');
-  assert.equal(await response.text(), '');
+
+  for (const family of families) {
+    for (const [method, uri, csrfVerified] of [['GET', family.safe, false], ['POST', family.unsafe, true]]) {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}${family.endpoint}`, {
+        headers: headers(family, method, uri),
+      });
+      assert.equal(response.status, 204, family.name);
+      assert.equal(response.headers.get('x-os-owner-authorization'), 'Bearer header.payload.signature');
+      assert.equal(response.headers.get('x-os-owner-admission'), family.ownerMarker);
+      assert.equal(response.headers.get('x-os-owner-csrf-verified'), csrfVerified ? 'true' : null);
+      if (family.name === 'OSAA') assert.equal(response.headers.get('x-os-r2d2-authorization'), 'Bearer header.payload.signature');
+      assert.equal(await response.text(), '');
+    }
+  }
 });
