@@ -84,10 +84,14 @@ test('series accepts only a closed range and safe Beszel system identity', async
   await assert.rejects(operations.series('system\" || created>\"1970', '24h'), { code: 'ValidationFailed', status: 400 });
 });
 
-test('monitoring HTTP family revalidates the target session permission before reading Beszel', async (t) => {
-  let monitoringCalls = 0;
+test('monitoring HTTP family revalidates the target session permission before every Beszel read', async (t) => {
+  const calls = [];
   const baselineMonitoringOperations = {
-    async overview() { monitoringCalls += 1; return { provider: { id: 'beszel' } }; },
+    async overview() { calls.push(['overview']); return { provider: { id: 'beszel' } }; },
+    async nodes() { calls.push(['nodes']); return { items: [] }; },
+    async series(systemId, range) { calls.push(['series', systemId, range]); return { systemId, range, points: [] }; },
+    async alerts() { calls.push(['alerts']); return { active: [], history: [] }; },
+    async dataHealth() { calls.push(['dataHealth']); return { status: 'healthy' }; },
   };
   let permissions = [];
   const server = createServer(createConsoleApiHandler({
@@ -96,13 +100,28 @@ test('monitoring HTTP family revalidates the target session permission before re
   }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  const endpoint = `http://127.0.0.1:${server.address().port}/api/monitoring/baseline/v1/overview`;
-  const denied = await fetch(endpoint);
+  const base = `http://127.0.0.1:${server.address().port}/api/monitoring/baseline/v1`;
+  const denied = await fetch(base + '/overview');
   assert.equal(denied.status, 403);
-  assert.equal(monitoringCalls, 0);
+  assert.deepEqual(calls, []);
+
   permissions = ['console.data_identity.read'];
-  const allowed = await fetch(endpoint);
-  assert.equal(allowed.status, 200);
-  assert.equal((await allowed.json()).provider.id, 'beszel');
-  assert.equal(monitoringCalls, 1);
+  for (const [path, expected] of [
+    ['/overview', { provider: { id: 'beszel' } }],
+    ['/nodes', { items: [] }],
+    ['/nodes/system_1/series?range=7d', { systemId: 'system_1', range: '7d', points: [] }],
+    ['/alerts', { active: [], history: [] }],
+    ['/data-health', { status: 'healthy' }],
+  ]) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200, path);
+    assert.deepEqual(await response.json(), expected, path);
+  }
+  assert.deepEqual(calls, [
+    ['overview'], ['nodes'], ['series', 'system_1', '7d'], ['alerts'], ['dataHealth'],
+  ]);
+
+  const expanded = await fetch(base + '/nodes/system_1/series?range=7d&extra=true');
+  assert.equal(expanded.status, 400);
+  assert.equal(calls.length, 5);
 });

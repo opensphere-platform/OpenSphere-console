@@ -56,7 +56,20 @@
       ]
     },
     { "id": "admin", "prefix": "/api/admin", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
-    { "id": "monitoring", "prefix": "/api/monitoring", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    {
+      "id": "monitoring",
+      "prefix": "/api/monitoring",
+      "targetOwner": "C_API",
+      "sessionPolicy": "browser-session",
+      "status": "target-implemented-and-verified",
+      "evidence": [
+        "apps/console-api/src/baseline-monitoring-operations.mjs",
+        "apps/console-api/src/http-handler.mjs",
+        "apps/console-api/test/baseline-monitoring-operations.test.mjs",
+        "apps/console-web/src/app/pages/admin-infrastructure-monitoring.ts",
+        "deploy/baseline-monitoring/release-contract.json"
+      ]
+    },
     { "id": "notifications", "prefix": "/api/notifications", "targetOwner": "C_NOTIFY", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     { "id": "external-channels", "prefix": "/api/external-channels", "targetOwner": "C_BAK", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     {

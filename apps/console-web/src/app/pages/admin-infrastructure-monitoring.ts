@@ -56,10 +56,10 @@ interface MonitoredNode {
   loadAverage: Array<number | null>;
   uptimeSeconds: number | null;
   temperatureCelsius: number | null;
-  binding: 'matched' | 'unmatched' | 'candidate' | 'ambiguous' | 'fingerprint-pending' | 'rejected';
-  identity: 'verified' | 'unmatched' | 'candidate' | 'ambiguous' | 'fingerprint-pending' | 'rejected';
+  binding: 'beszel-authoritative';
+  identity: 'beszel-system';
   bindingEvidence: { state: string; fingerprintDigest?: string; reason?: string } | null;
-  stateAgreement: 'agree' | 'disagree' | 'unknown';
+  stateAgreement: 'not-applicable';
   kubernetes: KubernetesNode | null;
 }
 
@@ -126,7 +126,7 @@ interface ChartView {
   template: `
     <div class="os-page monitoring-page">
       <os-page-header title="Infrastructure Monitoring" tag="Baseline observation · Beszel v0.18.7" />
-      <p class="os-sub">Console이 독립적으로 제공하는 노드 OS 시계열과 Kubernetes API의 현재 상태를 결합합니다. Prometheus 또는 Grafana 설치 여부와 관계없이 동작합니다.</p>
+      <p class="os-sub">Console Backbone의 Beszel Hub·Agent가 제공하는 노드 OS 시계열을 읽기 전용으로 표시합니다. Kubernetes 관측 owner는 아직 구성하지 않았으며, Prometheus 또는 Grafana 설치 여부와 관계없이 동작합니다.</p>
 
       <div class="os-actions">
         <button class="btn btn-sm btn-outline" (click)="refresh()" [disabled]="loading()">새로고침</button>
@@ -160,9 +160,9 @@ interface ChartView {
               @if (overview(); as summary) {
                 <section class="status-rail" aria-label="기초 관측 요약">
                   <div><span>노드 관측</span><strong [class.ok]="summary.systems.down === 0">{{ summary.systems.up }}/{{ summary.systems.total }}</strong><small>Beszel Agent 연결</small></div>
-                  <div><span>Kubernetes Ready</span><strong [class.ok]="summary.kubernetes.nodesReady === summary.kubernetes.nodes">{{ summary.kubernetes.nodesReady }}/{{ summary.kubernetes.nodes }}</strong><small>API 현재 상태</small></div>
+                  <div><span>Kubernetes 관측</span><strong [class.ok]="summary.kubernetes.available && summary.kubernetes.nodesReady === summary.kubernetes.nodes">{{ summary.kubernetes.available ? summary.kubernetes.nodesReady + "/" + summary.kubernetes.nodes : "미구성" }}</strong><small>{{ summary.kubernetes.available ? "API 현재 상태" : "관측 owner 미구성" }}</small></div>
                   <div><span>활성 경보</span><strong [class.warn]="summary.alerts.triggered > 0">{{ summary.alerts.triggered }}</strong><small>설정 {{ summary.alerts.total }}건</small></div>
-                  <div><span>상태 불일치</span><strong [class.warn]="summary.systems.disagreement > 0">{{ summary.systems.disagreement }}</strong><small>Agent와 K8s 비교</small></div>
+                  <div><span>상태 비교</span><strong [class.warn]="summary.kubernetes.available && summary.systems.disagreement > 0">{{ summary.kubernetes.available ? summary.systems.disagreement : "미측정" }}</strong><small>Beszel과 K8s 권위</small></div>
                   <div><span>최대 이력</span><strong>{{ summary.retention.maximumDays }}일</strong><small>계층형 자동 보존</small></div>
                 </section>
 
@@ -170,10 +170,10 @@ interface ChartView {
                   <section class="os-card">
                     <div class="os-card-h">현재 운영 상태</div>
                     <dl class="facts">
-                      <div><dt>연결되지 않은 Kubernetes 노드</dt><dd>{{ summary.systems.unmatched }}대</dd></div>
+                      <div><dt>연결되지 않은 Kubernetes 노드</dt><dd>{{ summary.kubernetes.available ? summary.systems.unmatched + "대" : "미측정" }}</dd></div>
                       <div><dt>신원 충돌로 거부된 노드</dt><dd>{{ summary.systems.identityRejected || 0 }}대</dd></div>
-                      <div><dt>실행 중 Pod</dt><dd>{{ summary.kubernetes.pods['Running'] || 0 }} / {{ summary.kubernetes.pods['total'] || 0 }}</dd></div>
-                      <div><dt>Namespace</dt><dd>{{ summary.kubernetes.namespaces }}</dd></div>
+                      <div><dt>실행 중 Pod</dt><dd>{{ summary.kubernetes.available ? (summary.kubernetes.pods['Running'] || 0) + ' / ' + (summary.kubernetes.pods['total'] || 0) : '미측정' }}</dd></div>
+                      <div><dt>Namespace</dt><dd>{{ summary.kubernetes.available ? summary.kubernetes.namespaces : '미측정' }}</dd></div>
                       <div><dt>Kubernetes API</dt><dd>{{ summary.kubernetes.available ? '연결됨' : '사용 불가' }}</dd></div>
                     </dl>
                   </section>
@@ -181,7 +181,7 @@ interface ChartView {
                     <div class="os-card-h">데이터 권위와 한계</div>
                     <ul class="scope-list">
                       <li><strong>노드 OS 추세</strong><span>Beszel · CPU, 메모리, 디스크, I/O, 네트워크, load</span></li>
-                      <li><strong>Kubernetes 현재 상태</strong><span>Kubernetes API · Node Ready, Pod phase, Namespace</span></li>
+                      <li><strong>Kubernetes 현재 상태</strong><span>관측 owner 미구성 · C_API에 Kubernetes 권한 없음</span></li>
                       <li><strong>고급 관측</strong><span>HISS · SLO, trace, 장기보존, 업무 telemetry</span></li>
                     </ul>
                   </section>
@@ -195,7 +195,7 @@ interface ChartView {
             <clr-tab-content *clrIfActive="tab() === 'nodes'">
               <section class="tab-section">
                 <div class="section-heading">
-                  <div><h2>노드 OS 관측</h2><p class="os-sub">Agent가 보고한 현재 사용률과 Kubernetes Node 결합 상태입니다.</p></div>
+                  <div><h2>노드 OS 관측</h2><p class="os-sub">Beszel Agent가 보고한 현재 사용률입니다. Kubernetes 결합은 별도 관측 owner가 구성된 뒤에만 표시합니다.</p></div>
                 </div>
                 <div class="grid-scroll" tabindex="0" aria-label="노드 OS 관측 표">
                   <clr-datagrid clrDetailExpandableAriaLabel="노드 메트릭 상세">
@@ -224,12 +224,11 @@ interface ChartView {
                         <clr-dg-cell>
                           @if (node.kubernetes) {
                             <span class="label" [class.label-success]="node.kubernetes.ready" [class.label-warning]="!node.kubernetes.ready">{{ node.kubernetes.ready ? 'Ready' : 'Not Ready' }}</span>
-                            <span class="label" [class.label-success]="node.identity === 'verified'" [class.label-danger]="node.identity === 'rejected'" [class.label-warning]="node.identity !== 'verified' && node.identity !== 'rejected'">
+                            <span class="label" [class.label-success]="node.identity === 'beszel-system'">
                               {{ identityLabel(node.identity) }}
                             </span>
-                            @if (node.stateAgreement === 'disagree') { <span class="label label-danger">불일치</span> }
                           } @else {
-                            <span class="label label-warning">연결 대상 없음</span>
+                            <span class="label label-warning">{{ nodes()?.kubernetesAvailable ? "연결 대상 없음" : "관측 owner 미구성" }}</span>
                           }
                         </clr-dg-cell>
                         <clr-dg-cell>{{ fmt(node.observedAt) }}</clr-dg-cell>
@@ -280,7 +279,7 @@ interface ChartView {
             <clr-tab-content *clrIfActive="tab() === 'kubernetes'">
               <section class="tab-section">
                 <h2>Kubernetes 기초 상태</h2>
-                <p class="os-sub">Node Ready는 Kubernetes API의 현재 값이며 CPU·메모리·디스크 추세는 동일 노드의 Beszel 관측값입니다. 스케줄러·컨트롤러·Pod 내부 애플리케이션 telemetry를 대체하지 않습니다.</p>
+                <p class="os-sub">Kubernetes 관측 owner는 아직 구성하지 않았습니다. 구성되기 전까지 Node Ready·Pod phase·Namespace를 추정하거나 0으로 표시하지 않습니다.</p>
                 <clr-datagrid>
                   <clr-dg-column>Node</clr-dg-column><clr-dg-column>Ready</clr-dg-column><clr-dg-column>역할</clr-dg-column><clr-dg-column>내부 IP</clr-dg-column><clr-dg-column>Kubelet</clr-dg-column><clr-dg-column>OS·Arch</clr-dg-column><clr-dg-column>OS 관측 결합</clr-dg-column>
                   @for (node of kubernetesNodes(); track node.uid) {
@@ -294,8 +293,8 @@ interface ChartView {
                       <clr-dg-cell><span class="label" [class.label-success]="monitorFor(node.name)" [class.label-warning]="!monitorFor(node.name)">{{ monitorFor(node.name) ? '결합됨' : 'Agent 미결합' }}</span></clr-dg-cell>
                     </clr-dg-row>
                   }
-                  <clr-dg-placeholder>Kubernetes Node 상태를 불러오지 못했습니다.</clr-dg-placeholder>
-                  <clr-dg-footer>{{ kubernetesNodes().length }}개 Node</clr-dg-footer>
+                  <clr-dg-placeholder>Kubernetes 관측 owner가 구성되지 않아 Node 상태를 측정하지 않습니다.</clr-dg-placeholder>
+                  <clr-dg-footer>{{ nodes()?.kubernetesAvailable ? kubernetesNodes().length + '개 Node' : '미측정' }}</clr-dg-footer>
                 </clr-datagrid>
               </section>
             </clr-tab-content>
@@ -496,6 +495,7 @@ export class AdminInfrastructureMonitoring implements OnInit, OnDestroy {
       ambiguous: '이름 중복',
       'fingerprint-pending': '지문 대기',
       rejected: '신원 충돌',
+      'beszel-system': 'Beszel 권위',
     } as Record<string, string>)[value] || value;
   }
   healthLabel(value: string): string { return ({ healthy: '정상', degraded: '저하', unavailable: '사용 불가', unconfigured: '미구성' } as Record<string, string>)[value] || value; }

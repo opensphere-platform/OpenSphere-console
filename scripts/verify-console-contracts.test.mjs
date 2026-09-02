@@ -29,6 +29,15 @@ test('Console Web exposes only the implemented interactive CLI credential surfac
   assert(!profileSource.includes('/api/identity/cli/tokens'));
 });
 
+test('Console Web monitoring names Beszel as its current authority and Kubernetes observation as unconfigured', async () => {
+  const source = await readFile(new URL('../apps/console-web/src/app/pages/admin-infrastructure-monitoring.ts', import.meta.url), 'utf8');
+  assert(source.includes('Baseline observation · Beszel v0.18.7'));
+  assert(source.includes('관측 owner 미구성'));
+  assert(source.includes("binding: 'beszel-authoritative'"));
+  assert(source.includes("identity: 'beszel-system'"));
+  assert(!source.includes('Kubernetes API의 현재 상태를 결합합니다'));
+});
+
 test('Console Web exposes only target-governed platform changes', async () => {
   const source = await readFile(new URL('../apps/console-web/src/app/pages/admin-change-control.ts', import.meta.url), 'utf8');
   assert(source.includes("'/api/platform/changes'"));
