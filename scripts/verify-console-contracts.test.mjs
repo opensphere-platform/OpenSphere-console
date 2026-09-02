@@ -19,6 +19,12 @@ test('foundational Console contracts are internally complete and self-contained'
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: false,
+    legacyApiDispositions: 277,
+    legacyApiDispositionCounts: {
+      adopted: 9,
+      reworked: 238,
+      rejected: 30,
+    },
   });
 });
 

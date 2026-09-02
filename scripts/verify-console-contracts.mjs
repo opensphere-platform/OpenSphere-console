@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import yaml from 'js-yaml';
 import { verifyBrowserApiCutover } from './browser-api-cutover.mjs';
+import { verifyLegacyApiDisposition } from './legacy-api-disposition.mjs';
 
 const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
@@ -253,6 +254,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   const openapi = yaml.load(await readFile(resolve(contractRoot, 'openapi', 'console-v1.yaml'), 'utf8'));
   const schemas = await readdir(resolve(contractRoot, 'schemas'));
   const browserApiCutover = await verifyBrowserApiCutover({ root });
+  const legacyApiDisposition = await verifyLegacyApiDisposition({ root });
 
   assert(openapi.openapi === '3.1.0', 'Console OpenAPI must use 3.1.0');
   assert(openapi.info?.['x-opensphere-status'] === denominator.status, 'OpenAPI and denominator status differ');
@@ -572,6 +574,8 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     browserApiFamilies: browserApiCutover.familyCount,
     targetBrowserSessionReady: browserApiCutover.targetSessionReady,
     authenticatedBrowserCutoverReady: browserApiCutover.authenticatedCutoverReady,
+    legacyApiDispositions: legacyApiDisposition.decisions,
+    legacyApiDispositionCounts: legacyApiDisposition.byDisposition,
   };
 }
 
