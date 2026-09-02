@@ -126,8 +126,8 @@ jobs:
             context: OpenSphere-console/backend/opensphere-console-osaa-gateway
             file: OpenSphere-console/backend/opensphere-console-osaa-gateway/Dockerfile
           - image: opensphere-osdst
-            context: OpenSphere-console/backend/opensphere-osdst
-            file: OpenSphere-console/backend/opensphere-osdst/Dockerfile
+            context: OpenSphere-console/apps/osdst
+            file: OpenSphere-console/apps/osdst/Dockerfile
           - image: opensphere-osaa-governed-adapter
             context: OpenSphere-console/backend/osaa-governed-adapter
             file: OpenSphere-console/backend/osaa-governed-adapter/Dockerfile

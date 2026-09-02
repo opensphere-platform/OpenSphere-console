@@ -305,7 +305,7 @@ $allImages = @(
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway\Dockerfile') },
-  [ordered]@{ Key = 'osdst'; Image = 'opensphere-osdst'; Context = (Join-Path $consoleCheckout 'backend\opensphere-osdst'); File = (Join-Path $consoleCheckout 'backend\opensphere-osdst\Dockerfile') },
+  [ordered]@{ Key = 'osdst'; Image = 'opensphere-osdst'; Context = (Join-Path $consoleCheckout 'apps\osdst'); File = (Join-Path $consoleCheckout 'apps\osdst\Dockerfile') },
   [ordered]@{ Key = 'osaaGovernedAdapter'; Image = 'opensphere-osaa-governed-adapter'; Context = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter'); File = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter\Dockerfile') },
   [ordered]@{ Key = 'notificationDispatcher'; Image = 'opensphere-console-notification-dispatcher'; Context = (Join-Path $consoleCheckout 'apps\notification-dispatcher'); File = (Join-Path $consoleCheckout 'apps\notification-dispatcher\Dockerfile') },
   [ordered]@{ Key = 'recovery'; Image = 'opensphere-console-recovery'; Context = (Join-Path $consoleCheckout 'backend\recovery'); File = (Join-Path $consoleCheckout 'backend\recovery\Dockerfile') },
