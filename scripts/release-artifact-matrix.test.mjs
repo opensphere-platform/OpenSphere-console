@@ -11,7 +11,6 @@ const canonical = [
   ['console', 'opensphere-console', 'apps/console-web/Dockerfile'],
   ['consoleApi', 'opensphere-console-api', 'apps/console-api/Dockerfile'],
   ['extensionController', 'opensphere-extension-controller', 'apps/extension-controller/Dockerfile'],
-  ['dupaController', 'opensphere-console-dupa-controller', 'apps/extension-controller/runtime/Dockerfile'],
   ['registry', 'opensphere-registry', 'backend/registry/deploy/Dockerfile'],
   ['osaaGateway', 'opensphere-console-osaa-gateway', 'apps/osaa-gateway/Dockerfile'],
   ['osdst', 'opensphere-osdst', 'apps/osdst/Dockerfile'],
@@ -63,16 +62,16 @@ function stepRun(job, name) {
   return step.run;
 }
 
-test('candidate matrix has 19 canonical and three signed auxiliary artifacts', async () => {
+test('candidate matrix has 18 canonical and three signed auxiliary artifacts', async () => {
   const workflow = yaml.load(await read('.github/workflows/publish-candidate-images.yml'));
   const publish = workflow.jobs.publish;
   assert.equal(publish.if, '${{ false }}', 'candidate publication HOLD must remain fail-closed');
 
   const matrix = publish.strategy.matrix.include;
-  assert.equal(matrix.length, 22);
+  assert.equal(matrix.length, 21);
   const canonicalMatrix = matrix.filter(({ scope }) => scope === 'canonical');
   const auxiliaryMatrix = matrix.filter(({ scope }) => scope === 'auxiliary');
-  assert.equal(canonicalMatrix.length, 19);
+  assert.equal(canonicalMatrix.length, 18);
   assert.equal(auxiliaryMatrix.length, 3);
   assert.deepEqual(sorted(canonicalMatrix.map(({ image }) => image)), sorted(canonicalImages));
   assert.deepEqual(sorted(auxiliaryMatrix.map(({ image }) => image)), sorted(auxiliaryImages));
@@ -99,11 +98,11 @@ test('candidate BOM and anchor-last tag arrays contain exactly the canonical fam
   const bom = stepRun(job, 'Verify immutable release and prepare signed BOM');
   const bomImages = bashArray(bom, 'images');
   const bomKeys = bashArray(bom, 'component_keys');
-  assert.equal(bomImages.length, 19);
-  assert.equal(bomKeys.length, 19);
+  assert.equal(bomImages.length, 18);
+  assert.equal(bomKeys.length, 18);
   assert.deepEqual(sorted(bomImages), sorted(canonicalImages));
   assert.deepEqual(new Map(bomKeys.map((key, index) => [key, bomImages[index]])), new Map(canonical.map(([key, image]) => [key, image])));
-  assert.match(bom, /\(\.components \| length\) == 19/u);
+  assert.match(bom, /\(\.components \| length\) == 18/u);
   assert.match(bom, /\["io\.opensphere\.release-scope"\]/u);
   assert.match(bom, /"\$scope" != canonical/u);
 
@@ -117,15 +116,15 @@ test('candidate BOM and anchor-last tag arrays contain exactly the canonical fam
   );
 });
 
-test('stable and GA stay held and describe only a 19-component canonical promotion', async () => {
+test('stable and GA stay held and describe only an 18-component canonical promotion', async () => {
   const workflow = yaml.load(await read('.github/workflows/promote-release.yml'));
   const promote = workflow.jobs.promote;
   assert.equal(promote.if, '${{ false }}', 'stable/GA HOLD must remain fail-closed');
   const verify = stepRun(promote, 'Verify adjacent source channel and exact release family');
   assert.deepEqual(bashArray(verify, 'canonical_images'), canonicalImages);
   assert.deepEqual(bashArray(verify, 'auxiliary_images'), auxiliaryImages);
-  assert.match(verify, /test "\$\{#canonical_images\[@\]\}" -eq 19/u);
-  assert.match(verify, /\(\.components \| length\) == 19/u);
+  assert.match(verify, /test "\$\{#canonical_images\[@\]\}" -eq 18/u);
+  assert.match(verify, /\(\.components \| length\) == 18/u);
   assert.match(verify, /Auxiliary artifacts are intentionally outside this canonical/u);
 
   const advance = stepRun(promote, 'Advance target channel with Console anchor last');
@@ -136,7 +135,7 @@ test('stable and GA stay held and describe only a 19-component canonical promoti
   );
 });
 
-test('local edge defaults to the canonical 19 and blocks the legacy backend before publication', async () => {
+test('local edge defaults to the canonical 18 and blocks the legacy backend before publication', async () => {
   const source = await read('scripts/Publish-LocalEdge.ps1');
   assert.deepEqual(quotedPowerShellArray(source, '[string[]]$Components'), canonicalKeys);
   assert.deepEqual(quotedPowerShellArray(source, '$canonicalComponentKeys'), canonicalKeys);
@@ -144,8 +143,8 @@ test('local edge defaults to the canonical 19 and blocks the legacy backend befo
   assert.deepEqual(quotedPowerShellArray(source, '$blockedLegacyComponentKeys'), ['backend']);
   assert.match(source, /if \(\$Components -contains 'backend'\) \{\s*throw /u);
   assert.ok(source.indexOf("if ($Components -contains 'backend')") < source.indexOf('New-Item -ItemType Directory'));
-  assert.match(source, /\$canonicalImages\.Count -ne 19/u);
-  assert.match(source, /\$componentEvidence\.Count -ne 19/u);
+  assert.match(source, /\$canonicalImages\.Count -ne 18/u);
+  assert.match(source, /\$componentEvidence\.Count -ne 18/u);
   assert.match(source, /\$canonicalAnchorMayMove = \$integratedRequest -or \$AdvanceOsShellUxConsoleEdge/u);
   assert.match(source, /if \(\$canonicalAnchorMayMove\) \{ \$contractArguments \+= '--release-ready' \}/u);
   assert.match(source, /Invoke-Checked node @contractArguments/u);

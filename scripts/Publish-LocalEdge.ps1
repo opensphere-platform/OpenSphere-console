@@ -10,8 +10,8 @@ param(
   [string]$CliUpdateSigningPublicKey = '',
   [switch]$UseExistingRegistryLogin,
   [switch]$AdvanceOsShellUxConsoleEdge,
-  [ValidateSet('console', 'consoleApi', 'extensionController', 'dupaController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend')]
-  [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'dupaController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap')
+  [ValidateSet('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend')]
+  [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -148,7 +148,7 @@ if ($Components -contains 'backend') {
 
 # This is the governed release family, not Setup's smaller bootstrapCore subset.
 $canonicalComponentKeys = @(
-  'console', 'consoleApi', 'extensionController', 'dupaController', 'registry',
+  'console', 'consoleApi', 'extensionController', 'registry',
   'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher',
   'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage',
   'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap'
@@ -327,11 +327,10 @@ $allImages = @(
   # The canonical release family covers Setup's governed install catalog;
   # bootstrapCore is a required subset selected by Setup. Keep
   # this list ordered and complete so the Console anchor always represents one
-  # exact 19-component BOM.
+  # exact 18-component BOM.
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-web\Dockerfile') },
   [ordered]@{ Key = 'consoleApi'; Image = 'opensphere-console-api'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\Dockerfile') },
   [ordered]@{ Key = 'extensionController'; Image = 'opensphere-extension-controller'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\extension-controller\Dockerfile') },
-  [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'apps\extension-controller\runtime'); File = (Join-Path $consoleCheckout 'apps\extension-controller\runtime\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'apps\osaa-gateway'); File = (Join-Path $consoleCheckout 'apps\osaa-gateway\Dockerfile') },
   [ordered]@{ Key = 'osdst'; Image = 'opensphere-osdst'; Context = (Join-Path $consoleCheckout 'apps\osdst'); File = (Join-Path $consoleCheckout 'apps\osdst\Dockerfile') },
@@ -359,8 +358,8 @@ $blockedLegacyComponentKeys = @('backend')
 $canonicalImages = @($allImages | Where-Object {
   $_.Key -notin $auxiliaryComponentKeys -and $_.Key -notin $blockedLegacyComponentKeys
 })
-if ($canonicalImages.Count -ne 19) {
-  throw "Canonical local edge release must contain exactly 19 components; found $($canonicalImages.Count)."
+if ($canonicalImages.Count -ne 18) {
+  throw "Canonical local edge release must contain exactly 18 components; found $($canonicalImages.Count)."
 }
 $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
@@ -511,8 +510,8 @@ foreach ($item in $images) {
     sourceRevision = $SourceRevision
   }
 }
-if (-not $partialPublication -and $componentEvidence.Count -ne 19) {
-  throw "Complete local edge BOM must contain exactly 19 components; found $($componentEvidence.Count)."
+if (-not $partialPublication -and $componentEvidence.Count -ne 18) {
+  throw "Complete local edge BOM must contain exactly 18 components; found $($componentEvidence.Count)."
 }
 $releaseArtifacts = [ordered]@{
   supabaseMigrationManifest = [ordered]@{

@@ -136,10 +136,6 @@ jobs:
             scope: auxiliary
             context: OpenSphere-console
             file: OpenSphere-console/apps/os-shell-control/Dockerfile.runtime
-          - image: opensphere-console-dupa-controller
-            scope: canonical
-            context: OpenSphere-console/apps/extension-controller/runtime
-            file: OpenSphere-console/apps/extension-controller/runtime/Dockerfile
           - image: opensphere-registry
             scope: canonical
             context: OpenSphere-console/backend/registry
@@ -333,7 +329,6 @@ jobs:
             opensphere-console
             opensphere-console-api
             opensphere-extension-controller
-            opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway
             opensphere-osdst
@@ -354,7 +349,6 @@ jobs:
             console
             consoleApi
             extensionController
-            dupaController
             registry
             osaaGateway
             osdst
@@ -436,7 +430,7 @@ jobs:
             > "$RUNNER_TEMP/opensphere-release-bom.json"
 
           jq -e --arg revision "$GITHUB_SHA" \
-            '.sourceRevision == $revision and (.components | length) == 19
+            '.sourceRevision == $revision and (.components | length) == 18
               and (.artifacts.supabaseMigrationManifest.sha256 | test("^sha256:[0-9a-f]{64}$"))' \
             "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
           echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
@@ -471,7 +465,6 @@ jobs:
           images=(
             opensphere-console-api
             opensphere-extension-controller
-            opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway
             opensphere-osdst
@@ -491,7 +484,6 @@ jobs:
           component_keys=(
             consoleApi
             extensionController
-            dupaController
             registry
             osaaGateway
             osdst

@@ -72,7 +72,6 @@ jobs:
             opensphere-console
             opensphere-console-api
             opensphere-extension-controller
-            opensphere-console-dupa-controller
             opensphere-registry
             opensphere-console-osaa-gateway
             opensphere-osdst
@@ -94,7 +93,7 @@ jobs:
             opensphere-console-os-shell-control
             opensphere-os-shell-runtime
           )
-          test "${#canonical_images[@]}" -eq 19
+          test "${#canonical_images[@]}" -eq 18
           test "${#auxiliary_images[@]}" -eq 3
           components='{}'
           for image in "${canonical_images[@]}"; do
@@ -127,7 +126,7 @@ jobs:
               azureReleaseEvidence: (if ($azureReleaseEvidence | length) > 0 then $azureReleaseEvidence else null end),
               actor: $actor, components: $components}' \
             > "$RUNNER_TEMP/opensphere-promotion-receipt.json"
-          jq -e '(.components | length) == 19' "$RUNNER_TEMP/opensphere-promotion-receipt.json" >/dev/null
+          jq -e '(.components | length) == 18' "$RUNNER_TEMP/opensphere-promotion-receipt.json" >/dev/null
           anchor_digest="$(jq -r '.components["opensphere-console"]' "$RUNNER_TEMP/opensphere-promotion-receipt.json")"
           echo "anchor-digest=$anchor_digest" >> "$GITHUB_OUTPUT"
           echo "source-channel=$source_channel" >> "$GITHUB_OUTPUT"
