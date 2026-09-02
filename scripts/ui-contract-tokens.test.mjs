@@ -4,10 +4,10 @@ import test from 'node:test';
 
 const contractSource = await readFile(new URL('../src/ui-contract.scss', import.meta.url), 'utf8');
 const angularConfig = JSON.parse(await readFile(new URL('../angular.json', import.meta.url), 'utf8'));
-const designKitSource = await readFile(
-  new URL('../../OpenSphere-design-kit/src/ui-contract.css', import.meta.url),
+const designKitFixture = JSON.parse(await readFile(
+  new URL('../packages/contracts/fixtures/design-kit-type-token-consumer-v1.json', import.meta.url),
   'utf8',
-);
+));
 
 const expectedValues = new Map([
   ['--os-ui-contract-id', '"opensphere.ui"'],
@@ -46,13 +46,18 @@ test('Main Shell publishes the documented opensphere.ui/1.0 type values', () => 
   }
 });
 
-test('Main Shell supplies every semantic type variable consumed by Design Kit', () => {
-  const consumed = new Set(
-    [...designKitSource.matchAll(/var\((--os-type-[a-z-]+)/g)].map((match) => match[1]),
+test('Main Shell supplies every semantic type variable in the pinned Design Kit fixture', () => {
+  assert.equal(designKitFixture.contractId, 'opensphere.ui');
+  assert.equal(designKitFixture.contractVersion, '1.0');
+  assert.match(designKitFixture.source.revision, /^[0-9a-f]{40}$/u);
+  assert.match(designKitFixture.source.sha256, /^[0-9a-f]{64}$/u);
+  assert.ok(designKitFixture.consumedVariables.length > 0, 'Design Kit fixture must declare consumed variables');
+  assert.deepEqual(
+    designKitFixture.consumedVariables,
+    [...new Set(designKitFixture.consumedVariables)].sort(),
+    'Design Kit fixture variables must be unique and sorted',
   );
-
-  assert.ok(consumed.size > 0, 'Design Kit must consume semantic type variables');
-  for (const token of consumed) {
+  for (const token of designKitFixture.consumedVariables) {
     assert.ok(tokenValue(contractSource, token), `${token} is missing from Main Shell`);
   }
 });

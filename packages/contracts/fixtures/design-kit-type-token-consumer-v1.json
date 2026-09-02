@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "contractId": "opensphere.ui",
+  "contractVersion": "1.0",
+  "consumer": "OpenSphere-Design-Kit",
+  "source": {
+    "repository": "https://github.com/opensphere-platform/OpenSphere-design-kit.git",
+    "revision": "77f41801ab963af616077892314096eab69aed8d",
+    "path": "src/ui-contract.css",
+    "sha256": "9e9872372f8146d3dbe662726a33da072231310083bd2e2ae3fee3fe15a1d8fd"
+  },
+  "consumedVariables": [
+    "--os-type-body-line-height",
+    "--os-type-body-size",
+    "--os-type-body-strong-weight",
+    "--os-type-body-tracking",
+    "--os-type-body-weight",
+    "--os-type-caption-line-height",
+    "--os-type-caption-size",
+    "--os-type-caption-tracking",
+    "--os-type-caption-weight",
+    "--os-type-display-line-height",
+    "--os-type-display-size",
+    "--os-type-display-tracking",
+    "--os-type-display-weight",
+    "--os-type-headline-line-height",
+    "--os-type-headline-size",
+    "--os-type-headline-tracking",
+    "--os-type-headline-weight",
+    "--os-type-title-line-height",
+    "--os-type-title-size",
+    "--os-type-title-tracking",
+    "--os-type-title-weight"
+  ]
+}

@@ -12,6 +12,7 @@
     "schemas",
     "owners",
     "consumers",
+    "fixtures",
     "contract-denominator.json"
   ]
 }

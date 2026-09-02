@@ -4,7 +4,7 @@
   "scripts": {
     "verify:contracts": "node scripts/verify-console-contracts.mjs",
     "verify:migrations": "node scripts/console-migrations.mjs verify",
-    "test:contracts": "node --test scripts/verify-console-contracts.test.mjs scripts/console-api-runtime-installer.test.mjs",
+    "test:contracts": "node --test scripts/verify-console-contracts.test.mjs scripts/console-api-runtime-installer.test.mjs scripts/ui-contract-tokens.test.mjs",
     "test:backbone-foundation": "node --test packages/testing/backbone-foundation.test.mjs",
     "test:console-api": "node --test apps/console-api/test/*.test.mjs",
     "test:extension-controller": "node --test apps/extension-controller/test/*.test.mjs",
