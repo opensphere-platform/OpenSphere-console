@@ -45,9 +45,47 @@
     { "id": "monitoring", "prefix": "/api/monitoring", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     { "id": "notifications", "prefix": "/api/notifications", "targetOwner": "C_NOTIFY", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     { "id": "external-channels", "prefix": "/api/external-channels", "targetOwner": "C_BAK", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
-    { "id": "catalog", "prefix": "/api/catalog", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
-    { "id": "kubernetes", "prefix": "/api/kubernetes", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
-    { "id": "status", "prefix": "/api/status", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    {
+      "id": "catalog",
+      "prefix": "/api/catalog",
+      "targetOwner": "C_API",
+      "sessionPolicy": "browser-session",
+      "status": "target-implemented-and-verified",
+      "evidence": [
+        "apps/console-api/src/catalog-operations.mjs",
+        "apps/console-api/test/catalog-operations.test.mjs",
+        "apps/console-web/src/app/core/api.service.ts",
+        "packages/registry-client/src/registry-resolver-client.mjs",
+        "packages/contracts/schemas/catalog-entities-response.schema.json"
+      ]
+    },
+    {
+      "id": "kubernetes",
+      "prefix": "/api/kubernetes",
+      "targetOwner": "C_API",
+      "sessionPolicy": "browser-session",
+      "status": "target-implemented-and-verified",
+      "evidence": [
+        "apps/console-api/src/catalog-operations.mjs",
+        "apps/console-api/src/http-handler.mjs",
+        "apps/console-api/test/catalog-operations.test.mjs",
+        "apps/console-web/src/app/pages/catalog.ts",
+        "packages/contracts/schemas/catalog-runtime-resource-request.schema.json"
+      ]
+    },
+    {
+      "id": "status",
+      "prefix": "/api/status",
+      "targetOwner": "C_API",
+      "sessionPolicy": "browser-session",
+      "status": "target-implemented-and-verified",
+      "evidence": [
+        "apps/console-api/src/http-handler.mjs",
+        "apps/console-api/test/status-route.test.mjs",
+        "apps/console-web/src/app/core/api.service.ts",
+        "packages/contracts/openapi/console-v1.yaml"
+      ]
+    },
     { "id": "osaa", "prefix": "/api/osaa", "targetOwner": "C_AI", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
     { "id": "manual", "prefix": "/api/manual", "targetOwner": "C_AI", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
     { "id": "os-shell", "prefix": "/api/os-shell", "targetOwner": "C_SCTL", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
