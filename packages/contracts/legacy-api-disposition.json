@@ -1,0 +1,6069 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0",
+  "status": "reviewed",
+  "sourceEvidence": {
+    "snapshot": "731f4d1e3301f076cc8c6b63b7916c8a2f57fccf",
+    "fileSha256": "91f9cacd1165bca2aa58b5a18433691752a1e39a1990aafe6cb29fd141d46b8e",
+    "uniqueLiteralPaths": 277,
+    "pathSetDigest": "sha256:ab1547c0d966789be0b4550ed551f1dc15610d32bf8e3c36257c9926671f71d1",
+    "scope": "Production text files only; tests, docs and binary artifacts excluded. Literal occurrence is evidence, not a complete OpenAPI operation.",
+    "scopeCaveat": "The evidence includes test sources despite its scope claim; this ledger preserves and explicitly disposes every listed literal."
+  },
+  "dispositionSemantics": {
+    "adopted": "The path and responsibility remain in the target Console contract.",
+    "reworked": "The capability remains, but its path, owner, authority, or exposure boundary changes.",
+    "rejected": "The literal is not a target Console operation because it moved, was unsafe, or was test-only."
+  },
+  "summary": {
+    "byDisposition": {
+      "adopted": 9,
+      "reworked": 238,
+      "rejected": 30
+    },
+    "byTargetOwner": {
+      "C_AI": 110,
+      "C_API": 104,
+      "C_BAK": 4,
+      "C_CLI": 6,
+      "C_EXT": 5,
+      "C_NOTIFY": 6,
+      "C_REG": 3,
+      "C_SCTL": 9
+    }
+  },
+  "decisions": [
+    {
+      "path": "/api/admin/",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3782
+        },
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3802
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5050
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/backbone/",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3796
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/bindings",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 4123
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1222
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 135
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/bindings/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1224
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/events",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3782
+        },
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3803
+        },
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 4145
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5050
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/inspect",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3804
+        },
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3885
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1194
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/install",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3968
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 3730
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1208
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 174
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/registrations/",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 560
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/registry-connections",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3895
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 140
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/registry-connections/opensphere-ghcr",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3893
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 149
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 159
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/registry-connections/opensphere-ghcr/verify",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3805
+        },
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3924
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 154
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/registry-credentials",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3894
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1230
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1245
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1251
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1351
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 307
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/revocations",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3856
+        },
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3860
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1259
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1269
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 164
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 168
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/extensions/status",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 353
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/observability/query",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3846
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/observability/query?expr=",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1149
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/observability/query_range",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3851
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/observability/status",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3844
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7745
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1139
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 511
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 547
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1459
+        },
+        {
+          "file": "src/app/pages/admin-observability.ts",
+          "line": 173
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/observability/targets",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3845
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1142
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/platform-control",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 352
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/platform-control/catalog/resolve",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5038
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 187
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/platform-readiness/lifecycle",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3815
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/platform-readiness/preflight",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3821
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7462
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/platform-readiness/status",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3818
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7744
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 403
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 496
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 544
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1456
+        },
+        {
+          "file": "src/app/core/platform-readiness.service.ts",
+          "line": 45
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/platform-readiness/verify",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3831
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7467
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/plugins/catalog",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 4103
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 113
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/plugins/events",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 4111
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1158
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 625
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 129
+        },
+        {
+          "file": "src/app/pages/my-info.ts",
+          "line": 1118
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/plugins/navigation-order",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 4276
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 240
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/plugins/registrations",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 4107
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7753
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1219
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 515
+        },
+        {
+          "file": "src/app/core/plugin-control-client.service.ts",
+          "line": 121
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/plugins/registrations/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1214
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/admin/recovery/status",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 365
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "admin",
+        "prefix": "/api/admin"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/catalog/entities",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5857
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1162
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 201
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "catalog",
+        "prefix": "/api/catalog"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/catalog/entities?filter=kind=api&limit=200",
+      "sources": [
+        {
+          "file": "src/app/core/api.service.ts",
+          "line": 81
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "catalog",
+        "prefix": "/api/catalog"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/catalog/entities?limit=200",
+      "sources": [
+        {
+          "file": "src/app/core/api.service.ts",
+          "line": 74
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "catalog",
+        "prefix": "/api/catalog"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/ceph/osaa/connect",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7521
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "governed-storage-tools"
+      },
+      "rationale": "The generic Ceph proxy is replaced by typed, governed AI owner tools."
+    },
+    {
+      "path": "/api/ceph/osaa/disconnect",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7530
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "governed-storage-tools"
+      },
+      "rationale": "The generic Ceph proxy is replaced by typed, governed AI owner tools."
+    },
+    {
+      "path": "/api/ceph/osaa/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7353
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "governed-storage-tools"
+      },
+      "rationale": "The generic Ceph proxy is replaced by typed, governed AI owner tools."
+    },
+    {
+      "path": "/api/ceph/osaa/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7343
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "governed-storage-tools"
+      },
+      "rationale": "The generic Ceph proxy is replaced by typed, governed AI owner tools."
+    },
+    {
+      "path": "/api/ceph/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7747
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "governed-storage-tools"
+      },
+      "rationale": "The generic Ceph proxy is replaced by typed, governed AI owner tools."
+    },
+    {
+      "path": "/api/cli/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/update.go",
+          "line": 352
+        },
+        {
+          "file": "backend/os-cli/generate-manifest.mjs",
+          "line": 66
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_CLI",
+      "target": {
+        "kind": "public-static-family",
+        "prefix": "/api/cli"
+      },
+      "rationale": "The signed CLI artifact family remains a public static Console capability."
+    },
+    {
+      "path": "/api/cli/index.json",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 779
+        },
+        {
+          "file": "backend/os-cli/cmd/os/update.go",
+          "line": 104
+        },
+        {
+          "file": "src/app/pages/admin-cli.ts",
+          "line": 132
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_CLI",
+      "target": {
+        "kind": "public-static-family",
+        "prefix": "/api/cli"
+      },
+      "rationale": "The signed CLI artifact family remains a public static Console capability."
+    },
+    {
+      "path": "/api/cli/opensphere-cli-darwin-amd64",
+      "sources": [
+        {
+          "file": "backend/os-cli/index.json",
+          "line": 16
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_CLI",
+      "target": {
+        "kind": "public-static-family",
+        "prefix": "/api/cli"
+      },
+      "rationale": "The signed CLI artifact family remains a public static Console capability."
+    },
+    {
+      "path": "/api/cli/opensphere-cli-darwin-arm64",
+      "sources": [
+        {
+          "file": "backend/os-cli/index.json",
+          "line": 15
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_CLI",
+      "target": {
+        "kind": "public-static-family",
+        "prefix": "/api/cli"
+      },
+      "rationale": "The signed CLI artifact family remains a public static Console capability."
+    },
+    {
+      "path": "/api/cli/opensphere-cli-linux-amd64",
+      "sources": [
+        {
+          "file": "backend/os-cli/index.json",
+          "line": 14
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_CLI",
+      "target": {
+        "kind": "public-static-family",
+        "prefix": "/api/cli"
+      },
+      "rationale": "The signed CLI artifact family remains a public static Console capability."
+    },
+    {
+      "path": "/api/cli/opensphere-cli-windows-amd64.exe",
+      "sources": [
+        {
+          "file": "backend/os-cli/index.json",
+          "line": 17
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_CLI",
+      "target": {
+        "kind": "public-static-family",
+        "prefix": "/api/cli"
+      },
+      "rationale": "The signed CLI artifact family remains a public static Console capability."
+    },
+    {
+      "path": "/api/cli/os-test",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 774
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 782
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/cli/os.exe",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 856
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/external-channels/backup-targets",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5653
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5657
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 295
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 335
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_BAK",
+      "target": {
+        "kind": "browser-family",
+        "family": "external-channels",
+        "prefix": "/api/external-channels"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/external-channels/backups",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5703
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 295
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_BAK",
+      "target": {
+        "kind": "browser-family",
+        "family": "external-channels",
+        "prefix": "/api/external-channels"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/external-channels/summary",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5649
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 295
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_BAK",
+      "target": {
+        "kind": "browser-family",
+        "family": "external-channels",
+        "prefix": "/api/external-channels"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/foundation/modules/",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 599
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/claims/create",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7545
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/claims/release",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7551
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/engines/lifecycle",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7538
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/identity-directory/claims/create",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7557
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/identity-directory/claims/release",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7563
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/operations/{operationId}",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/dynamic_contract_test.go",
+          "line": 174
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/postgres/durable-apply/{planId}",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/dynamic_contract.go",
+          "line": 602
+        },
+        {
+          "file": "backend/os-cli/cmd/os/dynamic_contract_test.go",
+          "line": 186
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/foundation/osaa/postgres/durable-plan",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/dynamic_contract_test.go",
+          "line": 309
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation lifecycle authority moved outside the Console repository boundary."
+    },
+    {
+      "path": "/api/health",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 351
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 358
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 359
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 360
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 362
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 363
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 364
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_REG",
+      "target": {
+        "kind": "runtime-probe",
+        "path": "/api/health"
+      },
+      "rationale": "The Registry-owned health probe remains internal to the C_REG workload."
+    },
+    {
+      "path": "/api/hiss/install",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/module-operation-api.js",
+          "line": 149
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "cooperating-system",
+        "system": "HISS"
+      },
+      "rationale": "HISS lifecycle authority moved outside the Console runtime boundary."
+    },
+    {
+      "path": "/api/hiss/osaa/observability/config",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7317
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "cooperating-system",
+        "system": "HISS"
+      },
+      "rationale": "HISS lifecycle authority moved outside the Console runtime boundary."
+    },
+    {
+      "path": "/api/hiss/osaa/observability/configure",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7511
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "cooperating-system",
+        "system": "HISS"
+      },
+      "rationale": "HISS lifecycle authority moved outside the Console runtime boundary."
+    },
+    {
+      "path": "/api/hiss/osaa/observability/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7328
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "cooperating-system",
+        "system": "HISS"
+      },
+      "rationale": "HISS lifecycle authority moved outside the Console runtime boundary."
+    },
+    {
+      "path": "/api/hiss/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/module-operation-api.js",
+          "line": 249
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7746
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9562
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "cooperating-system",
+        "system": "HISS"
+      },
+      "rationale": "HISS lifecycle authority moved outside the Console runtime boundary."
+    },
+    {
+      "path": "/api/hiss/uninstall",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/module-operation-api.js",
+          "line": 169
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "cooperating-system",
+        "system": "HISS"
+      },
+      "rationale": "HISS lifecycle authority moved outside the Console runtime boundary."
+    },
+    {
+      "path": "/api/hiss/validate",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/module-operation-api.js",
+          "line": 160
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7481
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "cooperating-system",
+        "system": "HISS"
+      },
+      "rationale": "HISS lifecycle authority moved outside the Console runtime boundary."
+    },
+    {
+      "path": "/api/identity",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5871
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 994
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1084
+        },
+        {
+          "file": "src/app/pages/admin-roles.ts",
+          "line": 87
+        },
+        {
+          "file": "src/app/pages/console-admins.ts",
+          "line": 108
+        },
+        {
+          "file": "src/app/pages/my-info.ts",
+          "line": 864
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/audit",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5875
+        },
+        {
+          "file": "src/app/pages/admin-audit.ts",
+          "line": 111
+        },
+        {
+          "file": "src/app/pages/console-admins.ts",
+          "line": 136
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/bootstrap",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5064
+        },
+        {
+          "file": "src/app/pages/initial-setup.ts",
+          "line": 151
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/bootstrap/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5061
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 599
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 147
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 158
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 711
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 441
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 150
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/challenge",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5301
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 986
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/devices",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5327
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 152
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 159
+        },
+        {
+          "file": "src/app/pages/my-info.ts",
+          "line": 879
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/devices/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 153
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 159
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/enrollments",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5280
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 979
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/enrollments/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 984
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/introspect",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5309
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 151
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 156
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 892
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 962
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 990
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/session",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5305
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 354
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 988
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/cli/tokens",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5336
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5340
+        },
+        {
+          "file": "src/app/pages/my-info.ts",
+          "line": 880
+        },
+        {
+          "file": "src/app/pages/my-info.ts",
+          "line": 1214
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/me/password",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5889
+        },
+        {
+          "file": "src/app/pages/my-info.ts",
+          "line": 1284
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/profile/avatar",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5142
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5149
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 435
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 443
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 452
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/profile/avatar/content",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5163
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/profile/avatar/upload",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5156
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 461
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5229
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5353
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 361
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 370
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 513
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 653
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/adopt",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5067
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 314
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/events",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5249
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/events?limit=50",
+      "sources": [
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 409
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/login",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5170
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 343
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/mfa",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5184
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 359
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/preference",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5128
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5135
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 416
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 424
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/step-up",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5201
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 545
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/totp/enrollment",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5212
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 378
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/totp/verification",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5220
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 392
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/session/touch",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5192
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 706
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/sessions",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5240
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5258
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 401
+        },
+        {
+          "file": "src/app/core/auth.service.ts",
+          "line": 485
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/supabase/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5738
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7748
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 507
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 545
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1457
+        },
+        {
+          "file": "src/app/pages/admin-data-identity.ts",
+          "line": 228
+        },
+        {
+          "file": "src/app/pages/admin-foundation-services.ts",
+          "line": 453
+        },
+        {
+          "file": "src/app/pages/admin-platform-control.ts",
+          "line": 304
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/users",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5905
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1104
+        },
+        {
+          "file": "src/app/pages/console-admins.ts",
+          "line": 129
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/identity/users/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1008
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1111
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 1116
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "identity",
+        "prefix": "/api/identity"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/internal",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 144
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "path": "/api/internal/owner-authority"
+      },
+      "rationale": "Owner-specific proxy checks collapse into one fail-closed C_API owner-authority contract."
+    },
+    {
+      "path": "/api/internal/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/proxy.go",
+          "line": 144
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "path": "/api/internal/owner-authority"
+      },
+      "rationale": "Owner-specific proxy checks collapse into one fail-closed C_API owner-authority contract."
+    },
+    {
+      "path": "/api/internal/monitoring/beszel/events",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5592
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "capability": "governed-beszel-events"
+      },
+      "rationale": "Beszel ingestion is an internal C_API adapter contract, not a browser endpoint."
+    },
+    {
+      "path": "/api/internal/notifications/events",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5596
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_NOTIFY",
+      "target": {
+        "kind": "internal-contract",
+        "capability": "notification-event-ingress"
+      },
+      "rationale": "Notification event ingestion is owned by C_NOTIFY and remains non-browser."
+    },
+    {
+      "path": "/api/internal/os-shell-authn",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5817
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "path": "/api/internal/owner-authority"
+      },
+      "rationale": "Owner-specific proxy checks collapse into one fail-closed C_API owner-authority contract."
+    },
+    {
+      "path": "/api/internal/os-shell/credential",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 6130
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 353
+        },
+        {
+          "file": "backend/os-shell-control/server.js",
+          "line": 155
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "path": "/api/internal/owner-authority"
+      },
+      "rationale": "Owner-specific proxy checks collapse into one fail-closed C_API owner-authority contract."
+    },
+    {
+      "path": "/api/internal/plugin-proxy-authz",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 4973
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "path": "/api/internal/owner-authority"
+      },
+      "rationale": "Owner-specific proxy checks collapse into one fail-closed C_API owner-authority contract."
+    },
+    {
+      "path": "/api/internal/proxy-authz",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3694
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "path": "/api/internal/owner-authority"
+      },
+      "rationale": "Owner-specific proxy checks collapse into one fail-closed C_API owner-authority contract."
+    },
+    {
+      "path": "/api/internal/r2d2-proxy-authn",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 4994
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "path": "/api/internal/owner-authority"
+      },
+      "rationale": "Owner-specific proxy checks collapse into one fail-closed C_API owner-authority contract."
+    },
+    {
+      "path": "/api/kubernetes/services/",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5867
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "kubernetes",
+        "prefix": "/api/kubernetes"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/manifest",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/dynamic_contract_test.go",
+          "line": 357
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/manual/document",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9901
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "manual",
+        "prefix": "/api/manual"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/manual/documents",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9893
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "manual",
+        "prefix": "/api/manual"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/manual/search",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9905
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "manual",
+        "prefix": "/api/manual"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/manual/sources",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9889
+        },
+        {
+          "file": "src/app/core/manual.service.ts",
+          "line": 94
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "manual",
+        "prefix": "/api/manual"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/module-operations",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5034
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_EXT",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "extension-lifecycle"
+      },
+      "rationale": "Legacy module mutation is replaced by the governed extension lifecycle owner."
+    },
+    {
+      "path": "/api/modules",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/module-operation-api.js",
+          "line": 403
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5034
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_EXT",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "extension-lifecycle"
+      },
+      "rationale": "Legacy module mutation is replaced by the governed extension lifecycle owner."
+    },
+    {
+      "path": "/api/monitoring/baseline/v1/alerts",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5110
+        },
+        {
+          "file": "src/app/pages/admin-infrastructure-monitoring.ts",
+          "line": 434
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "monitoring",
+        "prefix": "/api/monitoring"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/monitoring/baseline/v1/data-health",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5119
+        },
+        {
+          "file": "src/app/pages/admin-foundation-services.ts",
+          "line": 456
+        },
+        {
+          "file": "src/app/pages/admin-infrastructure-monitoring.ts",
+          "line": 435
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "monitoring",
+        "prefix": "/api/monitoring"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/monitoring/baseline/v1/nodes",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5091
+        },
+        {
+          "file": "src/app/pages/admin-infrastructure-monitoring.ts",
+          "line": 433
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "monitoring",
+        "prefix": "/api/monitoring"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/monitoring/baseline/v1/overview",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5082
+        },
+        {
+          "file": "src/app/pages/admin-foundation-services.ts",
+          "line": 455
+        },
+        {
+          "file": "src/app/pages/admin-infrastructure-monitoring.ts",
+          "line": 432
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "monitoring",
+        "prefix": "/api/monitoring"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/notifications/channels",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5604
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5608
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 295
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 350
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_NOTIFY",
+      "target": {
+        "kind": "browser-family",
+        "family": "notifications",
+        "prefix": "/api/notifications"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/notifications/deliveries",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5640
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_NOTIFY",
+      "target": {
+        "kind": "browser-family",
+        "family": "notifications",
+        "prefix": "/api/notifications"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/notifications/deliveries?limit=100",
+      "sources": [
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 295
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_NOTIFY",
+      "target": {
+        "kind": "browser-family",
+        "family": "notifications",
+        "prefix": "/api/notifications"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/notifications/rules",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5632
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5636
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 295
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 352
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_NOTIFY",
+      "target": {
+        "kind": "browser-family",
+        "family": "notifications",
+        "prefix": "/api/notifications"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/notifications/summary",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5600
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7751
+        },
+        {
+          "file": "src/app/pages/admin-external-channels.ts",
+          "line": 295
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_NOTIFY",
+      "target": {
+        "kind": "browser-family",
+        "family": "notifications",
+        "prefix": "/api/notifications"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/operations/op-1",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/dynamic_contract_test.go",
+          "line": 359
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/os-shell/readiness",
+      "sources": [
+        {
+          "file": "backend/os-shell-control/server.js",
+          "line": 192
+        },
+        {
+          "file": "src/app/system-plugins/os-shell/os-shell-readiness.service.ts",
+          "line": 70
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "browser-family",
+        "family": "os-shell",
+        "prefix": "/api/os-shell"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/os-shell/runtime",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/control.go",
+          "line": 71
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/reconnect_test.go",
+          "line": 113
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 210
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 258
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 439
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 475
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 770
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 879
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 976
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "browser-family",
+        "family": "os-shell",
+        "prefix": "/api/os-shell"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/os-shell/runtime/",
+      "sources": [
+        {
+          "file": "backend/os-shell-control/server.js",
+          "line": 320
+        },
+        {
+          "file": "backend/os-shell-control/server.js",
+          "line": 324
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "browser-family",
+        "family": "os-shell",
+        "prefix": "/api/os-shell"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/os-shell/runtime/attach-authorize",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/reconnect_test.go",
+          "line": 105
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 756
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "browser-family",
+        "family": "os-shell",
+        "prefix": "/api/os-shell"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/os-shell/runtime/credential",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 193
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 243
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 870
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 953
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "browser-family",
+        "family": "os-shell",
+        "prefix": "/api/os-shell"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/os-shell/runtime/revalidate",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/reconnect_test.go",
+          "line": 105
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 758
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "browser-family",
+        "family": "os-shell",
+        "prefix": "/api/os-shell"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/os-shell/sessions",
+      "sources": [
+        {
+          "file": "backend/os-shell-control/server.js",
+          "line": 205
+        },
+        {
+          "file": "backend/os-shell-control/server.js",
+          "line": 209
+        },
+        {
+          "file": "src/app/system-plugins/os-shell/os-shell-session.service.ts",
+          "line": 28
+        },
+        {
+          "file": "src/app/system-plugins/os-shell/os-shell-session.service.ts",
+          "line": 56
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "browser-family",
+        "family": "os-shell",
+        "prefix": "/api/os-shell"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/r2d2-proxy-auth.js",
+          "line": 10
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/actions/bindings/execute",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4364
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4379
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4391
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4413
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4445
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4596
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4628
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4641
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4653
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4664
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4675
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4686
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4695
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4704
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4730
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4752
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4764
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4776
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4805
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4817
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4826
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4856
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4868
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5024
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5043
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5061
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5071
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5081
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5091
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5101
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5111
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5122
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5130
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10126
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2686
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/actions/k8s/restart-deployment",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10134
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/actions/k8s/scale-deployment",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10139
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/actions/submit",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5477
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/dialogue-state",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5407
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5413
+        },
+        {
+          "file": "src/app/pages/admin-foundation-services.ts",
+          "line": 457
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 1959
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 1976
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/evidence",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9840
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/evidence/retention",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9845
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2412
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/knowledge/documents",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9866
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/knowledge/manual-seed",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5154
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9871
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/knowledge/manual-seed/bundled",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9876
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2470
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/knowledge/reembed",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9861
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2473
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/knowledge/seed",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9857
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/knowledge/stats",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9831
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2451
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/llm-keys",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5403
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5419
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10144
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10148
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2159
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2184
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/admin/usage",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9835
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/audit",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5457
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/chat",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10155
+        },
+        {
+          "file": "src/app/os/os-osaa-agent.ts",
+          "line": 759
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/context",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9821
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/conversations",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9758
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/conversations?status=active&limit=40",
+      "sources": [
+        {
+          "file": "src/app/os/os-osaa-agent.ts",
+          "line": 938
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/durable/owner/recover",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9921
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/durable/owner/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9917
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/graph/nodes",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9793
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/graph/nodes?limit=250",
+      "sources": [
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2025
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/health",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9698
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 355
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 357
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 1936
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/incidents",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9805
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/incidents/stream",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9810
+        },
+        {
+          "file": "src/app/core/r2d2-risk.service.ts",
+          "line": 33
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/incidents?limit=100",
+      "sources": [
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2026
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/knowledge/concepts",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9885
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/knowledge/search",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5140
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9880
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/metacognition",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9826
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/metacognition?limit=100",
+      "sources": [
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2028
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/operational/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9784
+        },
+        {
+          "file": "src/app/core/r2d2-risk.service.ts",
+          "line": 65
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2024
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/operations",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/r2d2-operation-api.js",
+          "line": 239
+        },
+        {
+          "file": "backend/opensphere-console-backend/r2d2-operation-api.js",
+          "line": 240
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5025
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7232
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7598
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2027
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/operations/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/r2d2-operation-api.js",
+          "line": 238
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7022
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7223
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 8191
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/extensions/",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3711
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/extensions/inspect",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3732
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7055
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/extensions/revoke",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3740
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7426
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/extensions/security",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3719
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7045
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/identity/actions",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5493
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7391
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7402
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7415
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/identity/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5485
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7032
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/notifications/actions",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5509
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7437
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7446
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7455
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/notifications/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5501
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/recovery/capabilities",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5561
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/recovery/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5579
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7086
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/owner/recovery/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5569
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7074
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7752
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/remediations",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/r2d2-remediation-api.js",
+          "line": 247
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5014
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/remediations/",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/r2d2-remediation-api.js",
+          "line": 247
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5014
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 1814
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/remediations/local-edge-runner/",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/r2d2-repair-runner-api.js",
+          "line": 222
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/remediations/local-edge-runner/claim",
+      "sources": [
+        {
+          "file": "scripts/r2d2-local-edge-repair-runner.mjs",
+          "line": 421
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/remediations/local-edge-runner/register",
+      "sources": [
+        {
+          "file": "scripts/r2d2-local-edge-repair-runner.mjs",
+          "line": 121
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/remediations/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/r2d2-remediation-api.js",
+          "line": 244
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 1798
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/source/catalog",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5517
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 6926
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/source/head",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5528
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 6935
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/source/read",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5539
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 6953
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/source/search",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5550
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 6970
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/action-bindings",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9913
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2567
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/catalog/entities",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4484
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10014
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/ceph/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4847
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9970
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/ceph/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4839
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9965
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/control-plane/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4343
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9935
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2003
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/diagnostics/manual",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4528
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10035
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/diagnostics/os-shell",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4536
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10040
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/environment",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4332
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4878
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9925
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/evidence/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4405
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9974
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/extensions/inspect",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4721
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9948
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/extensions/presentation",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4520
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10029
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/extensions/security",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4713
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9944
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/foundation/directory/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4553
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10049
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/foundation/postgres/capabilities",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4561
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10059
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/foundation/postgres/operation",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4619
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10068
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/foundation/postgres/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4577
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10064
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/foundation/postgres/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4569
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10054
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/foundation/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4545
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10044
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/his/observability/config",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4788
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9956
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/his/observability/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4796
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9961
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/identity/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4354
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9940
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/describe",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4976
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10095
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/events",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4947
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10118
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/pod-logs",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4959
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10082
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/pods-summary",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4890
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10088
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/resource",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 1721
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 1738
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4919
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10077
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/resources",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4902
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10072
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/rollout",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 1708
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4992
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10104
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/k8s/services",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4935
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10110
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/manifest",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9909
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 2548
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/notifications/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4743
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9952
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/observability/logs",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4455
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10006
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/observability/traces",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4469
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10010
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/operations/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 5004
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9931
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/recovery/plan",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4436
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9985
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/recovery/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4428
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9980
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/registry",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4497
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10019
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/registry/resolve",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 4505
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10024
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/source/catalog",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9989
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/source/head",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9994
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/source/read",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 9998
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osaa/tools/source/search",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 10002
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "browser-family",
+        "family": "osaa",
+        "prefix": "/api/osaa"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/osdst/v1/status",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 356
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "internal-contract",
+        "capability": "dialogue-state-readiness"
+      },
+      "rationale": "OSDST readiness remains an internal C_AI cooperating-component contract."
+    },
+    {
+      "path": "/api/other/os",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 875
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/platform/changes",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5843
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 476
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1045
+        },
+        {
+          "file": "backend/os-cli/cmd/os/platform_update.go",
+          "line": 329
+        },
+        {
+          "file": "src/app/pages/admin-change-control.ts",
+          "line": 251
+        },
+        {
+          "file": "src/app/pages/admin-platform-release.ts",
+          "line": 456
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/changes/",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1138
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/contracts",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5762
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7750
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 8465
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 958
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 513
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 841
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/gitea/bootstrap/argocd-verification",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5754
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/gitea/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5746
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7749
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 8464
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 413
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 509
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 546
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1145
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1205
+        },
+        {
+          "file": "backend/os-cli/cmd/os/operator.go",
+          "line": 1458
+        },
+        {
+          "file": "src/app/pages/admin-change-control.ts",
+          "line": 254
+        },
+        {
+          "file": "src/app/pages/admin-foundation-services.ts",
+          "line": 454
+        },
+        {
+          "file": "src/app/pages/admin-platform-control.ts",
+          "line": 305
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/gitea/webhook",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5724
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/os-shell/feature-state",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5789
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5793
+        },
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7910
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/os-shell/feature-state/local-edge-automation",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5799
+        },
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5805
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/os-shell/feature-state/local-edge-automation/scale-down-claim",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5809
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/os-shell/feature-state/local-edge-automation/scale-down-complete",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5813
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/reconcile/next",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5730
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/reconcile/receipt",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5734
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/releases/component-target",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5770
+        },
+        {
+          "file": "src/app/pages/admin-platform-release.ts",
+          "line": 405
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/releases/local-edge-automation",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5785
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/releases/local-edge-automation/preview",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5778
+        },
+        {
+          "file": "scripts/r2d2-local-edge-repair-runner.mjs",
+          "line": 265
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/platform/releases/status",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 5766
+        },
+        {
+          "file": "backend/os-cli/cmd/os/platform_update.go",
+          "line": 272
+        },
+        {
+          "file": "src/app/pages/admin-osaa.ts",
+          "line": 1867
+        },
+        {
+          "file": "src/app/pages/admin-platform-release.ts",
+          "line": 316
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "platform",
+        "prefix": "/api/platform"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/plugins",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 86
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_EXT",
+      "target": {
+        "kind": "browser-family",
+        "family": "plugins",
+        "prefix": "/api/plugins"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/plugins/postgres-r-1/plugins/ui-shell.manifest.json",
+      "sources": [
+        {
+          "file": "backend/registry/internal/registry/registry_test.go",
+          "line": 22
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_EXT",
+      "target": {
+        "kind": "browser-family",
+        "family": "plugins",
+        "prefix": "/api/plugins"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/proxy",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 157
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 708
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 441
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 1141
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "The untyped generic proxy is removed; callers must use a typed owner contract."
+    },
+    {
+      "path": "/api/proxy/",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3675
+        },
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 3683
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "The untyped generic proxy is removed; callers must use a typed owner contract."
+    },
+    {
+      "path": "/api/redirect",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 267
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 315
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/should-not-follow",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 268
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/status",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 347
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 352
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 356
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 357
+        },
+        {
+          "file": "backend/os-cli/cmd/os/web_shell_agent_test.go",
+          "line": 105
+        },
+        {
+          "file": "backend/os-cli/cmd/os/web_shell_agent_test.go",
+          "line": 189
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "status",
+        "prefix": "/api/status"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/status/api/status",
+      "sources": [
+        {
+          "file": "src/app/core/api.service.ts",
+          "line": 115
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Malformed duplicate status prefix is removed in favor of the canonical status family."
+    },
+    {
+      "path": "/api/status?detail=1",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 275
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 295
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "browser-family",
+        "family": "status",
+        "prefix": "/api/status"
+      },
+      "rationale": "The capability is retained behind the target session or owner-admission boundary."
+    },
+    {
+      "path": "/api/too-large",
+      "sources": [
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 271
+        },
+        {
+          "file": "backend/os-cli/cmd/os-shell-runtime/runtime_test.go",
+          "line": 321
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "none"
+      },
+      "rationale": "Test-only transport sentinel; it is not a target Console runtime operation."
+    },
+    {
+      "path": "/api/v1/events?fieldSelector=type=Warning&limit=100",
+      "sources": [
+        {
+          "file": "backend/dupa-control/controller.js",
+          "line": 2508
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_EXT",
+      "target": {
+        "kind": "adapter-capability",
+        "capability": "extension-runtime-events"
+      },
+      "rationale": "Extension event observation remains isolated inside the C_EXT owner boundary."
+    },
+    {
+      "path": "/api/v1/namespaces",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/baseline-monitoring.js",
+          "line": 194
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "adapter-capability",
+        "capability": "runtime-observation"
+      },
+      "rationale": "Raw Kubernetes observation is replaced by a fail-closed adapter and explicit authority state."
+    },
+    {
+      "path": "/api/v1/namespaces/opensphere-console/configmaps/opensphere-installation-lock",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 2597
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "internal-contract",
+        "capability": "installation-lock-projection"
+      },
+      "rationale": "Installation lock data is projected through C_API and is not exposed as raw Kubernetes API."
+    },
+    {
+      "path": "/api/v1/namespaces/opensphere-console/configmaps/opensphere-platform-recovery-evidence",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 2004
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_BAK",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "recovery-evidence"
+      },
+      "rationale": "Recovery evidence access is owned by C_BAK rather than the legacy monolith."
+    },
+    {
+      "path": "/api/v1/namespaces/opensphere-console/configmaps/opensphere-shell-control-gates",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7915
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "shell-runtime-discovery"
+      },
+      "rationale": "Shell runtime discovery is isolated behind the C_SCTL owner contract."
+    },
+    {
+      "path": "/api/v1/namespaces/opensphere-console/services",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7914
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_SCTL",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "shell-runtime-discovery"
+      },
+      "rationale": "Shell runtime discovery is isolated behind the C_SCTL owner contract."
+    },
+    {
+      "path": "/api/v1/namespaces/opensphere-foundation",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/foundation-bootstrap-bundle.js",
+          "line": 58
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation Kubernetes lifecycle access moved to the Foundation repository owner."
+    },
+    {
+      "path": "/api/v1/namespaces/opensphere-system",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/foundation-bootstrap-bundle.js",
+          "line": 57
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation Kubernetes lifecycle access moved to the Foundation repository owner."
+    },
+    {
+      "path": "/api/v1/namespaces/opensphere-system/serviceaccounts/foundation-control-plane",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/foundation-bootstrap-bundle.js",
+          "line": 59
+        }
+      ],
+      "disposition": "rejected",
+      "targetOwner": null,
+      "target": {
+        "kind": "repository",
+        "repository": "OpenSphere-Foundation"
+      },
+      "rationale": "Foundation Kubernetes lifecycle access moved to the Foundation repository owner."
+    },
+    {
+      "path": "/api/v1/nodes",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/baseline-monitoring.js",
+          "line": 192
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "adapter-capability",
+        "capability": "runtime-observation"
+      },
+      "rationale": "Raw Kubernetes observation is replaced by a fail-closed adapter and explicit authority state."
+    },
+    {
+      "path": "/api/v1/orgs",
+      "sources": [
+        {
+          "file": "backend/gitea/bootstrap/control-plane-bootstrap.ps1",
+          "line": 151
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "cooperating-system",
+        "system": "Gitea",
+        "capability": "bootstrap-organization"
+      },
+      "rationale": "This is a governed Gitea bootstrap adapter call, not a Console public API."
+    },
+    {
+      "path": "/api/v1/pods",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/baseline-monitoring.js",
+          "line": 193
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "adapter-capability",
+        "capability": "runtime-observation"
+      },
+      "rationale": "Raw Kubernetes observation is replaced by a fail-closed adapter and explicit authority state."
+    },
+    {
+      "path": "/api/v1/pods?limit=5000",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 2692
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_AI",
+      "target": {
+        "kind": "owner-capability",
+        "capability": "governed-kubernetes-tools"
+      },
+      "rationale": "Direct Kubernetes calls are replaced by typed, governed C_AI owner tools."
+    },
+    {
+      "path": "/api/v1/registry",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7108
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 156
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main.go",
+          "line": 705
+        },
+        {
+          "file": "backend/os-cli/cmd/os/main_test.go",
+          "line": 441
+        },
+        {
+          "file": "backend/registry/internal/registry/registry.go",
+          "line": 354
+        },
+        {
+          "file": "src/app/core/extension-host.service.ts",
+          "line": 239
+        },
+        {
+          "file": "src/app/core/extension-host.service.ts",
+          "line": 400
+        },
+        {
+          "file": "src/app/pages/admin-foundation-services.ts",
+          "line": 458
+        },
+        {
+          "file": "src/app/pages/admin-plugins.ts",
+          "line": 2189
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_REG",
+      "target": {
+        "kind": "public-read-family",
+        "prefix": "/api/v1/registry"
+      },
+      "rationale": "The read-only Registry browse and resolve contract is retained under C_REG."
+    },
+    {
+      "path": "/api/v1/registry/resolve",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-osaa-gateway/server.js",
+          "line": 7854
+        }
+      ],
+      "disposition": "adopted",
+      "targetOwner": "C_REG",
+      "target": {
+        "kind": "public-read-family",
+        "prefix": "/api/v1/registry"
+      },
+      "rationale": "The read-only Registry browse and resolve contract is retained under C_REG."
+    },
+    {
+      "path": "/api/v1/version",
+      "sources": [
+        {
+          "file": "backend/opensphere-console-backend/server.js",
+          "line": 2231
+        }
+      ],
+      "disposition": "reworked",
+      "targetOwner": "C_API",
+      "target": {
+        "kind": "adapter-capability",
+        "capability": "runtime-observation"
+      },
+      "rationale": "Raw Kubernetes observation is replaced by a fail-closed adapter and explicit authority state."
+    }
+  ]
+}
