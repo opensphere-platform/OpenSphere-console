@@ -755,6 +755,42 @@ try {
   assert.equal(refreshedLoginEvidence.rows[0].absolute_expires_at.toISOString(), loginEvidence.rows[0].absolute_expires_at.toISOString());
   assert.doesNotMatch(refreshedLoginEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature/i);
 
+  const deniedOwnerAdmission = await fetch(origin + '/api/internal/r2d2-proxy-authn', {
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-internal-authn-subrequest': 'r2d2-proxy-v1',
+      'x-os-original-method': 'POST',
+      'x-os-original-uri': '/api/osaa/chat',
+      'x-os-correlation-id': 'integration-owner-admission-denied-0001',
+    },
+  });
+  assert.equal(deniedOwnerAdmission.status, 403);
+  const ownerAdmission = await fetch(origin + '/api/internal/r2d2-proxy-authn', {
+    headers: {
+      cookie: loginCookieHeader,
+      'x-os-csrf-token': loginCsrf,
+      'x-os-internal-authn-subrequest': 'r2d2-proxy-v1',
+      'x-os-original-method': 'POST',
+      'x-os-original-uri': '/api/osaa/chat',
+      'x-os-correlation-id': 'integration-owner-admission-0001',
+    },
+  });
+  assert.equal(ownerAdmission.status, 204);
+  const ownerAuthorization = ownerAdmission.headers.get('x-os-r2d2-authorization');
+  assert.equal(ownerAuthorization, 'Bearer ' + rotatedLoginAccessToken);
+  const ownerProjectionResponse = await fetch(origin + '/api/identity/me', {
+    headers: {
+      authorization: ownerAuthorization,
+      'x-os-owner-admission': 'osaa-gateway-v1',
+      'x-os-correlation-id': 'integration-owner-projection-0001',
+    },
+  });
+  assert.equal(ownerProjectionResponse.status, 200);
+  const ownerProjection = await ownerProjectionResponse.json();
+  assert.equal(ownerProjection.data.subjectId, loginSubjectId);
+  assert.ok(ownerProjection.data.permissions.includes('console.role.admin'));
+  assert.doesNotMatch(JSON.stringify(ownerProjection), /integration-signature|supabase-refresh/i);
+
   const managedDirectoryResponse = await fetch(origin + '/api/identity', {
     headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-managed-identity-list-0001' },
   });
@@ -1181,7 +1217,7 @@ try {
     [
       'SELECT count(*)::int AS event_count, COALESCE(string_agg(action || evidence::text,\'\'),\'\') AS evidence',
       'FROM console_audit.event',
-      "WHERE action LIKE 'console.identity.lifecycle.%'",
+      "WHERE action LIKE 'console.identity.lifecycle.%' AND correlation_id LIKE 'integration-managed-%'",
     ].join(' '),
   );
   assert.equal(managedLifecycleEvidence.rows[0].event_count, 10);
@@ -2119,6 +2155,7 @@ try {
     migrationLineage: true,
     initialAdministratorBootstrapStatus: true,
     passwordLoginSessionLifecycle: true,
+    ownerAdmissionLifecycle: true,
     sessionPreferenceLifecycle: true,
     profileAvatarLifecycle: true,
     ownedPasswordRecoveryLinkLifecycle: true,
