@@ -32,7 +32,7 @@ function verifier(calls) {
         observedAt: '2026-09-02T00:00:00.000Z', data: {
           state: 'Active', sessionId, subjectId, aal: 'aal2',
           permissions: ['console.notification.manage', 'console.role.admin'],
-          permissionRevision: 7, revokeEpoch: 3,
+          permissionRevision: '7', revokeEpoch: '3',
         },
       }), { status: 200 });
     },
@@ -48,7 +48,7 @@ test('owner admission revalidates signed credential coordinates against current 
   assert.equal(actor.authzRevision, '7');
   assert.equal(actor.revokeEpoch, '3');
   assert.deepEqual(actor.groups, ['console-admins']);
-  assert.equal(calls[0].url, 'http://opensphere-console-api.test/api/internal/owner-authority');
+  assert.equal(calls[0].url, 'http://opensphere-console-api.test/api/identity/me');
   assert.equal(calls[0].options.headers['x-os-owner-admission'], 'notification-dispatcher-v1');
   assert.equal(Object.hasOwn(calls[0].options.headers, 'cookie'), false);
 });
@@ -79,7 +79,7 @@ test('owner authority projection must match JWT subject/AAL and carry fresh revo
       return new Response(JSON.stringify({ schemaVersion: '1.0', authority: 'SupabaseAuth', freshness: 'fresh',
         observedAt: '2026-09-02T00:00:00.000Z', data: {
         state: 'Active', sessionId, subjectId: '33333333-3333-4333-8333-333333333333', aal: 'aal1',
-        permissions: [], permissionRevision: 7, revokeEpoch: 3,
+        permissions: [], permissionRevision: '7', revokeEpoch: '3',
       } }), { status: 200 });
     },
   });
@@ -100,7 +100,7 @@ test('common Owner verifier preserves C_API dependency failures and bounds the a
       schemaVersion: '1.0', authority: 'SupabaseAuth', freshness: 'fresh', observedAt: '2026-09-02T00:00:00.000Z',
       data: { state: 'Active', sessionId, subjectId, aal: 'aal2',
         permissions: Array.from({ length: 257 }, (_, index) => `console.permission.${index}`),
-        permissionRevision: 7, revokeEpoch: 3 },
+        permissionRevision: '7', revokeEpoch: '3' },
     }), { status: 200 }); },
   });
   await assert.rejects(oversized(request()), (error) => error.code === 503);

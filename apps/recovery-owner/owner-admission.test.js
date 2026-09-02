@@ -23,7 +23,7 @@ function verifier(calls) {
       return new Response(JSON.stringify({ schemaVersion: '1.0', authority: 'SupabaseAuth', freshness: 'fresh',
         observedAt: '2026-09-02T00:00:00.000Z', data: {
         state: 'Active', sessionId, subjectId, permissions: ['console.backup.restore', 'console.role.admin'],
-        permissionRevision: 9, revokeEpoch: 4, aal: 'aal2',
+        permissionRevision: '9', revokeEpoch: '4', aal: 'aal2',
       } }), { status: 200 });
     },
   });

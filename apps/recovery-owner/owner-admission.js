@@ -8,6 +8,7 @@ const ROLE_MARKERS = Object.freeze({
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PERMISSION = /^[a-z][a-z0-9._:-]{0,127}$/u;
+const REVISION = /^(?:0|[1-9][0-9]*)$/u;
 
 function fail(code, msg) { throw { code, status: code, msg, message: msg }; }
 
@@ -79,7 +80,7 @@ function createConsoleOwnerAdmission({
     const credential = credentialCoordinates(token);
     let response;
     try {
-      response = await fetchImpl(origin + '/api/internal/owner-authority', {
+      response = await fetchImpl(origin + '/api/identity/me', {
         method: 'GET',
         headers: {
           authorization: `Bearer ${token}`,
@@ -103,12 +104,14 @@ function createConsoleOwnerAdmission({
         || typeof body?.observedAt !== 'string' || !Number.isFinite(Date.parse(body.observedAt))
         || projection?.state !== 'Active' || !UUID.test(String(projection?.sessionId || ''))
         || projection?.subjectId !== credential.subjectId || projection?.aal !== credential.aal
-        || !Number.isSafeInteger(projection?.permissionRevision) || projection.permissionRevision < 0
-        || !Number.isSafeInteger(projection?.revokeEpoch) || projection.revokeEpoch < 0 || !validPermissions) {
+        || typeof projection?.permissionRevision !== 'string' || !REVISION.test(projection.permissionRevision)
+        || !Number.isSafeInteger(Number(projection.permissionRevision))
+        || typeof projection?.revokeEpoch !== 'string' || !REVISION.test(projection.revokeEpoch)
+        || !Number.isSafeInteger(Number(projection.revokeEpoch)) || !validPermissions) {
       fail(503, 'Console owner authority returned an invalid current projection');
     }
-    const permissionRevision = projection.permissionRevision;
-    const revokeEpoch = projection.revokeEpoch;
+    const permissionRevision = Number(projection.permissionRevision);
+    const revokeEpoch = Number(projection.revokeEpoch);
     const permissions = [...new Set(rawPermissions)].sort();
     return Object.freeze({
       sub: credential.subjectId,
