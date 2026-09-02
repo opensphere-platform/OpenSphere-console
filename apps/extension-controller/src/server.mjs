@@ -8,6 +8,10 @@ import { createRegistryResolver } from '../../../packages/registry-client/src/re
 import { createExtensionController } from './controller.mjs';
 import { createKubernetesRegistrationWriter } from './kubernetes-registration-writer.mjs';
 import { createKubernetesExtensionLifecycle } from './kubernetes-extension-lifecycle.mjs';
+import { createKubernetesExtensionManagementAuthority } from './kubernetes-extension-management.mjs';
+import { createExtensionManagementStore } from './extension-management-store.mjs';
+import { createExtensionManagementOperations } from './extension-management-operations.mjs';
+import { createExtensionManagementHttpHandler, isExtensionManagementRoute } from './extension-management-http.mjs';
 import { createConsoleOwnerAdmission } from './owner-admission.mjs';
 import { createPluginProxy } from './plugin-proxy.mjs';
 import { createExtensionPostgresStore } from './postgres-store.mjs';
@@ -77,6 +81,31 @@ const ownerAdmission = createConsoleOwnerAdmission({
   baseUrl: String(process.env.CONSOLE_OWNER_AUTHORITY_URL || ''),
   timeoutMs: integer('CONSOLE_OWNER_AUTHORITY_TIMEOUT_MS', 8000, 100, 30000),
 });
+const managementAuthority = kubernetesToken ? createKubernetesExtensionManagementAuthority({
+  baseUrl: kubernetesBaseUrl,
+  token: kubernetesToken,
+  namespace: extensionNamespace,
+  timeoutMs: kubernetesTimeoutMs,
+  maximumResponseBytes: kubernetesMaximumResponseBytes,
+}) : null;
+const managementStore = createExtensionManagementStore({ query: pool.query.bind(pool) });
+const managementOperations = managementAuthority
+  ? createExtensionManagementOperations({ authority: managementAuthority, store: managementStore })
+  : null;
+const extensionManagementHandler = managementOperations
+  ? createExtensionManagementHttpHandler({
+    operations: managementOperations,
+    ownerAdmission,
+    maximumBodyBytes: integer('CONSOLE_EXTENSION_MANAGEMENT_REQUEST_MAX_BYTES', 32768, 1024, 1024 * 1024),
+  })
+  : async function unavailableExtensionManagement(request, response, url) {
+    const method = String(request.method || '').toUpperCase();
+    if (!isExtensionManagementRoute(method, url.pathname)) return false;
+    await ownerAdmission(request);
+    throw Object.assign(new Error('Kubernetes Extension management authority is unavailable'), {
+      code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
+    });
+  };
 const pluginProxy = createPluginProxy({
   pluginNamespace: extensionNamespace,
   timeoutMs: integer('CONSOLE_PLUGIN_PROXY_TIMEOUT_MS', 30000, 100, 120000),
@@ -164,6 +193,13 @@ async function cycle() {
 }
 const healthServer = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'extension.local'}`);
+  try {
+    if (await extensionManagementHandler(request, response, url)) return;
+  } catch (error) {
+    if (!response.headersSent) writeOwnerError(response, error);
+    else response.destroy(error);
+    return;
+  }
   if (url.pathname.startsWith('/api/plugins/')) {
     try { await handlePluginRequest(request, response, url); }
     catch (error) { if (!response.headersSent) writeOwnerError(response, error); else response.destroy(error); }
