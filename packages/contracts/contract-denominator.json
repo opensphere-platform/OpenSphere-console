@@ -118,6 +118,7 @@
     "managed-identity-role-change-request.schema.json",
     "managed-identity-role-change-response.schema.json",
     "session-event-response.schema.json",
+    "current-session-response.schema.json",
     "error-envelope.schema.json",
     "operation-receipt.schema.json",
     "operation-request.schema.json",

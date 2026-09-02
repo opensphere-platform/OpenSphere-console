@@ -32,17 +32,38 @@ function envelope(data, correlationId, evidenceRefs, now) {
 export function createIdentityOperations({ store, clock = () => new Date() }) {
   if (!store?.revokeSession) throw new TypeError('identity session store is required');
   return Object.freeze({
-    getSession({ session, correlationId }) {
+    getSession({ session, currentIdentity, correlationId }) {
       const now = clock();
       active(session, now);
-      return envelope({
+      const projection = {
         state: 'Active',
         subjectId: session.subjectId,
         expiresAt: new Date(session.expiresAt).toISOString(),
         aal: session.aal,
         permissionRevision: String(session.permissionRevision),
         revokeEpoch: String(session.revokeEpoch),
-      }, correlationId, ['browser-session:' + session.sessionId], now);
+      };
+      if (currentIdentity !== undefined) {
+        const profile = currentIdentity?.profile;
+        const browserSession = currentIdentity?.browserSession;
+        const groups = currentIdentity?.groups;
+        if (profile?.id !== session.subjectId || !profile.username || !profile.email || !profile.displayName
+            || !Array.isArray(groups) || groups.some((group) => typeof group !== 'string')
+            || browserSession?.id !== session.sessionId || browserSession.current !== true
+            || browserSession.status !== 'active') {
+          fail('AuthorityUnavailable', 'current identity projection is invalid', 503);
+        }
+        Object.assign(projection, {
+          username: profile.username,
+          email: profile.email,
+          displayName: profile.displayName,
+          groups: Object.freeze([...groups]),
+          permissions: Object.freeze([...(session.permissions || [])].sort()),
+          browserSession,
+          authorityDegraded: false,
+        });
+      }
+      return envelope(projection, correlationId, ['browser-session:' + session.sessionId, 'subject:' + session.subjectId], now);
     },
 
     getMe({ session, correlationId }) {

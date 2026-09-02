@@ -411,8 +411,15 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         }));
       }
       if (url.pathname === '/api/identity/session' && request.method === 'GET') {
-        const session = await resolveSession(request, { requireCsrf: false, correlationId });
-        return send(response, 200, identityOperations.getSession({ session, correlationId }));
+        if (!identitySessionBroker?.getCurrentSessionProjection) {
+          throw Object.assign(new Error('current identity projection is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        const currentIdentity = await identitySessionBroker.getCurrentSessionProjection(request, { correlationId });
+        return send(response, 200, identityOperations.getSession({
+          session: currentIdentity.session,
+          currentIdentity,
+          correlationId,
+        }));
       }
       if (url.pathname === '/api/identity/me' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false, correlationId });

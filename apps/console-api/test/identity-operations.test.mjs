@@ -92,12 +92,28 @@ test('PostgreSQL session revoke binds session, actor and current revisions', asy
 test('HTTP identity routes separate read CSRF policy from revoke mutation', async (t) => {
   const { identityOperations, revoked } = fixture();
   const resolverCalls = [];
+  const browserSession = {
+    id: session.sessionId, current: true, status: 'active', assurance: 'aal2', persistence: '24h',
+    createdAt: current.toISOString(), lastSeenAt: current.toISOString(),
+    idleExpiresAt: session.expiresAt, absoluteExpiresAt: session.expiresAt, userAgentDigest: null,
+  };
   const server = createServer(createConsoleApiHandler({
     async resolveSession(_request, options) {
       resolverCalls.push(options);
       return session;
     },
     operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations,
+    identitySessionBroker: {
+      async getCurrentSessionProjection(_request, options) {
+        resolverCalls.push({ projection: options });
+        return {
+          session,
+          profile: { id: session.subjectId, username: 'operator', email: 'operator@example.test', displayName: 'Console Operator' },
+          groups: ['console-admins'],
+          browserSession,
+        };
+      },
+    },
   }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -112,7 +128,13 @@ test('HTTP identity routes separate read CSRF policy from revoke mutation', asyn
     method: 'DELETE', headers: { 'x-os-correlation-id': 'http-identity-session-revoke-0001' },
   });
   assert.equal(sessionResponse.status, 200);
-  assert.equal((await sessionResponse.json()).data.state, 'Active');
+  const sessionBody = await sessionResponse.json();
+  assert.equal(sessionBody.data.state, 'Active');
+  assert.equal(sessionBody.data.subjectId, session.subjectId);
+  assert.equal(sessionBody.data.username, 'operator');
+  assert.deepEqual(sessionBody.data.groups, ['console-admins']);
+  assert.deepEqual(sessionBody.data.permissions, ['console.audit.read', 'console.registry.manage']);
+  assert.deepEqual(sessionBody.data.browserSession, browserSession);
   assert.equal(meResponse.status, 200);
   assert.equal((await meResponse.json()).data.subjectId, session.subjectId);
   assert.equal(revokeResponse.status, 204);
@@ -122,7 +144,7 @@ test('HTTP identity routes separate read CSRF policy from revoke mutation', asyn
   assert.match(expiredCookies[1], /^__Host-opensphere_csrf=;/);
   assert.ok(expiredCookies.every((cookie) => cookie.includes('Max-Age=0')));
   assert.deepEqual(resolverCalls, [
-    { requireCsrf: false, correlationId: 'http-identity-session-read-0001' },
+    { projection: { correlationId: 'http-identity-session-read-0001' } },
     { requireCsrf: false, correlationId: 'http-identity-actor-read-0001' },
     { requireCsrf: true, correlationId: 'http-identity-session-revoke-0001' },
   ]);

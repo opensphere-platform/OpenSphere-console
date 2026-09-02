@@ -78,16 +78,20 @@ export interface BrowserSession {
 }
 
 interface SessionProjection {
-  subject?: string;
+  state?: 'Active';
+  subjectId?: string;
   username?: string;
   email?: string;
   displayName?: string;
   groups?: unknown;
   permissions?: unknown;
-  assurance?: 'aal1' | 'aal2';
-  session?: BrowserSession | null;
+  aal?: 'aal1' | 'aal2';
+  browserSession?: BrowserSession | null;
   authorityDegraded?: boolean;
-  error?: string;
+}
+
+interface SessionReadEnvelope extends ApiError {
+  data?: SessionProjection;
 }
 
 export interface TotpEnrollment {
@@ -614,22 +618,24 @@ export class AuthService {
       cache: 'no-store',
       headers: { accept: 'application/json' },
     });
-    const body = await response.json().catch(() => ({})) as SessionProjection;
-    if (!response.ok) throw Object.assign(new Error(body.error || '콘솔 권한을 확인하지 못했습니다.'), { status: response.status });
+    const envelope = await response.json().catch(() => ({})) as SessionReadEnvelope;
+    if (!response.ok) throw Object.assign(new Error(this.errorText(envelope, response.status)), { status: response.status });
+    const body = envelope.data;
+    if (!body || body.state !== 'Active') throw new Error('서버의 로그인 세션 응답이 올바르지 않습니다.');
     const groups = Array.isArray(body.groups)
       ? body.groups.map((group) => String(group).trim()).filter(Boolean)
       : [];
-    this.subject.set(String(body.subject || ''));
-    this.user.set(String(body.username || body.email || body.subject || ''));
+    this.subject.set(String(body.subjectId || ''));
+    this.user.set(String(body.username || body.email || body.subjectId || ''));
     this.email.set(String(body.email || ''));
     this.name.set(String(body.displayName || ''));
     this.groups.set(groups);
     this.roles.set(groups);
-    this.assurance.set(body.assurance === 'aal2' ? 'aal2' : 'aal1');
-    this.currentSession.set(body.session || null);
+    this.assurance.set(body.aal === 'aal2' ? 'aal2' : 'aal1');
+    this.currentSession.set(body.browserSession || null);
     this.authorityWarning.set(body.authorityDegraded ? 'Supabase authorization state unavailable; cached read-only session is active.' : '');
-    this.tokenExp.set(this.epoch(body.session?.absoluteExpiresAt));
-    this.idleExp.set(this.epoch(body.session?.idleExpiresAt));
+    this.tokenExp.set(this.epoch(body.browserSession?.absoluteExpiresAt));
+    this.idleExp.set(this.epoch(body.browserSession?.idleExpiresAt));
     await this.loadProfileAvatar().catch(() => {
       this.profileAvatar.set(INITIAL_AVATAR);
       this.avatarUrl.set('');

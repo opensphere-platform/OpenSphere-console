@@ -92,6 +92,11 @@ function initialAdministratorInput(body) {
 }
 
 const MANAGED_ROLES = new Set(['console-admins', 'console-operators', 'console-viewers']);
+const ROLE_GROUP_BY_PERMISSION = Object.freeze({
+  'console.role.admin': 'console-admins',
+  'console.role.operator': 'console-operators',
+  'console.role.viewer': 'console-viewers',
+});
 
 function managedRoleChangeInput(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -297,6 +302,33 @@ export function createIdentitySessionBroker({
   }
 
   const broker = {
+    async getCurrentSessionProjection(request, { correlationId } = {}) {
+      if (!authClient?.readManagedUser) {
+        fail('AuthorityUnavailable', 'current identity profile authority is unavailable', 503);
+      }
+      const session = await broker.resolveSession(request, { requireCsrf: false, correlationId });
+      const [profile, inventory] = await Promise.all([
+        authClient.readManagedUser(session.subjectId),
+        broker.listSessions(request),
+      ]);
+      const browserSession = inventory.items.find((candidate) => candidate.current === true);
+      if (profile?.id !== session.subjectId || browserSession?.id !== session.sessionId) {
+        fail('AuthorityUnavailable', 'current identity authorities changed the session subject', 503);
+      }
+      if (browserSession.status !== 'active') {
+        fail('AuthenticationRequired', 'completed browser session is required', 401);
+      }
+      const groups = [...new Set((session.permissions || [])
+        .map((permission) => ROLE_GROUP_BY_PERMISSION[permission])
+        .filter(Boolean))].sort();
+      return Object.freeze({
+        session,
+        profile,
+        groups: Object.freeze(groups),
+        browserSession,
+      });
+    },
+
     async listManagedIdentities(request, { correlationId } = {}) {
       if (!store?.listManagedIdentities || !authClient?.readManagedUser) {
         fail('AuthorityUnavailable', 'managed identity authority is unavailable', 503);

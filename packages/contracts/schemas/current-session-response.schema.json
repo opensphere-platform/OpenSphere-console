@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:current-session-response:v1",
+  "title": "Current Console browser session authority projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "data", "authority", "observedAt", "freshness", "correlationId", "evidenceRefs"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "subjectId", "username", "email", "displayName", "groups", "permissions", "aal", "browserSession", "authorityDegraded", "expiresAt", "permissionRevision", "revokeEpoch"],
+      "properties": {
+        "state": { "const": "Active" },
+        "subjectId": { "type": "string", "format": "uuid" },
+        "username": { "type": "string", "minLength": 1, "maxLength": 63 },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "groups": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 3,
+          "items": { "enum": ["console-admins", "console-operators", "console-viewers"] }
+        },
+        "permissions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "aal": { "enum": ["aal1", "aal2"] },
+        "browserSession": { "$ref": "#/$defs/browserSession" },
+        "authorityDegraded": { "const": false },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "permissionRevision": { "type": "string", "pattern": "^[0-9]+$" },
+        "revokeEpoch": { "type": "string", "pattern": "^[0-9]+$" }
+      }
+    },
+    "authority": { "const": "SupabaseAuth" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "freshness": { "const": "fresh" },
+    "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "browserSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "current", "status", "assurance", "persistence", "createdAt", "lastSeenAt", "idleExpiresAt", "absoluteExpiresAt", "userAgentDigest"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "current": { "const": true },
+        "status": { "const": "active" },
+        "assurance": { "enum": ["aal1", "aal2"] },
+        "persistence": { "enum": ["browser", "1h", "4h", "8h", "12h", "24h", "3d", "7d", "14d", "30d"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastSeenAt": { "type": "string", "format": "date-time" },
+        "idleExpiresAt": { "type": "string", "format": "date-time" },
+        "absoluteExpiresAt": { "type": "string", "format": "date-time" },
+        "userAgentDigest": { "type": ["string", "null"], "maxLength": 128 }
+      }
+    }
+  }
+}

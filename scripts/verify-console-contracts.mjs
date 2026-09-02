@@ -399,6 +399,11 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     const identityRead = entries.find(({ operation }) => operation.operationId === operationId)?.operation;
     assert(identityRead?.['x-opensphere-authority'] === 'SupabaseAuth', operationId + ' must declare Supabase Auth authority');
   }
+  const currentSessionRead = entries.find(({ operation }) => operation.operationId === 'getSession')?.operation;
+  assert(currentSessionRead?.responses?.['200']?.content?.['application/json']?.schema?.$ref
+    === '../schemas/current-session-response.schema.json', 'getSession must use the closed current-session projection schema');
+  assert(currentSessionRead?.responses?.['503']?.$ref === '#/components/responses/AuthorityUnavailable',
+    'getSession must fail closed when a current identity authority is unavailable');
   const supabaseStatus = entries.find(({ operation }) => operation.operationId === 'getSupabaseStatus')?.operation;
   assert(supabaseStatus?.['x-opensphere-authority'] === 'Supabase', 'getSupabaseStatus must declare Supabase authority');
   assert(supabaseStatus?.['x-opensphere-permission'] === 'console.data_identity.read', 'getSupabaseStatus must declare its read permission');

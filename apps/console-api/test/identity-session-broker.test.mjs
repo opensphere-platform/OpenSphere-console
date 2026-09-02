@@ -1454,6 +1454,74 @@ test('trusted activity touch sends only opaque proof digests and returns bounded
   assert.equal(session.absoluteExpiresAt, '2026-09-09T00:00:00.000Z');
 });
 
+test('current session projection joins Supabase profile with current DB authority', async () => {
+  const handle = 'opaque-current-session-handle-long-enough';
+  const calls = { resolved: [], listed: [], profiles: [] };
+  let currentStatus = 'active';
+  const store = {
+    async resolveSession(input) {
+      calls.resolved.push(input);
+      return {
+        sessionId, subjectId, expiresAt: '2026-09-02T12:00:00.000Z',
+        idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+        persistence: '24h', lastSeenAt: now.toISOString(), accessTokenExpiresAt: '2026-09-02T01:00:00.000Z',
+        revokedAt: null, authorityFresh: true,
+        permissions: ['console.status.read', 'console.role.viewer', 'console.role.admin'],
+        permissionRevision: 3, revokeEpoch: 1, aal: 'aal2',
+      };
+    },
+    async issueSession() { throw new Error('login must not run'); },
+    async getPendingMfa() { throw new Error('MFA must not run'); },
+    async activateMfa() { throw new Error('MFA must not run'); },
+    async getRefreshCredentials() { throw new Error('refresh must not run'); },
+    async rotateCredentials() { throw new Error('refresh must not run'); },
+    async rejectRefresh() { throw new Error('refresh must not run'); },
+    async touchActivity() { throw new Error('activity touch must not run'); },
+    ...unusedOwnedSessionMethods(),
+    async listOwnedSessions(input) {
+      calls.listed.push(input);
+      return { items: [{
+        id: sessionId, current: true, status: currentStatus, assurance: 'aal2', persistence: '24h',
+        createdAt: '2026-09-01T00:00:00.000Z', lastSeenAt: now.toISOString(),
+        idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+        userAgentDigest: null,
+      }] };
+    },
+  };
+  const broker = createIdentitySessionBroker({
+    store,
+    authClient: {
+      async authenticatePassword() { throw new Error('login must not run'); },
+      async completeTotp() { throw new Error('MFA must not run'); },
+      async refreshSession() { throw new Error('refresh must not run'); },
+      async logout() {},
+      async readManagedUser(value) {
+        calls.profiles.push(value);
+        return { id: subjectId, username: 'operator', email: 'operator@example.test', displayName: 'Console Operator' };
+      },
+    },
+    credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 12) }),
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const projection = await broker.getCurrentSessionProjection({ headers: {
+    cookie: '__Host-opensphere-session=' + handle,
+  } }, { correlationId: 'current-session-projection-0001' });
+  assert.equal(projection.session.subjectId, subjectId);
+  assert.equal(projection.profile.username, 'operator');
+  assert.deepEqual(projection.groups, ['console-admins', 'console-viewers']);
+  assert.equal(projection.browserSession.id, sessionId);
+  assert.deepEqual(calls.profiles, [subjectId]);
+  assert.equal(calls.resolved[0].tokenDigest.length, 32);
+  assert.equal(calls.listed[0].tokenDigest.length, 32);
+  assert.doesNotMatch(JSON.stringify(calls), /opaque-current-session-handle/);
+  currentStatus = 'pending_mfa';
+  await assert.rejects(broker.getCurrentSessionProjection({ headers: {
+    cookie: '__Host-opensphere-session=' + handle,
+  } }, { correlationId: 'current-session-pending-mfa-0001' }), {
+    code: 'AuthenticationRequired', status: 401,
+  });
+});
+
 test('owned session inventory and revocation send only opaque proof digests', async () => {
   const otherSessionId = '33333333-3333-4333-8333-333333333333';
   const calls = { list: [], revoke: [], revokeAll: [] };

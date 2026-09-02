@@ -1051,9 +1051,11 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReadEnvelope"
+                $ref: "../schemas/current-session-response.schema.json"
         "401":
           $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
     delete:
       operationId: deleteSession
       tags: [Session]
