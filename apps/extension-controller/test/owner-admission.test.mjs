@@ -85,3 +85,29 @@ test('C_EXT rejects non-integer revisions and unbounded permission projections',
     await assert.rejects(verify(request()), (error) => error.status === 503);
   }
 });
+
+test('C_EXT admits only the exact target management surface with exchanged proof', async () => {
+  const calls = [];
+  const verify = authority(calls);
+  await verify({ ...request(), method: 'GET', url: '/api/admin/plugins/catalog' });
+  await verify({
+    ...request({ 'x-os-owner-csrf-verified': 'true' }),
+    method: 'POST',
+    url: '/api/admin/plugins/registrations/metrics/rollback',
+  });
+  assert.equal(calls.length, 2);
+
+  const rejected = [
+    ['POST', '/api/admin/plugins/registrations/metrics/install'],
+    ['GET', '/api/admin/plugins/catalog/extra'],
+    ['POST', '/api/admin/extensions/install'],
+    ['DELETE', '/api/admin/plugins/registrations/metrics'],
+  ];
+  for (const [method, url] of rejected) {
+    await assert.rejects(
+      verify({ ...request({ 'x-os-owner-csrf-verified': 'true' }), method, url }),
+      (error) => error.status === 403,
+    );
+  }
+  assert.equal(calls.length, 2);
+});

@@ -1,6 +1,8 @@
+import { isExtensionManagementRoute } from './extension-management-http.mjs';
+
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']);
-const PATH = /^\/api\/plugins\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\/.*)?$/u;
+const RUNTIME_PATH = /^\/api\/plugins\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\/.*)?$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PERMISSION = /^[a-z][a-z0-9._:-]{0,127}$/u;
 const REVISION = /^(?:0|[1-9][0-9]*)$/u;
@@ -44,13 +46,12 @@ function coordinates(token) {
 export function createConsoleOwnerAdmission({
   baseUrl,
   marker = 'extension-controller-v1',
-  familyPrefix = '/api/plugins',
   fetchImpl = globalThis.fetch,
   timeoutMs = 8000,
 } = {}) {
   const authorityOrigin = origin(baseUrl);
-  if (marker !== 'extension-controller-v1' || familyPrefix !== '/api/plugins') {
-    throw new TypeError('C_EXT Owner marker/family contract is closed');
+  if (marker !== 'extension-controller-v1') {
+    throw new TypeError('C_EXT Owner marker contract is closed');
   }
   if (typeof fetchImpl !== 'function') throw new TypeError('fetch implementation is required');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000) {
@@ -62,8 +63,10 @@ export function createConsoleOwnerAdmission({
     let path;
     try { path = new URL(String(request?.url || ''), 'http://owner.local').pathname; }
     catch { fault(400, 'Owner request URI is invalid'); }
-    const route = path.match(PATH);
-    if (!METHODS.has(method) || !route || route[1] === 'os-cli') fault(403, 'request is outside the exact admitted C_EXT routes');
+    const runtimeRoute = path.match(RUNTIME_PATH);
+    const runtimeAdmitted = METHODS.has(method) && runtimeRoute && runtimeRoute[1] !== 'os-cli';
+    const managementAdmitted = isExtensionManagementRoute(method, path);
+    if (!runtimeAdmitted && !managementAdmitted) fault(403, 'request is outside the exact admitted C_EXT routes');
     if (request?.headers?.cookie || request?.headers?.['x-os-csrf-token']) {
       fault(403, 'raw browser credentials reached C_EXT');
     }
@@ -110,7 +113,8 @@ export function createConsoleOwnerAdmission({
         || !Number.isSafeInteger(revokeEpoch) || !validPermissions) {
       fault(503, 'Console owner authority returned an invalid current projection');
     }
-    const permissions = [...new Set(rawPermissions)].sort();    return Object.freeze({
+    const permissions = [...new Set(rawPermissions)].sort();
+    return Object.freeze({
       subjectId: credential.subjectId,
       browserSessionId: String(projection.sessionId),
       authSessionRef: credential.authSessionRef,
