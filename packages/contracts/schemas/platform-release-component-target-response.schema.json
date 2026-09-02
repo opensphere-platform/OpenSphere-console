@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:platform-release-component-target-response:v1",
+  "title": "Platform Release Component Target Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["targetLock", "baseReleaseDigest", "changedComponents", "generatedAt"],
+  "properties": {
+    "targetLock": { "$ref": "./platform-release-lock.schema.json" },
+    "baseReleaseDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "changedComponents": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 15,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
+    "generatedAt": { "type": "string", "format": "date-time" }
+  }
+}

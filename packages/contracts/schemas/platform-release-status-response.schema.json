@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:platform-release-status-response:v1",
+  "title": "Platform Release Status Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["authority", "execution", "current", "contract", "changes", "checkedAt"],
+  "properties": {
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declaration", "execution", "observed", "localKubeconfigExecution", "supportedChannels", "approvalPolicy", "blockedChannels"],
+      "properties": {
+        "declaration": { "const": "Gitea reviewed GovernedChange" },
+        "execution": { "const": "platform-release-owner" },
+        "observed": { "const": "opensphere-installation-lock + owner receipt" },
+        "localKubeconfigExecution": { "const": false },
+        "supportedChannels": { "const": ["edge"] },
+        "approvalPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["localEdgeComponentApply", "integratedRollbackAndPromotion"],
+          "properties": {
+            "localEdgeComponentApply": { "const": "owner-mfa" },
+            "integratedRollbackAndPromotion": { "const": "cross-operator" }
+          }
+        },
+        "blockedChannels": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["candidate", "stable", "ga"],
+          "properties": {
+            "candidate": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "stable": { "type": "string", "minLength": 1, "maxLength": 200 },
+            "ga": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ready", "state", "blocker", "executorImage", "desiredReplicas", "availableReplicas"],
+      "properties": {
+        "ready": { "const": false },
+        "state": { "const": "Unavailable" },
+        "blocker": { "const": "platform_release_owner_not_target_ready" },
+        "executorImage": { "type": "null" },
+        "desiredReplicas": { "type": "null" },
+        "availableReplicas": { "type": "null" }
+      }
+    },
+    "current": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "releaseDigest", "sourceRevision", "resolvedAt", "componentCount", "buildAuthority", "releaseClass", "releaseScope", "baseReleaseDigest", "changedComponents", "components"],
+      "properties": {
+        "channel": { "const": "edge" },
+        "releaseDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "resolvedAt": { "type": ["string", "null"], "format": "date-time" },
+        "componentCount": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "buildAuthority": { "type": ["string", "null"], "maxLength": 128 },
+        "releaseClass": { "type": ["string", "null"], "maxLength": 128 },
+        "releaseScope": { "enum": ["integrated", "component"] },
+        "baseReleaseDigest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+        "changedComponents": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "components": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repository", "image", "sourceRevision"],
+            "properties": {
+              "repository": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "image": { "type": "string", "pattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$" },
+              "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+              "registryCredentialsRequired": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "contract": { "type": "null" },
+    "changes": { "type": "array", "maxItems": 0 },
+    "checkedAt": { "type": "string", "format": "date-time" }
+  }
+}

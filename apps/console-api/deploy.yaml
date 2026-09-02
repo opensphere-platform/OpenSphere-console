@@ -96,6 +96,12 @@ spec:
               value: platform-declarations
             - name: CONSOLE_GITEA_DEFAULT_BRANCH
               value: main
+            - name: CONSOLE_INSTALLATION_RELEASE_PATH
+              value: /var/run/opensphere/release/release.json
+          volumeMounts:
+            - name: installation-release
+              mountPath: /var/run/opensphere/release
+              readOnly: true
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 2
@@ -116,6 +122,14 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+      volumes:
+        - name: installation-release
+          configMap:
+            name: opensphere-installation-lock
+            optional: true
+            items:
+              - key: release.json
+                path: release.json
 ---
 apiVersion: v1
 kind: Service

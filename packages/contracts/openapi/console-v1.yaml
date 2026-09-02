@@ -1125,6 +1125,60 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
+  /api/platform/releases/status:
+    get:
+      operationId: getPlatformReleaseStatus
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-014
+      x-opensphere-authority: InstalledReleaseLock
+      x-opensphere-permission: console.git.change
+      responses:
+        "200":
+          description: Exact installed release projection; executor readiness remains closed until target owner evidence exists
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/platform-release-status-response.schema.json"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+  /api/platform/releases/component-target:
+    post:
+      operationId: generatePlatformReleaseComponentTarget
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-014
+      x-opensphere-risk: R2
+      x-opensphere-authority: InstalledReleaseLock
+      x-opensphere-permission: console.git.change
+      x-opensphere-idempotency: deterministic-preview-no-side-effect
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/platform-release-component-target-request.schema.json"
+      responses:
+        "200":
+          description: A deterministic exact-digest component target derived from the current installed lock; no apply is implied
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/platform-release-component-target-response.schema.json"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "428":
+          $ref: "#/components/responses/StepUpRequired"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/platform/gitea/status:
     get:
       operationId: getGiteaStatus

@@ -92,7 +92,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformReleaseOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -482,6 +482,26 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         }
         const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await platformChangeOperations.status({ session, correlationId }));
+      }
+      if (url.pathname === '/api/platform/releases/status' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!platformReleaseOperations?.status) {
+          throw Object.assign(new Error('Platform Release status authority is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });
+        }
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        return send(response, 200, await platformReleaseOperations.status({ session, correlationId }));
+      }
+      if (url.pathname === '/api/platform/releases/component-target' && request.method === 'POST') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!platformReleaseOperations?.generateComponentTarget) {
+          throw Object.assign(new Error('Platform Release component target authority is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });
+        }
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
+        return send(response, 200, await platformReleaseOperations.generateComponentTarget({
+          session,
+          body: await jsonBody(request),
+          correlationId,
+        }));
       }
       if (url.pathname === '/api/platform/gitea/bootstrap/argocd-verification' && request.method === 'POST') {
         if (!platformChangeOperations?.bootstrapArgocdVerification) {

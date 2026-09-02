@@ -48,6 +48,8 @@
     "getMe",
     "getSupabaseStatus",
     "listAuditEvents",
+    "getPlatformReleaseStatus",
+    "generatePlatformReleaseComponentTarget",
     "getGiteaStatus",
     "bootstrapArgocdVerification",
     "proposePlatformChange",
@@ -84,6 +86,10 @@
     "console.extension.remove@1.0"
   ],
   "requiredSchemas": [
+    "platform-release-lock.schema.json",
+    "platform-release-status-response.schema.json",
+    "platform-release-component-target-request.schema.json",
+    "platform-release-component-target-response.schema.json",
     "gitea-status-response.schema.json",
     "argocd-verification-bootstrap-request.schema.json",
     "argocd-verification-bootstrap-response.schema.json",

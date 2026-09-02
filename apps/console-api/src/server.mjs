@@ -18,6 +18,7 @@ import { createGiteaChangeClient } from './gitea-change-client.mjs';
 import { createPlatformChangeOperations } from './platform-change-operations.mjs';
 import { createCatalogOperations } from './catalog-operations.mjs';
 import { createOwnerAdmissionOperations } from './owner-admission-operations.mjs';
+import { createFileInstallationReleaseStore, createPlatformReleaseOperations } from './platform-release-operations.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -113,6 +114,11 @@ const platformChangeOperations = createPlatformChangeOperations({
   projectionStore: store,
   giteaClient: giteaChangeClient,
 });
+const platformReleaseOperations = createPlatformReleaseOperations({
+  releaseStore: createFileInstallationReleaseStore({
+    path: String(process.env.CONSOLE_INSTALLATION_RELEASE_PATH || '/var/run/opensphere/release/release.json'),
+  }),
+});
 const handler = createConsoleApiHandler({
   resolveSession: identitySessionBroker.resolveSession,
   operationService,
@@ -125,6 +131,7 @@ const handler = createConsoleApiHandler({
   cliIdentityBroker,
   dataIdentityOperations,
   platformChangeOperations,
+  platformReleaseOperations,
   health: () => store.health(),
 });
 const server = createServer(handler);

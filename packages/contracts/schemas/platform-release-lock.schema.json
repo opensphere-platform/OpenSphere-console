@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:platform-release-lock:v1",
+  "title": "OpenSphere Platform Release Lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "channel", "releaseDigest", "source", "sourceRevision", "trust", "components"],
+  "properties": {
+    "apiVersion": { "const": "release.opensphere.io/v1alpha1" },
+    "kind": { "const": "OpenSphereReleaseLock" },
+    "channel": { "const": "edge" },
+    "releaseDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "resolvedAt": { "type": "string", "format": "date-time" },
+    "source": { "const": "https://github.com/opensphere-platform/OpenSphere-console" },
+    "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "repository", "publisher", "buildAuthority", "releaseClass", "gaEligible"],
+      "properties": {
+        "type": { "const": "localhost-edge/v1" },
+        "repository": { "const": "opensphere-platform/OpenSphere-console" },
+        "publisher": { "const": "scripts/Publish-LocalEdge.ps1" },
+        "buildAuthority": { "const": "localhost" },
+        "releaseClass": { "const": "pre-ga" },
+        "gaEligible": { "const": false }
+      }
+    },
+    "releaseScope": { "enum": ["integrated", "component"] },
+    "baseReleaseDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "changedComponents": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
+    "components": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "additionalProperties": { "$ref": "#/$defs/artifact" }
+    },
+    "auxiliaryArtifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "cliArtifacts": { "$ref": "#/$defs/artifact" } }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "image", "sourceRevision"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "image": { "type": "string", "pattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$" },
+        "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "registryCredentialsRequired": { "type": "boolean" }
+      }
+    }
+  }
+}

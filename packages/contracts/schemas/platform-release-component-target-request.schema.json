@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:platform-release-component-target-request:v1",
+  "title": "Platform Release Component Target Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sourceRevision", "components", "reason"],
+  "properties": {
+    "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "reason": { "type": "string", "minLength": 8, "maxLength": 500, "pattern": "^[^\\r\\n]+$" },
+    "components": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 15,
+      "propertyNames": {
+        "enum": ["console", "backend", "dupaController", "registry", "osaaGateway", "osdst", "osaaGovernedAdapter", "notificationDispatcher", "gitea", "supabasePostgres", "supabaseAuth", "supabaseRest", "supabaseStorage", "giteaPostgres", "recovery"]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["image"],
+        "properties": {
+          "image": {
+            "type": "string",
+            "pattern": "^(sha256:[a-f0-9]{64}|ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64})$"
+          },
+          "registryCredentialsRequired": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
