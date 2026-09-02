@@ -35,3 +35,18 @@ export function evaluateSupabaseReadiness(document: Record<string, unknown>): { 
     detail: components.length ? count + '/' + components.length + ' services Ready' : 'Supabase component evidence is absent',
   };
 }
+export function evaluateReleaseLockReadiness(document: Record<string, unknown>): { ready: boolean; detail: string } {
+  const current = asRecord(document['current']);
+  const execution = asRecord(document['execution']);
+  const digest = String(current['releaseDigest'] || '');
+  const channel = String(current['channel'] || 'unknown');
+  const ready = /^sha256:[a-f0-9]{64}$/.test(digest);
+  if (!ready) return { ready: false, detail: 'Installed release lock evidence is incomplete' };
+  const executor = execution['ready'] === true
+    ? 'separate executor Ready'
+    : `separate executor ${String(execution['state'] || 'inactive')}`;
+  return {
+    ready: true,
+    detail: `Installed ${channel} release · ${digest.slice(0, 19)}… · ${executor}`,
+  };
+}

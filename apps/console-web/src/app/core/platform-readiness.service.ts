@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpService } from './http.service';
 import {
   asRecord,
+  evaluateReleaseLockReadiness,
   evaluateSupabaseReadiness,
   type BackboneComponentId,
   type BackboneReadinessComponent,
@@ -40,17 +41,11 @@ const DEFINITIONS: readonly ComponentDefinition[] = [
   },
   {
     id: 'release',
-    label: 'Release Lock & Executor',
+    label: 'Installed Release Lock',
     authority: 'OpenSphere Release Lock',
     endpoint: '/api/platform/releases/status',
     route: '/manage/platform-release',
-    evaluate(document) {
-      const execution = asRecord(document['execution']);
-      const current = asRecord(document['current']);
-      const digest = String(current['releaseDigest'] || '');
-      const ready = execution['ready'] === true && /^sha256:[a-f0-9]{64}$/.test(digest);
-      return { ready, detail: ready ? `Installed ${String(current['channel'] || 'unknown')} release · ${digest.slice(0, 19)}…` : String(execution['blocker'] || 'Installed release or executor evidence is incomplete') };
-    },
+    evaluate: evaluateReleaseLockReadiness,
   },
   {
     id: 'beszel',
