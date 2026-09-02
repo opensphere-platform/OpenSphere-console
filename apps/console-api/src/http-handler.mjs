@@ -163,6 +163,13 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         }
         return sendOwnerAdmission(response, await ownerAdmissionOperations.authorizeExtension(request, { correlationId }));
       }
+      if (url.pathname === '/api/internal/extension-management-authn' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!ownerAdmissionOperations?.authorizeExtensionManagement) {
+          throw Object.assign(new Error('Extension Management owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return sendOwnerAdmission(response, await ownerAdmissionOperations.authorizeExtensionManagement(request, { correlationId }));
+      }
       if (url.pathname === '/api/identity/bootstrap/status' && request.method === 'GET') {
         if (!identitySessionBroker?.initialAdministratorStatus) {
           throw Object.assign(new Error('initial administrator status is unavailable'), { code: 'AuthorityUnavailable', status: 503 });

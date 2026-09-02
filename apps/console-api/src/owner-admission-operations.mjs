@@ -72,6 +72,19 @@ const contracts = Object.freeze({
       ['GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE', new RegExp(`^/api/plugins/${PLUGIN_ID}(?:/.*)?$`, 'u')],
     ]),
   }),
+  extensionManagement: Object.freeze({
+    internalMarker: 'extension-management-v1',
+    ownerMarker: 'extension-controller-v1',
+    routes: Object.freeze([
+      ...exact('GET',
+        '/api/admin/plugins/catalog', '/api/admin/plugins/registrations',
+        '/api/admin/plugins/events', '/api/admin/bindings'),
+      ['POST', new RegExp(`^/api/admin/bindings/${PLUGIN_ID}/(?:enable|disable)$`, 'u')],
+      ['POST', new RegExp(`^/api/admin/plugins/registrations/${PLUGIN_ID}/(?:enable|disable|uninstall|rollback)$`, 'u')],
+      ['POST', new RegExp(`^/api/admin/plugins/packages/${PLUGIN_ID}/(?:icon|navigation)$`, 'u')],
+      ...exact('PUT', '/api/admin/plugins/navigation-order'),
+    ]),
+  }),
 });
 
 function fail(code, message, status) {
@@ -134,5 +147,6 @@ export function createOwnerAdmissionOperations({ identitySessionBroker }) {
     authorizeExternalChannel: authorizer(identitySessionBroker, contracts.externalChannel, 'External Channel'),
     authorizeOsShell: authorizer(identitySessionBroker, contracts.osShell, 'OS Shell'),
     authorizeExtension: authorizer(identitySessionBroker, contracts.extension, 'Extension'),
+    authorizeExtensionManagement: authorizer(identitySessionBroker, contracts.extensionManagement, 'Extension Management'),
   });
 }

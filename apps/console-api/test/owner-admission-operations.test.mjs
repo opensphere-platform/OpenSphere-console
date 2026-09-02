@@ -11,6 +11,7 @@ const families = Object.freeze([
   { name: 'External Channel', operation: 'authorizeExternalChannel', endpoint: '/api/internal/external-channel-owner-authn', internalMarker: 'external-channel-executor-v1', ownerMarker: 'external-channel-executor-v1', safe: '/api/external-channels/backups', unsafe: `/api/external-channels/backups/${id}/restore-preview` },
   { name: 'OS Shell', operation: 'authorizeOsShell', endpoint: '/api/internal/os-shell-authn', internalMarker: 'os-shell-v1', ownerMarker: 'os-shell-control-v1', safe: `/api/os-shell/sessions/${id}/attach`, unsafe: `/api/os-shell/sessions/${id}/attach-ticket` },
   { name: 'Extension', operation: 'authorizeExtension', endpoint: '/api/internal/plugin-proxy-authz', internalMarker: 'plugin-proxy-v1', ownerMarker: 'extension-controller-v1', safe: '/api/plugins/metrics/assets/main.js', unsafe: '/api/plugins/metrics/api/settings' },
+  { name: 'Extension Management', operation: 'authorizeExtensionManagement', endpoint: '/api/internal/extension-management-authn', internalMarker: 'extension-management-v1', ownerMarker: 'extension-controller-v1', safe: '/api/admin/plugins/catalog', unsafe: `/api/admin/plugins/registrations/${id}/enable` },
 ]);
 
 function fixture(authorization = 'Bearer header.payload.signature') {
@@ -60,12 +61,45 @@ test('Owner admission rejects external calls, bearer input, wrong internal marke
       { ...base, 'x-os-internal-authn-subrequest': undefined },
       { ...base, 'x-os-internal-authn-subrequest': 'wrong-owner-v1' },
       { ...base, authorization: 'Bearer browser.supplied.token' },
-      { ...base, 'x-os-original-uri': '/api/admin/plugins/catalog' },
+      { ...base, 'x-os-original-uri': '/api/not-admitted' },
       { ...base, 'x-os-original-uri': 'http://attacker.invalid' + family.safe },
       { ...base, 'x-os-original-method': 'TRACE' },
     ]) {
       await assert.rejects(operations[family.operation]({ headers: invalid }), (error) => [400, 403].includes(error.status));
     }
+  }
+});
+
+test('Extension Management admission allows only the target management surface', async () => {
+  const { operations } = fixture();
+  const family = families.at(-1);
+  const allowed = [
+    ['GET', '/api/admin/plugins/catalog'],
+    ['GET', '/api/admin/plugins/registrations'],
+    ['GET', '/api/admin/plugins/events'],
+    ['GET', '/api/admin/bindings'],
+    ['POST', `/api/admin/bindings/${id}/disable`],
+    ['POST', `/api/admin/plugins/registrations/${id}/rollback`],
+    ['POST', `/api/admin/plugins/packages/${id}/icon`],
+    ['POST', `/api/admin/plugins/packages/${id}/navigation`],
+    ['PUT', '/api/admin/plugins/navigation-order'],
+  ];
+  for (const [method, uri] of allowed) {
+    const result = await operations.authorizeExtensionManagement({ headers: headers(family, method, uri) });
+    assert.equal(result.ownerMarker, 'extension-controller-v1');
+    assert.equal(result.csrfVerified, method !== 'GET');
+  }
+  for (const [method, uri] of [
+    ['POST', `/api/admin/plugins/registrations/${id}/install`],
+    ['DELETE', `/api/admin/plugins/registrations/${id}`],
+    ['POST', '/api/admin/extensions/install'],
+    ['GET', '/api/plugins/metrics/assets/main.js'],
+    ['GET', '/api/admin/plugins/catalog/extra'],
+  ]) {
+    await assert.rejects(
+      operations.authorizeExtensionManagement({ headers: headers(family, method, uri) }),
+      { code: 'PermissionDenied', status: 403 },
+    );
   }
 });
 
