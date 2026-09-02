@@ -70,6 +70,8 @@ export function createIdentityOperations({ store, clock = () => new Date() }) {
       const now = clock();
       active(session, now);
       return envelope({
+        state: 'Active',
+        sessionId: session.sessionId,
         subjectId: session.subjectId,
         permissions: Object.freeze([...(session.permissions || [])].sort()),
         aal: session.aal,

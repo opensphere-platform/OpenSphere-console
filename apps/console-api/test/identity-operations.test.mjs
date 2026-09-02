@@ -27,16 +27,18 @@ function fixture() {
   return { identityOperations, revoked };
 }
 
-test('session and actor projections expose current authority without opaque handles', () => {
+test('session and actor projections expose current authority without credentials', () => {
   const { identityOperations } = fixture();
   const sessionEnvelope = identityOperations.getSession({ session, correlationId: 'identity-session-read-0001' });
   const actorEnvelope = identityOperations.getMe({ session, correlationId: 'identity-actor-read-0001' });
   assert.equal(sessionEnvelope.authority, 'SupabaseAuth');
   assert.equal(sessionEnvelope.data.state, 'Active');
+  assert.equal(actorEnvelope.data.state, 'Active');
+  assert.equal(actorEnvelope.data.sessionId, session.sessionId);
   assert.equal(actorEnvelope.data.subjectId, session.subjectId);
   assert.deepEqual(actorEnvelope.data.permissions, ['console.audit.read', 'console.registry.manage']);
   for (const projection of [sessionEnvelope, actorEnvelope]) {
-    assert.doesNotMatch(JSON.stringify(projection.data), /sessionId|token|cookie|csrf/i);
+    assert.doesNotMatch(JSON.stringify(projection.data), /token|cookie|csrf/i);
   }
 });
 
@@ -136,7 +138,10 @@ test('HTTP identity routes separate read CSRF policy from revoke mutation', asyn
   assert.deepEqual(sessionBody.data.permissions, ['console.audit.read', 'console.registry.manage']);
   assert.deepEqual(sessionBody.data.browserSession, browserSession);
   assert.equal(meResponse.status, 200);
-  assert.equal((await meResponse.json()).data.subjectId, session.subjectId);
+  const meBody = await meResponse.json();
+  assert.equal(meBody.data.state, 'Active');
+  assert.equal(meBody.data.sessionId, session.sessionId);
+  assert.equal(meBody.data.subjectId, session.subjectId);
   assert.equal(revokeResponse.status, 204);
   const expiredCookies = revokeResponse.headers.getSetCookie();
   assert.equal(expiredCookies.length, 2);

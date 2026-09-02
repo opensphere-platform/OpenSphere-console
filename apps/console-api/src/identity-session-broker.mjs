@@ -2,6 +2,15 @@ import { createHash, randomBytes as systemRandomBytes } from 'node:crypto';
 import { createDatabaseSessionResolver, readBrowserSessionProof } from './session-resolver.mjs';
 import { validateAvatarSelection, validateAvatarUpload } from './profile-avatar.mjs';
 
+export const OWNER_ADMISSION_MARKERS = Object.freeze([
+  'osaa-gateway-v1',
+  'notification-dispatcher-v1',
+  'external-channel-executor-v1',
+  'os-shell-control-v1',
+  'extension-controller-v1',
+]);
+const OWNER_ADMISSION_MARKER_SET = new Set(OWNER_ADMISSION_MARKERS);
+
 const PENDING_MFA_TTL_MS = 5 * 60 * 1000;
 const IDLE_TTL_MS = 12 * 60 * 60 * 1000;
 const REFRESH_WINDOW_MS = 30 * 1000;
@@ -1218,7 +1227,12 @@ export function createIdentitySessionBroker({
           });
         }
         const ownerMatch = authorization.match(/^Bearer ([A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+)$/u);
-        if (!ownerMatch || request?.headers?.['x-os-owner-admission'] !== 'osaa-gateway-v1'
+        const ownerMarker = String(request?.headers?.['x-os-owner-admission'] || '');
+        const ownerAuthorityPath = new URL(String(request?.url || ''), 'http://console-api.local').pathname;
+        if (!ownerMatch || ownerMatch[1].length > 16384
+            || request?.method !== 'GET' || ownerAuthorityPath !== '/api/identity/me'
+            || request?.headers?.cookie || request?.headers?.['x-os-csrf-token']
+            || !OWNER_ADMISSION_MARKER_SET.has(ownerMarker)
             || !authClient?.inspectAccessToken || !store?.resolveOwnerAccessAuthority) {
           fail('AuthenticationRequired', 'valid internal Owner access credential is required', 401);
         }

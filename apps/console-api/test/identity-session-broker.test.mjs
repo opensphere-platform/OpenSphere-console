@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { createConsoleApiHandler } from '../src/http-handler.mjs';
-import { createIdentitySessionBroker } from '../src/identity-session-broker.mjs';
+import { createIdentitySessionBroker, OWNER_ADMISSION_MARKERS } from '../src/identity-session-broker.mjs';
 import { createSessionCredentialCipher } from '../src/session-credential-cipher.mjs';
 import { createSupabaseAuthClient } from '../src/supabase-auth-client.mjs';
 
@@ -2030,13 +2030,26 @@ test('internal Owner bearer resolves only through Supabase and an active bound b
     credentialCipher: createSessionCredentialCipher({ encryptionKey }),
     publicOrigin: 'https://console.example.test', clock: () => now,
   });
-  const session = await broker.resolveSession({ headers: {
-    authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'osaa-gateway-v1',
-  } });
-  assert.equal(session.credentialType, 'owner-access');
-  assert.deepEqual(session.permissions, ['console.role.admin']);
-  assert.deepEqual(observed, [{ subjectId, authSessionRef: 'auth-session-0001' }]);
-  await assert.rejects(broker.resolveSession({ headers: { authorization: 'Bearer ' + accessToken } }), {
-    code: 'AuthenticationRequired', status: 401,
-  });
+  for (const marker of OWNER_ADMISSION_MARKERS) {
+    const session = await broker.resolveSession({
+      method: 'GET',
+      url: '/api/identity/me',
+      headers: { authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': marker },
+    });
+    assert.equal(session.credentialType, 'owner-access');
+    assert.deepEqual(session.permissions, ['console.role.admin']);
+  }
+  assert.deepEqual(observed, OWNER_ADMISSION_MARKERS.map(() => ({
+    subjectId, authSessionRef: 'auth-session-0001',
+  })));
+  for (const request of [
+    { method: 'GET', url: '/api/identity/me', headers: { authorization: 'Bearer ' + accessToken } },
+    { method: 'POST', url: '/api/identity/me', headers: { authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'osaa-gateway-v1' } },
+    { method: 'GET', url: '/api/identity/session', headers: { authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'osaa-gateway-v1' } },
+    { method: 'GET', url: '/api/identity/me', headers: { authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'unknown-owner-v1' } },
+    { method: 'GET', url: '/api/identity/me', headers: { authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'osaa-gateway-v1', cookie: '__Host-opensphere-session=raw' } },
+    { method: 'GET', url: '/api/identity/me', headers: { authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'osaa-gateway-v1', 'x-os-csrf-token': 'raw' } },
+  ]) {
+    await assert.rejects(broker.resolveSession(request), { code: 'AuthenticationRequired', status: 401 });
+  }
 });
