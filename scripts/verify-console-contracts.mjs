@@ -56,6 +56,7 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_operation.get_gitea_operation_for_approval',
   'console_operation.get_operation',
   'console_operation.record_gitea_merge',
+  'console_operation.record_gitea_proposal',
   'console_operation.verify_extension_operation',
 ]);
 

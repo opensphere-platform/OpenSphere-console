@@ -9,8 +9,8 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 22);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0022');
+  assert.equal(manifest.migrationCount, 23);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0023');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
   assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   assert.equal(manifest.migrations[2].sourceRevision, 'd7c5d09ecdcfbeed01b32fd13a447c15b5692116');
@@ -33,6 +33,7 @@ test('fresh migration manifest binds the exact source revision and ordered SQL i
   assert.equal(manifest.migrations[19].sourceRevision, '4f84bd0b5ef5324d2cb8e6f55bd9ab7a814243f2');
   assert.equal(manifest.migrations[20].sourceRevision, '5968b497331baada94508442192411207bb8296e');
   assert.equal(manifest.migrations[21].sourceRevision, 'ecba08066cd93807f9127fd8f1d6b87cd5764a6c');
+  assert.equal(manifest.migrations[22].sourceRevision, 'ad1961615479df63490da5dcc5dba1c65458e196');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
