@@ -6,7 +6,6 @@ const path = require('path');
 const { createHmac, createHash, randomBytes, randomUUID, timingSafeEqual, createPublicKey, verify: verifySignature } = require('crypto');
 const { Pool } = require('pg');
 const { createSupabaseVerifier } = require('./supabase-auth');
-const { enforcePatRequestScope, normalizePatScope, validatePatTTL } = require('./cli-token-policy');
 const { createNotificationApi } = require('./notification-api');
 const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
@@ -158,7 +157,6 @@ const CLI_TOKEN_ISSUER = 'opensphere-cli';
 const CLI_TOKEN_AUDIENCE = 'opensphere-cli';
 const CLI_JWT_SECRET = process.env.CLI_JWT_SECRET || '';
 const CLI_SESSION_TTL_SEC = Number(process.env.CLI_SESSION_TTL_SEC || 900);
-const CLI_PAT_TTL_SEC = Number(process.env.CLI_PAT_TTL_SEC || (30 * 24 * 60 * 60));
 const CLI_ENROLLMENT_TTL_SEC = Number(process.env.CLI_ENROLLMENT_TTL_SEC || 300);
 const CLI_CHALLENGE_TTL_SEC = Number(process.env.CLI_CHALLENGE_TTL_SEC || 60);
 const NOTIFICATION_DISPATCHER_URL = (process.env.NOTIFICATION_DISPATCHER_URL || 'http://opensphere-notification-dispatcher.opensphere-console.svc.cluster.local:8081').replace(/\/$/, '');
@@ -284,7 +282,7 @@ function verifyCliToken(token) {
   if (header.alg !== 'HS256' || !safeEqual(expected, signature)) throw { code: 401, msg: 'bad CLI token signature' };
   if (claims.iss !== CLI_TOKEN_ISSUER || claims.aud !== CLI_TOKEN_AUDIENCE || !claims.sub || !claims.jti) throw { code: 401, msg: 'invalid CLI token claims' };
   if (!claims.iat || claims.iat > now + 30 || !claims.exp || claims.exp <= now) throw { code: 401, msg: 'expired CLI token' };
-  if (!['cli_session', 'pat', 'web_shell'].includes(claims.typ)) throw { code: 401, msg: 'unsupported CLI token type' };
+  if (!['cli_session', 'web_shell'].includes(claims.typ)) throw { code: 401, msg: 'unsupported CLI token type' };
   if (claims.typ === 'web_shell' && claims.exp - claims.iat > 300) throw { code: 401, msg: 'web shell credential lifetime is invalid' };
   return claims;
 }
@@ -680,9 +678,7 @@ async function verifyAuthed(req) {
   let unverifiedClaims = null;
   try { unverifiedClaims = b64urlParsePayload(match[1]); } catch { /* verified below */ }
   if (unverifiedClaims?.iss === CLI_TOKEN_ISSUER) {
-    const actor = await verifyManagedCliToken(match[1]);
-    enforcePatRequestScope(req, actor);
-    return actor;
+    return verifyManagedCliToken(match[1]);
   }
   if (AUTH_PROVIDER !== 'supabase') {
     throw { code: 503, msg: 'unsupported Console identity provider; set AUTH_PROVIDER=supabase' };
@@ -725,8 +721,8 @@ async function resolveConsoleActor(subject, claims = {}) {
     username: claims.email || subject,
     displayName: operator.display_name || '',
     groups,
-    // A device key or PAT proves possession of that credential, not that the
-    // user completed a current Supabase second-factor challenge.  CLI step-up
+    // A device key proves possession of that credential, not that the user
+    // completed a current Supabase second-factor challenge. CLI step-up
     // is a separate browser-mediated flow; until then CLI credentials remain
     // aal1 and cannot satisfy an AAL2-required management operation.
     assurance: 'aal1',
@@ -734,8 +730,6 @@ async function resolveConsoleActor(subject, claims = {}) {
     deviceId: claims.device_id || null,
     provider: 'supabase-cli',
     credentialRevision: operator.credential_revision,
-    cliCredentialType: claims.typ || null,
-    cliScope: claims.scope || (claims.typ === 'pat' ? 'console-admin' : null),
   };
 }
 
@@ -751,34 +745,27 @@ async function verifyManagedCliToken(token) {
     return { ...actor, assurance: claims.aal, provider: 'opensphere-web-shell', browserSessionId: rows[0].browser_session_id,
       permissionRevision: claims.permission_revision, shellSessionId: claims.session_id };
   }
-  const resource = claims.typ === 'pat' ? 'api_token' : 'cli_session';
-  const fields = claims.typ === 'pat'
-    ? 'id,owner_id,credential_revision,status,expires_at,token_hash,scope'
-    : 'id,owner_id,device_id,credential_revision,status,expires_at';
-  const rows = await restRequest(resource, { query: `select=${fields}&id=eq.${encodeURIComponent(claims.jti)}` });
+  const rows = await restRequest('cli_session', { query: `select=id,owner_id,device_id,credential_revision,status,expires_at&id=eq.${encodeURIComponent(claims.jti)}` });
   const record = Array.isArray(rows) ? rows[0] : null;
   if (!record || record.status !== 'active' || Date.parse(record.expires_at) <= Date.now() || record.owner_id !== claims.sub) {
     throw { code: 401, msg: 'CLI credential inactive or revoked' };
   }
-  if (claims.typ === 'pat' && !safeEqual(record.token_hash, toHashHex(token))) throw { code: 401, msg: 'CLI token binding mismatch' };
-  if (claims.typ === 'cli_session' && (!claims.device_id || record.device_id !== claims.device_id)) throw { code: 401, msg: 'CLI session device mismatch' };
+  if (!claims.device_id || record.device_id !== claims.device_id) throw { code: 401, msg: 'CLI session device mismatch' };
   if (Number(record.credential_revision) !== Number(claims.credential_revision)) throw { code: 401, msg: 'CLI credential revision revoked' };
   const usedAt = new Date().toISOString();
   const usageWrites = [
-    restRequest(resource, { method: 'PATCH', query: `id=eq.${encodeURIComponent(claims.jti)}`, body: { last_used_at: usedAt }, prefer: 'return=minimal' }),
-  ];
-  if (claims.typ === 'cli_session') {
-    usageWrites.push(restRequest('cli_device', {
+    restRequest('cli_session', { method: 'PATCH', query: `id=eq.${encodeURIComponent(claims.jti)}`, body: { last_used_at: usedAt }, prefer: 'return=minimal' }),
+    restRequest('cli_device', {
       method: 'PATCH',
       query: `id=eq.${encodeURIComponent(record.device_id)}&owner_id=eq.${encodeURIComponent(claims.sub)}&status=eq.active`,
       body: { last_used_at: usedAt },
       prefer: 'return=minimal',
-    }));
-  }
+    }),
+  ];
   await Promise.all(usageWrites).catch((error) => {
     console.error('[auth] CLI credential usage timestamp update failed:', error?.message || error);
   });
-  return resolveConsoleActor(claims.sub, { ...claims, scope: record.scope || claims.scope || (claims.typ === 'pat' ? 'console-admin' : null) });
+  return resolveConsoleActor(claims.sub, claims);
 }
 
 async function verifyActor(req) {
@@ -3625,7 +3612,7 @@ async function proxyAdminControlRequest(req, res, url) {
   const requireAal2 = !readOnlyAdminPost && isMutationRequest(req)
     && (!lifecycleAction || moduleLifecycleNeedsRecentAal2(lifecycleAction));
   if (authorization) {
-    // CLI/PAT requests retain their bearer credential, but are verified at the
+    // CLI session requests retain their bearer credential, but are verified at the
     // Console enforcement point before the request reaches DUPA. A bearer
     // string never substitutes for the current admin role or recent AAL2 proof.
     await verifyConsoleAdmin(req, { requireAal2 });
@@ -4795,34 +4782,6 @@ async function cliSession(body) {
   return { accessToken, expiresIn: CLI_SESSION_TTL_SEC };
 }
 
-async function cliTokens(actor) {
-  const rows = await restRequest('api_token', { query: `select=id,label,status,scope,expires_at,created_at,last_used_at,revoked_at&owner_id=eq.${encodeURIComponent(actor.sub)}&order=created_at.desc` });
-  return { pats: Array.isArray(rows) ? rows.map((row) => ({ jti: row.id, label: row.label, status: row.status, expiresAt: row.expires_at, createdAt: row.created_at, lastUsedAt: row.last_used_at, revokedAt: row.revoked_at, scope: row.scope || 'console-admin' })) : [] };
-}
-
-async function cliTokenCreate(actor, body) {
-  const label = cliLabel(body?.label);
-  const reason = managementReason(body?.reason);
-  if (!reason) throw { code: 400, msg: 'reason must be at least 8 characters' };
-  const scope = normalizePatScope(body?.scope);
-  const ttlSeconds = validatePatTTL(body?.ttlSeconds, CLI_PAT_TTL_SEC);
-  const operator = await getOperatorById(actor.sub);
-  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-  const id = randomUUID();
-  const token = cliToken({ sub: actor.sub, jti: id, typ: 'pat', scope, credential_revision: operator.credential_revision, exp: Math.floor(Date.parse(expiresAt) / 1000) });
-  await restRequest('api_token', { method: 'POST', body: [{ id, owner_id: actor.sub, label, scope, token_hash: toHashHex(token), credential_revision: operator.credential_revision, expires_at: expiresAt }] });
-  await logAudit(actor, 'cli-token-create', id, 'ok', reason, { targetType: 'console-cli-token' });
-  return { token, jti: id, label, expiresAt, ttlSeconds, scope };
-}
-
-async function revokeCliToken(actor, id, reason) {
-  const tokenId = cliId(id, 'token id');
-  if (!managementReason(reason)) throw { code: 400, msg: 'reason must be at least 8 characters' };
-  const rows = await restRequest('api_token', { method: 'PATCH', query: `id=eq.${tokenId}&owner_id=eq.${encodeURIComponent(actor.sub)}&status=eq.active&select=id`, body: { status: 'revoked', revoked_at: new Date().toISOString(), revoked_by: actor.sub, revoke_reason: reason }, prefer: 'return=representation' });
-  if (!rows?.[0]) throw { code: 404, msg: 'active CLI token not found' };
-  await logAudit(actor, 'cli-token-revoke', tokenId, 'ok', reason, { targetType: 'console-cli-token' });
-}
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
@@ -5209,19 +5168,6 @@ const server = http.createServer(async (req, res) => {
     if (cliDevicePath && req.method === 'DELETE') {
       try { const actor = await verifyConsoleAdmin(req); await revokeCliDevice(actor, cliDevicePath[1], (await readBody(req)).reason); return json(res, 204, null); }
       catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'CLI device revocation failed' }); }
-    }
-    if (p === '/api/identity/cli/tokens' && req.method === 'GET') {
-      try { return json(res, 200, await cliTokens(await verifyConsoleAdmin(req))); }
-      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'CLI tokens unavailable' }); }
-    }
-    if (p === '/api/identity/cli/tokens' && req.method === 'POST') {
-      try { const actor = await verifyConsoleAdmin(req); return json(res, 201, await cliTokenCreate(actor, await readBody(req))); }
-      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'CLI token creation failed' }); }
-    }
-    const cliTokenPath = p.match(/^\/api\/identity\/cli\/tokens\/([0-9a-fA-F-]+)$/);
-    if (cliTokenPath && req.method === 'DELETE') {
-      try { const actor = await verifyConsoleAdmin(req); await revokeCliToken(actor, cliTokenPath[1], (await readBody(req)).reason); return json(res, 204, null); }
-      catch (e) { return json(res, authErrorStatus(e), { error: e.msg || 'CLI token revocation failed' }); }
     }
     // The Auth JWT identifies the person, while Console roles live in the
     // canonical `console.operator_role` projection.  Expose only the

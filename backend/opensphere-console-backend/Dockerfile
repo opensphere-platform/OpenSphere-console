@@ -52,7 +52,6 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY opensphere-console-backend/server.js ./server.js
 COPY opensphere-console-backend/supabase-auth.js ./supabase-auth.js
-COPY opensphere-console-backend/cli-token-policy.js ./cli-token-policy.js
 COPY opensphere-console-backend/browser-session.js ./browser-session.js
 COPY opensphere-console-backend/profile-avatar.js ./profile-avatar.js
 COPY opensphere-console-backend/plugin-proxy-auth.js ./plugin-proxy-auth.js

@@ -44,7 +44,7 @@ test('Extension install and update read the mounted development edge policy and 
   assert.match(deploy, /optional: true/);
 });
 
-test('CLI sessions and PATs cannot manufacture Supabase AAL2 assurance', () => {
+test('CLI sessions cannot manufacture Supabase AAL2 assurance', () => {
   const actorProjection = backend.slice(
     backend.indexOf('async function resolveConsoleActor'),
     backend.indexOf('async function verifyManagedCliToken'),

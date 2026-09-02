@@ -56,7 +56,7 @@ test('Supabase CLI trust is RLS protected and enrollment approval is atomic', ()
 });
 
 test('decoupled CLI release rejects stale BFF authentication artifacts', () => {
-  assert.match(cliIndex, /"version": "0\.8\.1"/);
+  assert.match(cliIndex, /"version": "0\.8\.2"/);
   assert.match(cliDeployment, /path: \/index\.json/);
   assert.doesNotMatch(cliIndex, /\/bff\/cli/);
   assert.match(nginx, /Authentication uses \/api\/identity\/cli\//);
