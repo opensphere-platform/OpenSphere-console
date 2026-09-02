@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:platform-change-approval-response:v1",
+  "title": "Platform Change Approval Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "approved", "merged", "mergeRevision", "pullNumber", "state", "stateVersion", "duplicate"],
+  "properties": {
+    "requestId": { "type": "string", "format": "uuid" },
+    "approved": { "const": true },
+    "merged": { "const": true },
+    "mergeRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "pullNumber": { "type": "integer", "minimum": 1 },
+    "state": { "const": "Submitted" },
+    "stateVersion": { "type": "integer", "minimum": 1 },
+    "duplicate": { "type": "boolean" }
+  }
+}

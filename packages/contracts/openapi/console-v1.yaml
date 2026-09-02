@@ -1160,6 +1160,44 @@ paths:
           $ref: "#/components/responses/PolicyRejected"
         "503":
           $ref: "#/components/responses/AuthorityUnavailable"
+  /api/platform/changes/{operationId}/approve:
+    parameters:
+      - $ref: "#/components/parameters/OperationId"
+    post:
+      operationId: approvePlatformChange
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-risk: R2
+      x-opensphere-idempotency: required
+      x-opensphere-authority: SupabaseIndependentApprovalThenGiteaProtectedMerge
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/platform-change-approval-request.schema.json"
+      responses:
+        "200":
+          description: Independent approval and protected merge are bound to the durable operation revision
+          headers:
+            Location:
+              required: true
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/platform-change-approval-response.schema.json"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "428":
+          $ref: "#/components/responses/StepUpRequired"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/platform/operations:
     post:
       operationId: createOperation

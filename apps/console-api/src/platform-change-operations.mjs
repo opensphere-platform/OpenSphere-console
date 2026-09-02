@@ -1,6 +1,7 @@
 const CONSUMER = /^[a-z][a-z0-9._-]{1,127}$/u;
 const ACTIONS = new Set(['apply', 'configure', 'delete', 'rollback']);
 const MAX_DESIRED_STATE_BYTES = 64 * 1024;
+const SECRET_FIELD = /(?:^|[_-])(authorization|credential|password|privatekey|secret|token)(?:$|[_-])/iu;
 
 function fail(message) {
   throw Object.assign(new Error(message), { code: 'ValidationFailed', status: 400, sideEffect: 'none' });
@@ -40,13 +41,51 @@ function validateProposal(body) {
   if (!encoded || Buffer.byteLength(encoded) > MAX_DESIRED_STATE_BYTES) {
     fail(`desiredState must not exceed ${MAX_DESIRED_STATE_BYTES} bytes`);
   }
+  const pending = [{ value: body.desiredState, depth: 0 }];
+  let visited = 0;
+  while (pending.length) {
+    const { value, depth } = pending.pop();
+    visited += 1;
+    if (visited > 2048 || depth > 16) fail('desiredState structure exceeds the bounded declaration policy');
+    if (!value || typeof value !== 'object') continue;
+    for (const [key, child] of Object.entries(value)) {
+      const normalizedKey = key.replaceAll(/([a-z])([A-Z])/gu, '$1_$2');
+      if (SECRET_FIELD.test(normalizedKey)) fail('desiredState must not contain credential material');
+      if (child && typeof child === 'object') pending.push({ value: child, depth: depth + 1 });
+    }
+  }
   const templateId = body.templateId == null ? null : text(body.templateId, 'templateId', 1, 128);
   return Object.freeze({ consumerId, action, target, reason, desiredState: body.desiredState, templateId });
 }
 
-export function createPlatformChangeOperations({ operationService, policyRevision, giteaClient, clock = () => new Date() }) {
-  if (!operationService?.accept) throw new TypeError('operation service is required');
-  if (!giteaClient?.supplyChainStatus || !giteaClient?.ensureProposal) throw new TypeError('Gitea change client is required');
+function validateApproval(body) {
+  exact(body, ['reason'], 'platform change approval');
+  return Object.freeze({ reason: text(body.reason, 'reason', 8, 500) });
+}
+
+function approvalPlan(record, giteaClient) {
+  const plan = record?.execution_plan;
+  if (!plan || plan.schemaVersion !== '1.0' || plan.authority !== 'Gitea'
+      || plan.repository !== giteaClient.repository || plan.defaultBranch !== giteaClient.defaultBranch
+      || !CONSUMER.test(String(plan.consumerId || '')) || !ACTIONS.has(String(plan.action || ''))
+      || !plan.desiredState || typeof plan.desiredState !== 'object' || Array.isArray(plan.desiredState)) {
+    throw Object.assign(new Error('stored Gitea execution plan is invalid'), {
+      code: 'ClaimBindingMismatch', status: 409, sideEffect: 'none',
+    });
+  }
+  return plan;
+}
+
+export function createPlatformChangeOperations({ operationService, policyRevision, projectionStore, giteaClient, clock = () => new Date() }) {
+  if (!operationService?.accept || !operationService?.approve || !operationService?.assertApprovalAuthority) {
+    throw new TypeError('operation service is required');
+  }
+  if (!projectionStore?.getGiteaOperationForApproval || !projectionStore?.recordGiteaMerge) {
+    throw new TypeError('Gitea operation projection store is required');
+  }
+  if (!giteaClient?.supplyChainStatus || !giteaClient?.ensureProposal || !giteaClient?.approveAndMerge) {
+    throw new TypeError('Gitea change client is required');
+  }
   const planRevision = text(policyRevision, 'policyRevision', 1, 128);
 
   return Object.freeze({
@@ -115,6 +154,83 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
         });
       } catch (error) {
         error.operationId = accepted.receipt.operationId;
+        throw error;
+      }
+    },
+
+    async approve({ session, operationId, body, idempotencyKey, correlationId }) {
+      const approval = validateApproval(body);
+      const authority = operationService.assertApprovalAuthority({ session, reason: approval.reason });
+      const record = await projectionStore.getGiteaOperationForApproval({
+        sessionId: session.sessionId,
+        actorRef: authority.actorRef,
+        expectedPermissionRevision: Number(session.permissionRevision),
+        expectedRevokeEpoch: Number(session.revokeEpoch),
+        operationId: text(operationId, 'operationId', 36, 36),
+      });
+      const plan = approvalPlan(record, giteaClient);
+      let approved = null;
+      if (record.state === 'Planned') {
+        approved = await operationService.approve({
+          session,
+          operationId,
+          idempotencyKey,
+          correlationId,
+          request: {
+            reason: approval.reason,
+            approvalRevision: record.plan_revision,
+            expectedStateVersion: Number(record.state_version),
+            confirmation: null,
+          },
+        });
+      } else if (!['Authorized', 'Submitted'].includes(record.state)) {
+        throw Object.assign(new Error('platform change is not awaiting merge'), {
+          code: 'InvalidOperationState', status: 409, sideEffect: 'none', operationId,
+        });
+      }
+      try {
+        const proposal = await giteaClient.ensureProposal({
+          operationId,
+          consumerId: plan.consumerId,
+          action: plan.action,
+          target: plan.target,
+          reason: record.reason,
+          desiredState: plan.desiredState,
+          submittedAt: plan.submittedAt,
+        });
+        const merged = await giteaClient.approveAndMerge({
+          operationId,
+          branch: proposal.branch,
+          pullNumber: proposal.pullRequest.number,
+          approverRef: authority.actorRef,
+          reason: approval.reason,
+        });
+        let bound;
+        try {
+          bound = await projectionStore.recordGiteaMerge({
+            operationId,
+            sourceRevision: merged.mergeRevision,
+            branch: merged.branch,
+            pullNumber: merged.pullNumber,
+            correlationId,
+          });
+        } catch (error) {
+          error.operationId = operationId;
+          error.sideEffect = 'present';
+          throw error;
+        }
+        return Object.freeze({
+          requestId: operationId,
+          approved: true,
+          merged: true,
+          mergeRevision: merged.mergeRevision,
+          pullNumber: merged.pullNumber,
+          state: bound.operationRecord.state,
+          stateVersion: Number(bound.operationRecord.state_version),
+          duplicate: Boolean(approved?.replayed || bound.replayed || record.state === 'Submitted'),
+        });
+      } catch (error) {
+        error.operationId = operationId;
         throw error;
       }
     },

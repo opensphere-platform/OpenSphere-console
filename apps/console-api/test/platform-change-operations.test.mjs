@@ -23,6 +23,12 @@ const session = {
   revokeEpoch: '2',
   aal: 'aal2',
 };
+const approverSession = {
+  ...session,
+  sessionId: '44444444-4444-4444-8444-444444444444',
+  subjectId: '55555555-5555-4555-8555-555555555555',
+  permissions: ['console.operation.approve'],
+};
 
 function record(input) {
   return {
@@ -56,20 +62,41 @@ function record(input) {
   };
 }
 
-function fixture({ rejectIntent = false, rejectGitea = false, giteaReady = true } = {}) {
+function fixture({ rejectIntent = false, rejectGitea = false, rejectMergeBinding = false, giteaReady = true } = {}) {
   const order = [];
   const accepted = [];
   const proposed = [];
+  const approvals = [];
+  const mergeBindings = [];
+  let operationRecord = null;
   const store = {
     async accept(input) {
       order.push('intent');
       if (rejectIntent) throw Object.assign(new Error('intent rejected'), { code: 'PolicyRejected', status: 422 });
       accepted.push(input);
-      return { operationRecord: record(input), replayed: false };
+      operationRecord = record(input);
+      return { operationRecord, replayed: false };
     },
-    async approve() { throw new Error('not used'); },
+    async approve(input) {
+      order.push('approval');
+      approvals.push(input);
+      operationRecord = { ...operationRecord, state: 'Authorized', state_version: 1, approval_revision: input.approvalRevision };
+      return { operationRecord, replayed: false };
+    },
     async verify() { throw new Error('not used'); },
     async get() { return null; },
+    async getGiteaOperationForApproval() {
+      order.push('approval-read');
+      return operationRecord;
+    },
+    async recordGiteaMerge(input) {
+      order.push('merge-binding');
+      mergeBindings.push(input);
+      if (rejectMergeBinding) throw Object.assign(new Error('database unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+      const replayed = operationRecord.state === 'Submitted';
+      operationRecord = { ...operationRecord, state: 'Submitted', state_version: 2, source_revision: input.sourceRevision };
+      return { operationRecord, replayed };
+    },
   };
   const operationService = createOperationService({ store, policyCatalog, clock: () => current });
   const giteaClient = {
@@ -92,11 +119,18 @@ function fixture({ rejectIntent = false, rejectGitea = false, giteaReady = true 
         replayed: false,
       };
     },
+    async approveAndMerge(input) {
+      order.push('gitea-merge');
+      if (rejectGitea) throw Object.assign(new Error('Gitea merge unavailable'), {
+        code: 'AuthorityUnavailable', status: 503, sideEffect: 'unknown',
+      });
+      return { merged: true, mergeRevision: 'b'.repeat(40), pullNumber: 17, branch: `control/${operationId}` };
+    },
   };
   const operations = createPlatformChangeOperations({
-    operationService, policyRevision: policyCatalog.policyRevision, giteaClient, clock: () => current,
+    operationService, policyRevision: policyCatalog.policyRevision, projectionStore: store, giteaClient, clock: () => current,
   });
-  return { operations, order, accepted, proposed };
+  return { operations, order, accepted, proposed, approvals, mergeBindings };
 }
 
 function request() {
@@ -182,6 +216,12 @@ test('Platform change validation rejects unknown fields and oversized desired st
     idempotencyKey: 'platform-change-proposal-0005',
     correlationId: 'platform-change-correlation-0005',
   }), { code: 'ValidationFailed' });
+  await assert.rejects(operations.propose({
+    session,
+    body: { ...request(), desiredState: { database: { accessToken: 'must-never-enter-git' } } },
+    idempotencyKey: 'platform-change-proposal-credential-0001',
+    correlationId: 'platform-change-proposal-credential-correlation-0001',
+  }), { code: 'ValidationFailed' });
   assert.deepEqual(order, []);
 });
 
@@ -211,6 +251,95 @@ test('HTTP platform change route requires the shared CSRF and idempotency bounda
     assert.equal(response.headers.get('location'), `/api/platform/operations/${operationId}`);
     assert.equal(body.requestId, operationId);
     assert.deepEqual(sessionChecks, [{ requireCsrf: true, correlationId: 'platform-change-http-correlation-0001' }]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('Platform change approval records independent approval before protected merge and binds its revision', async () => {
+  const { operations, order, approvals, mergeBindings } = fixture();
+  await operations.propose({
+    session, body: request(), idempotencyKey: 'platform-change-proposal-approval-0001',
+    correlationId: 'platform-change-proposal-approval-correlation-0001',
+  });
+  order.length = 0;
+  const result = await operations.approve({
+    session: approverSession,
+    operationId,
+    body: { reason: 'approve reviewed Console settings declaration' },
+    idempotencyKey: 'platform-change-approval-0001',
+    correlationId: 'platform-change-approval-correlation-0001',
+  });
+  assert.deepEqual(order, ['approval-read', 'approval', 'gitea', 'gitea-merge', 'merge-binding']);
+  assert.equal(approvals[0].actorRef, approverSession.subjectId);
+  assert.equal(approvals[0].expectedStateVersion, 0);
+  assert.equal(mergeBindings[0].sourceRevision, 'b'.repeat(40));
+  assert.equal(result.state, 'Submitted');
+  assert.equal(result.mergeRevision, 'b'.repeat(40));
+});
+
+test('Gitea merge failure preserves Authorized operation for safe resume', async () => {
+  const fixtureState = fixture({ rejectGitea: true });
+  await fixtureState.operations.propose({
+    session, body: request(), idempotencyKey: 'platform-change-proposal-approval-0002',
+    correlationId: 'platform-change-proposal-approval-correlation-0002',
+  }).catch(() => undefined);
+  fixtureState.order.length = 0;
+  await assert.rejects(fixtureState.operations.approve({
+    session: approverSession, operationId,
+    body: { reason: 'approve reviewed Console settings declaration' },
+    idempotencyKey: 'platform-change-approval-0002',
+    correlationId: 'platform-change-approval-correlation-0002',
+  }), (error) => error.operationId === operationId && error.sideEffect === 'unknown');
+  assert.equal(fixtureState.mergeBindings.length, 0);
+  assert.deepEqual(fixtureState.order, ['approval-read', 'approval', 'gitea']);
+});
+
+test('Database failure after observed merge reports sideEffect present and retains revision for replay', async () => {
+  const fixtureState = fixture({ rejectMergeBinding: true });
+  await fixtureState.operations.propose({
+    session, body: request(), idempotencyKey: 'platform-change-proposal-approval-0003',
+    correlationId: 'platform-change-proposal-approval-correlation-0003',
+  });
+  fixtureState.order.length = 0;
+  await assert.rejects(fixtureState.operations.approve({
+    session: approverSession, operationId,
+    body: { reason: 'approve reviewed Console settings declaration' },
+    idempotencyKey: 'platform-change-approval-0003',
+    correlationId: 'platform-change-approval-correlation-0003',
+  }), (error) => error.operationId === operationId && error.sideEffect === 'present');
+  assert.deepEqual(fixtureState.order, ['approval-read', 'approval', 'gitea', 'gitea-merge', 'merge-binding']);
+  assert.equal(fixtureState.mergeBindings[0].sourceRevision, 'b'.repeat(40));
+});
+
+test('HTTP platform change approval keeps the shared CSRF and idempotency boundary', async () => {
+  const { operations } = fixture();
+  await operations.propose({
+    session, body: request(), idempotencyKey: 'platform-change-http-proposal-0002',
+    correlationId: 'platform-change-http-proposal-correlation-0002',
+  });
+  const handler = createConsoleApiHandler({
+    resolveSession: async () => approverSession,
+    platformChangeOperations: operations,
+  });
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/platform/changes/${operationId}/approve`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-os-csrf-token': 'csrf-proof-for-platform-change-approval',
+        'x-os-idempotency-key': 'platform-change-http-approval-0001',
+        'x-os-correlation-id': 'platform-change-http-approval-correlation-0001',
+      },
+      body: JSON.stringify({ reason: 'approve reviewed Console settings declaration' }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.state, 'Submitted');
+    assert.equal(body.merged, true);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

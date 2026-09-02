@@ -131,6 +131,25 @@ export function createOperationService({ store, policyCatalog, clock = () => new
   const policies = indexActionPolicies(policyCatalog);
 
   return Object.freeze({
+    assertApprovalAuthority({ session, reason }) {
+      const approvalReason = text(reason, 'reason', 3, 500);
+      const authorization = authorizeOperation({
+        session,
+        permission: 'console.operation.approve',
+        risk: 'R2',
+        reason: approvalReason,
+        now: clock(),
+      });
+      if (!session.sessionId) fail('AuthenticationRequired', 'opaque session id is required', 401);
+      const permissionRevision = Number(authorization.permissionRevision);
+      const revokeEpoch = Number(session.revokeEpoch);
+      if (!Number.isSafeInteger(permissionRevision) || permissionRevision < 0
+          || !Number.isSafeInteger(revokeEpoch) || revokeEpoch < 0) {
+        fail('AuthenticationRequired', 'session authority revision is invalid', 401);
+      }
+      return Object.freeze({ actorRef: authorization.actorRef, reason: approvalReason });
+    },
+
     async accept({ session, request, idempotencyKey, correlationId, executionPlan = null }) {
       const validated = validateOperationRequest(request);
       const policy = policies.get(validated.actionId + '@' + validated.actionVersion);

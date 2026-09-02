@@ -49,6 +49,7 @@
     "getSupabaseStatus",
     "listAuditEvents",
     "proposePlatformChange",
+    "approvePlatformChange",
     "createOperation",
     "getOperation",
     "approveOperation",
@@ -83,6 +84,8 @@
   "requiredSchemas": [
     "platform-change-proposal-request.schema.json",
     "platform-change-proposal-response.schema.json",
+    "platform-change-approval-request.schema.json",
+    "platform-change-approval-response.schema.json",
     "initial-administrator-bootstrap-request.schema.json",
     "initial-administrator-bootstrap-response.schema.json",
     "session-preference-request.schema.json",

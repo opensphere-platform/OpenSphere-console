@@ -478,6 +478,24 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           'x-idempotent-replay': String(result.duplicate),
         });
       }
+      const platformChangeApprovalMatch = url.pathname.match(/^\/api\/platform\/changes\/([0-9a-f-]{36})\/approve$/u);
+      if (platformChangeApprovalMatch && request.method === 'POST') {
+        if (!platformChangeOperations?.approve) {
+          throw Object.assign(new Error('Gitea change approval is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });
+        }
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
+        const result = await platformChangeOperations.approve({
+          session,
+          operationId: platformChangeApprovalMatch[1],
+          body: await jsonBody(request),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
+          correlationId,
+        });
+        return send(response, 200, result, {
+          location: '/api/platform/operations/' + result.requestId,
+          'x-idempotent-replay': String(result.duplicate),
+        });
+      }
       if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false, correlationId });
         return send(response, 200, await registryOperations.getRegistryConnection({ session, correlationId }));

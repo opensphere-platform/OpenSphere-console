@@ -106,6 +106,7 @@ const giteaChangeClient = createGiteaChangeClient({
 const platformChangeOperations = createPlatformChangeOperations({
   operationService,
   policyRevision: policyCatalog.policyRevision,
+  projectionStore: store,
   giteaClient: giteaChangeClient,
 });
 const handler = createConsoleApiHandler({

@@ -29,6 +29,19 @@ const VERIFY_SQL = [
   ')',
 ].join(' ');
 
+const RECORD_GITEA_MERGE_SQL = [
+  'SELECT operation_record, replayed',
+  'FROM console_operation.record_gitea_merge(',
+  '$1::uuid, $2::text, $3::text, $4::integer, $5::text',
+  ')',
+].join(' ');
+
+const GET_GITEA_OPERATION_FOR_APPROVAL_SQL = [
+  'SELECT console_operation.get_gitea_operation_for_approval(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid',
+  ') AS operation_record',
+].join(' ');
+
 const RESOLVE_SESSION_SQL = [
   'SELECT console_identity.resolve_browser_session(',
   '$1::bytea, $2::bytea, $3::boolean',
@@ -295,7 +308,7 @@ function databaseError(error) {
     'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
     'ObservationMismatch', 'NotFound', 'RefreshNotRequired', 'BootstrapComplete',
     'RoleContinuityRequired', 'InventoryLimitExceeded', 'IdempotencyReplayUnavailable', 'Conflict',
-    'EnrollmentExpired',
+    'EnrollmentExpired', 'ClaimBindingMismatch',
   ]);
   const mapped = known.has(code) ? code : 'AuthorityUnavailable';
   const status = {
@@ -324,6 +337,7 @@ function databaseError(error) {
     IdempotencyReplayUnavailable: 409,
     Conflict: 409,
     EnrollmentExpired: 410,
+    ClaimBindingMismatch: 409,
   }[mapped];
   const messages = {
     ValidationFailed: 'operation request failed database validation',
@@ -351,6 +365,7 @@ function databaseError(error) {
     IdempotencyReplayUnavailable: 'managed identity response material cannot be replayed',
     Conflict: 'managed identity state conflicts with the request',
     EnrollmentExpired: 'CLI enrollment expired',
+    ClaimBindingMismatch: 'operation does not match the typed owner boundary',
   };
   return Object.assign(new Error(messages[mapped]), {
     code: mapped,
@@ -1038,6 +1053,40 @@ export function createPostgresOperationStore({ query }) {
         const row = result?.rows?.[0];
         if (!row?.operation_record) throw new Error('verify_extension_operation returned no receipt');
         return { operationRecord: row.operation_record, replayed: row.replayed };
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async recordGiteaMerge(input) {
+      try {
+        const result = await query(RECORD_GITEA_MERGE_SQL, [
+          input.operationId,
+          input.sourceRevision,
+          input.branch,
+          input.pullNumber,
+          input.correlationId,
+        ]);
+        const row = result?.rows?.[0];
+        if (!row?.operation_record) throw new Error('record_gitea_merge returned no receipt');
+        return { operationRecord: row.operation_record, replayed: row.replayed };
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getGiteaOperationForApproval(input) {
+      try {
+        const result = await query(GET_GITEA_OPERATION_FOR_APPROVAL_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.operationId,
+        ]);
+        const record = result?.rows?.[0]?.operation_record;
+        if (!record) throw new Error('get_gitea_operation_for_approval returned no receipt');
+        return record;
       } catch (error) {
         throw databaseError(error);
       }
