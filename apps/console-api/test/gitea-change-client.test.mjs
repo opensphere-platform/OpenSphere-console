@@ -24,26 +24,26 @@ async function withGitea(run, { protectedBranch = true, privateRepository = true
       response.end(payload);
     };
     if (request.url === '/api/v1/version') return send(200, { version: '1.24.0' });
-    if (request.url === '/api/v1/repos/opensphere-platform/platform-declarations') {
+    if (request.url === '/api/v1/repos/opensphere/platform-declarations') {
       return send(200, {
-        name: 'platform-declarations', full_name: 'opensphere-platform/platform-declarations',
+        name: 'platform-declarations', full_name: 'opensphere/platform-declarations',
         private: privateRepository, archived: false, empty: false, default_branch: 'main',
         updated_at: '2026-09-02T00:00:00.000Z', size: 42,
       });
     }
-    if (request.url === '/api/v1/repos/opensphere-platform/platform-declarations/branch_protections') {
+    if (request.url === '/api/v1/repos/opensphere/platform-declarations/branch_protections') {
       return send(200, protectedBranch ? [{
         branch_name: 'main', required_approvals: 1, enable_push: false,
         require_signed_commits: true, block_on_rejected_reviews: true,
       }] : []);
     }
-    if (request.url === `/api/v1/repos/opensphere-platform/platform-declarations/branches/control%2F${operationId}`) {
+    if (request.url === `/api/v1/repos/opensphere/platform-declarations/branches/control%2F${operationId}`) {
       return branchExists ? send(200, { name: `control/${operationId}`, commit: { id: desiredRevision } }) : send(404, { message: 'not found' });
     }
-    if (request.url?.startsWith('/api/v1/repos/opensphere-platform/platform-declarations/pulls?')) {
+    if (request.url?.startsWith('/api/v1/repos/opensphere/platform-declarations/pulls?')) {
       return send(200, pullExists ? [{
         number: 17, html_url: 'https://gitea.example/pulls/17',
-        head: { ref: `control/${operationId}`, label: `opensphere-platform:control/${operationId}` },
+        head: { ref: `control/${operationId}`, label: `opensphere:control/${operationId}` },
         base: { ref: 'main' }, state: merged ? 'closed' : 'open', merged, merge_commit_sha: merged ? mergeRevision : null,
       }] : []);
     }
@@ -51,20 +51,20 @@ async function withGitea(run, { protectedBranch = true, privateRepository = true
       branchExists = true;
       return send(201, { commit: { sha: desiredRevision } });
     }
-    if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere-platform/platform-declarations/pulls') {
+    if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere/platform-declarations/pulls') {
       pullExists = true;
       return send(201, { number: 17, html_url: 'https://gitea.example/pulls/17' });
     }
-    if (request.method === 'GET' && request.url === '/api/v1/repos/opensphere-platform/platform-declarations/pulls/17') {
+    if (request.method === 'GET' && request.url === '/api/v1/repos/opensphere/platform-declarations/pulls/17') {
       return send(200, {
         number: 17, head: { ref: `control/${operationId}` }, base: { ref: 'main' },
         state: merged ? 'closed' : 'open', merged, merge_commit_sha: merged ? mergeRevision : null,
       });
     }
-    if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere-platform/platform-declarations/pulls/17/reviews') {
+    if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere/platform-declarations/pulls/17/reviews') {
       return send(201, { id: 31 });
     }
-    if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere-platform/platform-declarations/pulls/17/merge') {
+    if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere/platform-declarations/pulls/17/merge') {
       merged = true;
       return send(200, { merged: true });
     }
@@ -121,7 +121,7 @@ test('Gitea status binds the fixed repository identity and safe metadata', async
   await withGitea(async ({ client }) => {
     const status = await client.supplyChainStatus();
     assert.equal(status.ready, true);
-    assert.equal(status.repository, 'opensphere-platform/platform-declarations');
+    assert.equal(status.repository, 'opensphere/platform-declarations');
     assert.deepEqual(status.repositoryMetadata, {
       name: 'platform-declarations', private: true, archived: false, empty: false,
       defaultBranch: 'main', updatedAt: '2026-09-02T00:00:00.000Z', sizeKiB: 42,
@@ -190,9 +190,9 @@ test('Gitea mutation transport failure is reported as an ambiguous side effect',
     }
     const path = new URL(_url).pathname;
     if (path === '/api/v1/version') return new Response(JSON.stringify({ version: '1.24.0' }));
-    if (path === '/api/v1/repos/opensphere-platform/platform-declarations') {
+    if (path === '/api/v1/repos/opensphere/platform-declarations') {
       return new Response(JSON.stringify({
-        name: 'platform-declarations', full_name: 'opensphere-platform/platform-declarations',
+        name: 'platform-declarations', full_name: 'opensphere/platform-declarations',
         private: true, archived: false, empty: false, default_branch: 'main',
         updated_at: '2026-09-02T00:00:00.000Z', size: 42,
       }));

@@ -45,7 +45,7 @@ export function createGiteaChangeClient({
   baseUrl,
   controlToken,
   reviewToken,
-  organization = 'opensphere-platform',
+  organization = 'opensphere',
   repository = 'platform-declarations',
   defaultBranch = 'main',
   timeoutMs = 5000,

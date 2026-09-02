@@ -100,8 +100,8 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectMergeBinding
   };
   const operationService = createOperationService({ store, policyCatalog, clock: () => current });
   const giteaClient = {
-    repository: 'opensphere-platform/platform-declarations',
-    organization: 'opensphere-platform',
+    repository: 'opensphere/platform-declarations',
+    organization: 'opensphere',
     defaultBranch: 'main',
     async supplyChainStatus() {
       order.push('preflight');
@@ -110,7 +110,7 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectMergeBinding
         ready: giteaReady,
         checkedAt: current.toISOString(),
         version: '1.24.0',
-        repository: 'opensphere-platform/platform-declarations',
+        repository: 'opensphere/platform-declarations',
         defaultBranch: 'main',
         repositoryMetadata: {
           name: 'platform-declarations', private: true, archived: false, empty: false,
