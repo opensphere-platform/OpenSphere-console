@@ -8,35 +8,42 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '../../..');
 const read = (value) => fs.readFileSync(path.join(root, value), 'utf8');
 
-test('baseline monitoring uses exact-digest private Hub deployment and outbound-only agents', () => {
+test('baseline monitoring uses governed release inputs and outbound-only agents', () => {
   const manifest = read('deploy/baseline-monitoring/beszel-release.yaml');
-  assert.match(manifest, /henrygd\/beszel@sha256:[0-9a-f]{64}/);
-  assert.match(manifest, /henrygd\/beszel-agent@sha256:[0-9a-f]{64}/);
+  assert.match(manifest, /image: __OPENSPHERE_BESZEL_HUB_IMAGE__/);
+  assert.match(manifest, /image: __OPENSPHERE_BESZEL_AGENT_IMAGE__/);
+  assert.match(manifest, /image: __OPENSPHERE_BESZEL_BOOTSTRAP_IMAGE__/);
+  assert.match(
+    read('deploy/baseline-monitoring/images/hub/Dockerfile'),
+    /henrygd\/beszel@sha256:[0-9a-f]{64}/,
+  );
+  assert.match(
+    read('deploy/baseline-monitoring/images/agent/Dockerfile'),
+    /henrygd\/beszel-agent@sha256:[0-9a-f]{64}/,
+  );
   assert.match(manifest, /BESZEL_AGENT_DISABLE_SSH, value: "true"/);
+  assert.match(manifest, /name: beszel-agent[\s\S]*ingress: \[\]/);
   assert.doesNotMatch(manifest, /hostPort:/);
   assert.doesNotMatch(manifest, /hostNetwork:\s*true/);
   assert.doesNotMatch(manifest, /clusterIP:\s*None/);
   assert.match(manifest, /readOnlyRootFilesystem: true/);
 });
 
-test('Beszel alerts enter the existing notification dispatcher through a scoped producer token', () => {
+test('target Beszel bootstrap does not claim an unimplemented alert ingest owner', () => {
   const manifest = read('deploy/baseline-monitoring/beszel-release.yaml');
-  const deploy = read('apps/console-api/runtime/deploy.yaml');
-  const server = read('apps/console-api/runtime/server.js');
-  assert.match(manifest, /generic\+http:\/\/opensphere-console-backend/);
-  assert.match(manifest, /@x-opensphere-beszel-token=/);
-  assert.match(deploy, /name: BESZEL_WEBHOOK_TOKEN/);
-  assert.match(server, /\/api\/internal\/monitoring\/beszel\/events/);
-  assert.match(server, /sourceType: 'baseline-monitoring'/);
-  assert.match(server, /route: '\/manage\/infrastructure-monitoring\?tab=alerts'/);
+  const installer = read('deploy/baseline-monitoring/install.ps1');
+  assert.doesNotMatch(manifest, /WEBHOOK_TOKEN|webhook-token|generic\+http:/);
+  assert.doesNotMatch(installer, /WEBHOOK_TOKEN|webhook-token/);
+  assert.doesNotMatch(manifest, /opensphere-console-backend/);
 });
 
-test('Beszel bootstrap creates missing user settings before configuring webhooks', () => {
+test('Beszel bootstrap creates and authenticates the dedicated reader', () => {
   const manifest = read('deploy/baseline-monitoring/beszel-release.yaml');
-  assert.match(manifest, /USER_ID=.*"id"/);
-  assert.match(manifest, /if \[ -z "\$\{SETTINGS_ID\}" \]; then/);
-  assert.match(manifest, /api\/collections\/user_settings\/records/);
-  assert.match(manifest, /--data "\{\\"user\\":\\"\$\{USER_ID\}\\"\}"/);
+  assert.match(manifest, /api\/collections\/users\/records/);
+  assert.match(manifest, /role\\":\\"readonly/);
+  assert.match(manifest, /READER_AUTH=.*auth-with-password/);
+  assert.match(manifest, /READER_TOKEN=.*"token"/);
+  assert.match(manifest, /\[ -n "\$\{READER_TOKEN\}" \]/);
 });
 
 test('node correlation persists Kubernetes UID and Beszel machine fingerprint as the identity boundary', () => {
@@ -48,7 +55,7 @@ test('node correlation persists Kubernetes UID and Beszel machine fingerprint as
   assert.match(adapter, /identity = evidence\?\.state === 'verified' \? 'verified' : 'rejected'/);
 });
 
-test('Console nginx routes baseline monitoring reads to the authenticated Backend boundary', () => {
+test('Console nginx routes baseline monitoring reads through its authenticated API boundary', () => {
   const nginx = read('apps/console-web/nginx/default.conf.template');
   assert.match(nginx, /location \/api\/monitoring\/baseline\/ \{/);
   assert.match(

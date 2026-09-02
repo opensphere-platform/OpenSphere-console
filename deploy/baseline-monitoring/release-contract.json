@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schemaVersion": "1.0",
+  "status": "governed-release-input",
+  "releaseFamily": "OpenSphere-Console",
+  "ownerComponent": "C_API",
+  "authoritySystem": "S_HOBS",
+  "adapterComponent": "API_HOBS",
+  "requirement": "CON-FR-011",
+  "bootstrapCore": true,
+  "namespace": "opensphere-monitoring",
+  "manifest": "deploy/baseline-monitoring/beszel-release.yaml",
+  "artifacts": [
+    {
+      "key": "beszelHub",
+      "artifact": "opensphere-console-beszel-hub",
+      "repository": "ghcr.io/opensphere-platform/opensphere-console-beszel-hub",
+      "dockerfile": "deploy/baseline-monitoring/images/hub/Dockerfile",
+      "manifestPlaceholder": "__OPENSPHERE_BESZEL_HUB_IMAGE__",
+      "runtimeKind": "StatefulSet",
+      "runtimeName": "beszel-hub"
+    },
+    {
+      "key": "beszelAgent",
+      "artifact": "opensphere-console-beszel-agent",
+      "repository": "ghcr.io/opensphere-platform/opensphere-console-beszel-agent",
+      "dockerfile": "deploy/baseline-monitoring/images/agent/Dockerfile",
+      "manifestPlaceholder": "__OPENSPHERE_BESZEL_AGENT_IMAGE__",
+      "runtimeKind": "DaemonSet",
+      "runtimeName": "beszel-agent"
+    },
+    {
+      "key": "beszelBootstrap",
+      "artifact": "opensphere-console-beszel-bootstrap",
+      "repository": "ghcr.io/opensphere-platform/opensphere-console-beszel-bootstrap",
+      "dockerfile": "deploy/baseline-monitoring/images/bootstrap/Dockerfile",
+      "manifestPlaceholder": "__OPENSPHERE_BESZEL_BOOTSTRAP_IMAGE__",
+      "runtimeKind": "Job",
+      "runtimeName": "beszel-bootstrap-v0187"
+    }
+  ],
+  "topology": {
+    "hubServiceType": "ClusterIP",
+    "publicIngress": false,
+    "agentAcceptsInboundTraffic": false,
+    "hubHealthPath": "/api/health",
+    "agentHealthCommand": ["/agent", "health"]
+  },
+  "setupInputs": [
+    "opensphere-monitoring/opensphere-ghcr-pull"
+  ],
+  "runtimeSecrets": {
+    "generatedOrReused": "opensphere-monitoring/beszel-runtime",
+    "projectedReader": "opensphere-console/opensphere-baseline-monitoring-reader",
+    "projectedKeys": ["email", "password"]
+  },
+  "unsupportedClaims": [
+    "alert-webhook-ingest",
+    "public-hub-ui"
+  ]
+}

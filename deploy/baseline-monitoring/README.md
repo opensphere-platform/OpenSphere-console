@@ -1,69 +1,76 @@
-# OpenSphere Baseline Monitoring 운영 Runbook
+# Console Baseline Host Observation
 
-이 디렉터리는 Console이 Prometheus/Grafana 없이 제공하는 노드 OS 기초 관측 계층을 설치한다. Beszel은 Supabase(Data & Identity), Gitea(Change Control), HISS Observability와 독립된 형제 기반이며 기존 기능의 기동 조건이 아니다.
+이 디렉터리는 Console Backbone의 Host Observation Authority인 Beszel을 설치하는 release contract를 소유한다. C4 권위는 `S_HOBS`, Console 내부 read adapter는 `API_HOBS`, release artifact owner는 `C_API`다. 일반 metric·log·trace 권위인 HISS와 합치지 않는다.
 
-## 영향 경계
+Beszel은 `bootstrapCore`에 포함되지만 장애 전파는 제한한다. Hub 또는 Agent가 실패하면 Host Observation만 `NotConfigured`, `Stale`, `Expired` 또는 `Unavailable`로 내려간다. Supabase 로그인, Gitea 승인 변경과 다른 Console 기능을 함께 중지하지 않는다.
 
-- Beszel이 미설치이거나 장애여도 Console 로그인, 역할, 상태 변경, Extensions, 외부 채널은 계속 동작해야 한다.
-- Console Backend의 Beszel reader Secret 참조는 `optional: true`다.
-- adapter 장애는 `/api/monitoring/baseline/v1/*`에만 `Unavailable` 또는 bounded stale로 나타난다.
-- 브라우저는 Beszel/PocketBase에 직접 접속하지 않고 Console Backend의 읽기 API만 사용한다.
-- Beszel Hub UI를 iframe으로 삽입하거나 외부 Service/Ingress로 공개하지 않는다.
+## Release artifact 계약
 
-## 설치 순서
+[release-contract.json](release-contract.json)이 Setup과 release workflow가 함께 읽는 기계 계약이다.
 
-1. Supabase migration `0029_browser_session_and_baseline_monitoring.sql`을 적용한다.
-2. `opensphere-browser-session` Secret을 생성하고 Console Backend를 먼저 rollout한다.
-3. 기존 로그인·Extensions·상태 변경 화면이 정상인지 확인한다.
-4. 아래 설치 스크립트로 Beszel 기반을 적용한다.
+| BOM key | GHCR artifact | runtime |
+|---|---|---|
+| `beszelHub` | `opensphere-console-beszel-hub` | `StatefulSet/beszel-hub` |
+| `beszelAgent` | `opensphere-console-beszel-agent` | `DaemonSet/beszel-agent` |
+| `beszelBootstrap` | `opensphere-console-beszel-bootstrap` | `Job/beszel-bootstrap-v0187` |
 
-```powershell
-Set-Location D:\@PROJECT\OpenSphere\OpenSphere-Platform-V2\OpenSphere-console
-.\deploy\baseline-monitoring\install.ps1
-```
+세 이미지는 각각 exact-digest upstream을 얇게 감싸며 Console candidate workflow에서 multi-architecture build, provenance, SPDX SBOM과 signed integrated BOM 증거를 받는다. 배포 manifest는 upstream image나 channel tag를 직접 참조하지 않고 다음 render input만 가진다.
 
-스크립트는 기존 `beszel-runtime` Secret을 재사용하며 누락된 webhook token만 추가한다. 기존 agent token이나 관리자 비밀번호를 자동 회전하지 않는다.
+- `__OPENSPHERE_BESZEL_HUB_IMAGE__`
+- `__OPENSPHERE_BESZEL_AGENT_IMAGE__`
+- `__OPENSPHERE_BESZEL_BOOTSTRAP_IMAGE__`
 
-## 설치 확인
+Setup은 signed BOM에서 세 값을 `ghcr.io/opensphere-platform/<artifact>@sha256:<digest>` 형식으로 공급해야 한다. source manifest, `:candidate`, `:latest` 또는 Docker Hub digest를 설치 정본으로 사용하지 않는다.
 
-```powershell
-kubectl -n opensphere-monitoring rollout status statefulset/beszel-hub --timeout=5m
-kubectl -n opensphere-monitoring wait --for=condition=complete job/beszel-bootstrap --timeout=5m
-kubectl -n opensphere-monitoring rollout status daemonset/beszel-agent --timeout=5m
-kubectl -n opensphere-monitoring get pod,svc,pvc,networkpolicy
-kubectl -n opensphere-monitoring get configmap beszel-agent-public-key -o jsonpath='{.data.key}'
-kubectl -n opensphere-console rollout status deployment/opensphere-console-backend --timeout=5m
-```
+## Setup 책임 경계
 
-Console의 `/manage/infrastructure-monitoring`에서 다음을 확인한다.
+운영자가 이 디렉터리의 manifest를 직접 적용하는 흐름은 정식 설치 절차가 아니다. OpenSphere Setup CLI가 다음 순서를 소유한다.
 
-- 전체 Kubernetes Node가 `verified`, `candidate`, `unmatched`, `ambiguous`, `rejected` 중 하나로 명시됨
-- 연결된 Agent 수와 Kubernetes Ready 수가 별도로 표시됨
-- 자료 출처, 관측 시각, stale 여부가 표시됨
-- Beszel 장애 시 마지막 정상 자료가 최대 24시간까지만 `stale`로 표시됨
+1. `doctor`로 Kubernetes API, DNS, StorageClass, NetworkPolicy, Linux node readiness와 `opensphere-console` 선행 조건을 확인한다.
+2. signed Console BOM과 attestations를 검증하고 `opensphere-ghcr-pull`을 `opensphere-monitoring`에 준비한다.
+3. `beszel-runtime`의 admin, read-only reader와 agent 자격을 생성하거나 기존 installation lock에 결속된 값을 재사용한다.
+4. [install.ps1](install.ps1)에 BOM의 세 exact image를 전달한다.
+5. Hub readiness, bootstrap Job 완료, Agent rollout, 설치된 exact digest, private Service와 target C_API rollout을 확인한다.
+6. 설치 receipt와 installation lock에 세 component digest와 검증 시각을 기록한다.
 
-## 보안 결정
+`install.ps1`은 Setup에서 호출할 수 있는 좁은 component installer다. 세 image 인자는 필수이며 공식 GHCR exact digest 이외의 값을 즉시 거부한다. 기존 자격을 암묵적으로 회전하지 않고 Console namespace에는 reader email/password projection만 전달한다.
 
-- Hub와 Agent 이미지는 v0.18.7 exact digest로 고정한다.
-- Hub는 non-root, read-only root filesystem, capability drop으로 실행한다.
-- Agent는 host `/proc`, `/sys`, `/etc`, `/`를 read-only로 관측하고 capability를 모두 제거한다. hostPath state 디렉터리 소유권 때문에 현재 UID 0을 사용하므로 이는 edge 운영 감사 항목이다.
-- Agent는 SSH를 끄고 Hub로 outbound WebSocket만 사용한다. hostPort는 열지 않는다.
-- `BESZEL_HUB_SHARE_ALL_SYSTEMS=true`는 내부 전용 read-only Console service user가 bootstrap 관리자가 등록한 system을 읽기 위한 제한적 예외다. Hub에는 외부 UI/Ingress가 없고 reader 자격은 Backend namespace Secret에만 투영한다. 이 예외를 제거하려면 upstream owner/share API로 system별 reader binding을 먼저 구현해야 한다.
-- generic webhook은 Console 전용 producer token으로 Notification Dispatcher에 들어가며 Console 사용자 세션이나 CephX/Gitea 자격과 공유하지 않는다.
+## Runtime와 네트워크
 
-## 롤백과 장애 격리
+- Hub는 `opensphere-monitoring` 내부 `ClusterIP:8090`만 갖는다.
+- Ingress, Gateway route, NodePort, LoadBalancer, hostPort와 hostNetwork를 만들지 않는다.
+- Browser는 Hub/PocketBase에 직접 접속하거나 Hub UI를 iframe으로 삽입하지 않는다.
+- target `opensphere-console-api`만 전용 reader로 Hub를 읽는다.
+- Agent는 SSH listener를 끄고 Hub로 outbound WebSocket만 연결한다. Agent NetworkPolicy의 ingress는 비어 있다.
+- Hub egress는 cluster DNS로 제한한다. target C_API는 Hub를 읽기만 한다.
+- Agent host 관측 mount는 read-only다. state hostPath 때문에 UID 0 예외가 남아 있으며 release security review 항목으로 유지한다.
+- 모든 workload는 service-account token을 끈다. bootstrap Job만 제한된 namespaced Role로 agent public-key ConfigMap을 갱신한다.
+- target release는 alert webhook ingest owner를 구현하지 않았으므로 webhook URL이나 producer token을 만들지 않는다. 이를 Ready로 표시하지 않는다.
 
-신규 관측 계층만 중단할 때는 Console Backend의 Beszel 환경변수를 비우거나 reader Secret을 제거한 뒤 Backend를 rollout한다. 기존 Console 기능은 유지되고 모니터링 화면만 `구성되지 않음`으로 표시되어야 한다.
+## Health와 readiness
 
-Beszel 리소스를 제거해야 할 때 PVC는 즉시 삭제하지 않는다. StatefulSet과 DaemonSet을 먼저 scale down하고 export/restore 증거를 확보한 뒤 별도 승인으로 PVC를 처리한다. `kubectl delete namespace`를 롤백 명령으로 사용하지 않는다.
+Hub의 startup, readiness와 liveness는 `/api/health`를 사용한다. Agent readiness/liveness는 `/agent health`를 사용한다. bootstrap은 Hub 준비를 bounded retry한 후 reader 인증, universal agent token과 public key 구성을 성공해야 한다.
 
-## 아직 완료되지 않은 운영 Gate
+Setup의 최종 verify는 다음을 별도로 판정한다.
 
-- Beszel PVC off-backbone backup과 실제 restore drill
-- 각 노드의 CPU/memory/disk 값과 host 기준 도구 비교
-- node 재생성 시 UID/fingerprint 오결합 0건 검증
-- alert webhook의 전달·중복 제거·재시도 이력 검증
-- summary p95 500ms, series p95 1.5s 목표 측정
-- Agent UID 0/hostPath profile에 대한 기술 감사
+- Hub `Ready`와 PVC bound
+- bootstrap Job `Complete`
+- Ready Linux node 대비 Agent desired/ready 수
+- Hub와 Agent의 running image가 signed BOM exact digest와 일치
+- Hub Service가 non-headless ClusterIP이고 외부 route가 없음
+- Console reader의 create/update/delete 거부
+- Kubernetes Node UID와 Beszel machine fingerprint가 durable binding된 경우에만 `Verified`
+- Hub 중단 시 다른 Backbone 기능은 계속되고 Host Observation만 격리됨
 
-이 Gate를 통과하기 전에는 “운영 완료” 또는 GA-ready로 판정하지 않는다.
+## 남은 운영 수용 Gate
+
+다음은 manifest와 정적 계약만으로 합격 처리하지 않는다.
+
+- Beszel Hub PVC의 off-backbone backup과 격리 restore drill
+- node 재생성 및 hostname 충돌에서 UID/fingerprint 오결합 0건
+- reader write denial 통합 시험
+- alert ingest owner와 delivery 중복·재시도 계약
+- summary p95 500ms, series p95 1.5s 환경 측정
+- Agent UID 0/hostPath 예외의 release security 승인
+
+이 증거 전에는 baseline Host Observation을 GA-ready 또는 Recovered로 표시하지 않는다.
