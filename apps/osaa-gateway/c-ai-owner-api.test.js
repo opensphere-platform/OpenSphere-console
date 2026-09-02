@@ -113,7 +113,8 @@ function apiWith(overrides = {}) {
     eventOrder.push(method === 'PATCH' ? 'k8s:patch' : 'k8s:' + method.toLowerCase());
     if (method === 'GET' && resourcePath.includes('/deployments/opensphere-osdst')) {
       return { ok: true, status: 200, json: {
-        metadata: { name: 'opensphere-osdst', namespace: 'opensphere-console', generation: 4, resourceVersion: '100', annotations: {} },
+        apiVersion: 'apps/v1', kind: 'Deployment',
+        metadata: { name: 'opensphere-osdst', namespace: 'opensphere-console', uid: 'osdst-uid', generation: 4, resourceVersion: '100', annotations: {} },
         spec: { replicas: 2, template: {
           metadata: { annotations: { 'opensphere.io/osdst-mode': 'shadow' } },
           spec: { containers: [{ name: 'osdst', image: 'ghcr.io/opensphere-platform/opensphere-osdst@sha256:' + '6'.repeat(64) }] },
@@ -123,7 +124,8 @@ function apiWith(overrides = {}) {
     }
     if (method === 'PATCH' && resourcePath.includes('/deployments/opensphere-osdst')) {
       return { ok: true, status: 200, json: {
-        metadata: { name: 'opensphere-osdst', namespace: 'opensphere-console', generation: 5, resourceVersion: '101', annotations: body.metadata.annotations },
+        apiVersion: 'apps/v1', kind: 'Deployment',
+        metadata: { name: 'opensphere-osdst', namespace: 'opensphere-console', uid: 'osdst-uid', generation: 5, resourceVersion: '101', annotations: body.metadata.annotations },
         spec: { replicas: 2, template: { metadata: { annotations: body.spec.template.metadata.annotations } } },
         status: { observedGeneration: 5, updatedReplicas: 2, readyReplicas: 2 },
       } };
@@ -143,6 +145,8 @@ function apiWith(overrides = {}) {
     durableOperationsEnabled: overrides.durableOperationsEnabled !== false,
     remediationProposalEnabled: true,
     remediationExecutionEnabled: overrides.remediationExecutionEnabled !== false,
+    llmCredentialMutationEnabled: overrides.llmCredentialMutationEnabled === true,
+    llmCredentialDeletionEnabled: overrides.llmCredentialDeletionEnabled === true,
     ...(overrides.providerAllowedOrigins ? { providerAllowedOrigins: overrides.providerAllowedOrigins } : {}),
   });
   return { instance, dbCalls, k8sCalls, auditCalls, eventOrder };
@@ -267,6 +271,7 @@ test('Dialogue State change audits intent before one exact deployment patch', as
   const current = await instance.getDialogueState();
   assert.equal(current.mode, 'shadow');
   assert.equal(current.rollout.ready, true);
+  assert.equal(current.controlUid, 'osdst-uid');
   const changed = await instance.setDialogueState(actor(), {
     mode: 'read-enforce', reason: 'Enable fact checks after reviewed readiness',
   });
@@ -289,13 +294,106 @@ test('Dialogue State change audits intent before one exact deployment patch', as
   }), { code: 400 });
 });
 
+test('Dialogue State same-mode request is observe-only even while rollout is pending', async () => {
+  const calls = [], audits = [];
+  const current = {
+    apiVersion: 'apps/v1', kind: 'Deployment',
+    metadata: {
+      name: 'opensphere-osdst', namespace: 'opensphere-console',
+      uid: 'osdst-uid', generation: 5, resourceVersion: '100', annotations: {},
+    },
+    spec: {
+      replicas: 2,
+      template: {
+        metadata: { annotations: { 'opensphere.io/osdst-mode': 'shadow' } },
+        spec: { containers: [{ name: 'osdst', image: 'example.test/osdst@sha256:' + '6'.repeat(64) }] },
+      },
+    },
+    status: { observedGeneration: 4, updatedReplicas: 1, readyReplicas: 1 },
+  };
+  const { instance } = apiWith({
+    async k8s(method) {
+      calls.push(method);
+      if (method !== 'GET') throw new Error('same mode must not be patched');
+      return { ok: true, status: 200, json: current };
+    },
+    async auditMutation(_actor, event) {
+      audits.push(event);
+      return { requestId: event.requestId };
+    },
+  });
+  const result = await instance.setDialogueState(actor(), {
+    mode: 'shadow', reason: 'Observe the pending rollout without changing policy',
+  });
+  assert.equal(result.changed, false);
+  assert.equal(result.mode, 'shadow');
+  assert.equal(result.rollout.ready, false);
+  assert.deepEqual(calls, ['GET']);
+  assert.deepEqual(audits, []);
+});
+
+test('Dialogue State refuses changed UID or stale resourceVersion receipts', async () => {
+  for (const receipt of [
+    { uid: 'replacement-osdst-uid', resourceVersion: '101' },
+    { uid: 'osdst-uid', resourceVersion: '100' },
+  ]) {
+    const audits = [];
+    const current = {
+      apiVersion: 'apps/v1', kind: 'Deployment',
+      metadata: {
+        name: 'opensphere-osdst', namespace: 'opensphere-console',
+        uid: 'osdst-uid', generation: 4, resourceVersion: '100', annotations: {},
+      },
+      spec: {
+        replicas: 2,
+        template: {
+          metadata: { annotations: { 'opensphere.io/osdst-mode': 'shadow' } },
+          spec: { containers: [{ name: 'osdst', image: 'example.test/osdst@sha256:' + '6'.repeat(64) }] },
+        },
+      },
+      status: { observedGeneration: 4, updatedReplicas: 2, readyReplicas: 2 },
+    };
+    const { instance } = apiWith({
+      async auditMutation(_actor, event) {
+        audits.push(event);
+        return { requestId: event.requestId };
+      },
+      async k8s(method, _resourcePath, body) {
+        if (method === 'GET') return { ok: true, status: 200, json: current };
+        return {
+          ok: true, status: 200,
+          json: {
+            ...current,
+            metadata: { ...current.metadata, ...receipt, generation: 5, annotations: body.metadata.annotations },
+            spec: {
+              ...current.spec,
+              template: {
+                ...current.spec.template,
+                metadata: { annotations: body.spec.template.metadata.annotations },
+              },
+            },
+            status: { observedGeneration: 5, updatedReplicas: 2, readyReplicas: 2 },
+          },
+        };
+      },
+    });
+    await assert.rejects(instance.setDialogueState(actor(), {
+      mode: 'read-enforce', reason: 'Enable fact checks after reviewed readiness',
+    }), { code: 409 });
+    assert.deepEqual(audits.map((entry) => entry.phase), ['intent', 'failed']);
+  }
+});
+
 function llmSecret(overrides = {}) {
   return {
-    type: 'Opaque',
+    apiVersion: 'v1', kind: 'Secret', type: 'Opaque',
     metadata: {
       name: 'osaa-llm-primary', namespace: 'opensphere-osaa-credentials',
-      resourceVersion: '90210',
-      labels: { 'opensphere.io/osaa-llm-key': 'true' },
+      uid: 'llm-secret-uid', resourceVersion: '90210',
+      labels: {
+        'opensphere.io/part-of': 'opensphere-osaa',
+        'opensphere.io/osaa-llm-key': 'true',
+      },
       annotations: {
         'opensphere.io/osaa-key-id': 'primary',
         'opensphere.io/osaa-provider': 'openai',
@@ -318,7 +416,18 @@ test('LLM validation is exact-Secret, allowlisted, intent-first and never return
       calls.push({ method, path: resourcePath, body });
       events.push(method === 'PATCH' ? 'k8s:patch' : 'k8s:get');
       if (method === 'GET') return { ok: true, status: 200, json: secret };
-      if (method === 'PATCH') return { ok: true, status: 200, json: { metadata: body.metadata } };
+      if (method === 'PATCH') {
+        return {
+          ok: true, status: 200,
+          json: {
+            ...secret,
+            metadata: {
+              ...secret.metadata, ...body.metadata, resourceVersion: '90211',
+              annotations: { ...secret.metadata.annotations, ...body.metadata.annotations },
+            },
+          },
+        };
+      }
       throw new Error('unexpected Kubernetes call');
     },
     async auditMutation(_actor, entry) {
@@ -346,6 +455,7 @@ test('LLM validation is exact-Secret, allowlisted, intent-first and never return
   assert.ok(events.indexOf('audit:intent') < events.indexOf('k8s:patch'));
   assert.equal(audits.at(-1).phase, 'applied');
   await assert.rejects(instance.testLlmKey(actor(), 'primary', { arbitrary: true }), { code: 400 });
+  await assert.rejects(instance.testLlmKey(actor({ assurance: 'aal1' }), 'primary', {}), { code: 403 });
 });
 
 test('LLM validation blocks unallowlisted origins and records failed audit without patch', async () => {
@@ -393,6 +503,280 @@ test('Kubernetes write failure cannot be reported as successful key validation',
   assert.deepEqual(audits.map((entry) => entry.phase), ['intent', 'failed']);
 });
 
+test('LLM key rotation binds conflict read, UID, resourceVersion, exact bytes, and durable audit', async () => {
+  const calls = [], audits = [], events = [];
+  const input = {
+    id: 'primary', provider: 'openai', displayName: 'Primary',
+    apiKey: 'new-provider-secret', baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-5', embeddingModel: '', enabled: true,
+    reason: 'Rotate the reviewed primary provider credential',
+  };
+  const current = {
+    apiVersion: 'v1', kind: 'Secret', type: 'Opaque',
+    metadata: {
+      name: 'osaa-llm-primary', namespace: 'opensphere-osaa-credentials',
+      uid: 'secret-uid-1', resourceVersion: '90',
+      labels: {
+        'opensphere.io/part-of': 'opensphere-osaa',
+        'opensphere.io/osaa-llm-key': 'true',
+      },
+      annotations: {
+        'opensphere.io/osaa-key-id': 'primary',
+        'opensphere.io/osaa-validation-status': 'ready',
+      },
+    },
+    data: { api_key: Buffer.from('old-provider-secret').toString('base64') },
+  };
+  const { instance } = apiWith({
+    llmCredentialMutationEnabled: true,
+    async auditMutation(_actor, event) {
+      audits.push(event);
+      events.push('audit:' + event.phase);
+      return { requestId: event.requestId };
+    },
+    async k8s(method, resourcePath, body) {
+      calls.push({ method, path: resourcePath, body });
+      events.push('k8s:' + method.toLowerCase());
+      if (method === 'POST') return { ok: false, status: 409, json: {} };
+      if (method === 'GET') return { ok: true, status: 200, json: current };
+      if (method === 'PATCH') {
+        return {
+          ok: true, status: 200,
+          json: {
+            ...current,
+            metadata: {
+              ...current.metadata, ...body.metadata, resourceVersion: '91',
+              labels: { ...current.metadata.labels, ...body.metadata.labels },
+              annotations: { ...current.metadata.annotations, ...body.metadata.annotations },
+            },
+            data: { api_key: Buffer.from(body.stringData.api_key).toString('base64') },
+          },
+        };
+      }
+      throw new Error('unexpected Kubernetes call');
+    },
+  });
+  const result = await instance.upsertLlmKey(actor(), input);
+  assert.equal(result.created, false);
+  assert.equal(result.item.id, 'primary');
+  assert.equal(result.item.validationStatus, 'untested');
+  assert.equal(result.item.updatedBy, ACTOR_ID);
+  assert.equal(JSON.stringify(result).includes(input.apiKey), false);
+  assert.deepEqual(calls.map((call) => call.method), ['POST', 'GET', 'PATCH']);
+  assert.equal(calls[1].path,
+    '/api/v1/namespaces/opensphere-osaa-credentials/secrets/osaa-llm-primary');
+  assert.equal(calls[2].body.metadata.resourceVersion, '90');
+  assert.equal(Object.hasOwn(calls[2].body.metadata, 'uid'), false);
+  assert.equal(calls[2].body.metadata.annotations['opensphere.io/osaa-validation-status'], 'untested');
+  assert.match(audits[0].payloadDigest, /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(JSON.stringify(audits).includes(input.apiKey), false);
+  assert.deepEqual(audits.map((entry) => entry.phase), ['intent', 'applied']);
+  assert.ok(events.indexOf('audit:intent') < events.indexOf('k8s:post'));
+});
+
+test('LLM key upsert is disabled by default and rejects foreign or stale Secret receipts', async () => {
+  const input = {
+    id: 'primary', provider: 'openai', displayName: 'Primary',
+    apiKey: 'new-provider-secret', baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-5', embeddingModel: '', enabled: true,
+    reason: 'Rotate the reviewed primary provider credential',
+  };
+  const disabled = apiWith();
+  await assert.rejects(disabled.instance.upsertLlmKey(actor(), input), {
+    code: 503, errorCode: 'llm_credential_mutation_disabled',
+  });
+  assert.equal(disabled.k8sCalls.length, 0);
+  assert.equal(disabled.auditCalls.length, 0);
+
+  const foreignAudits = [], foreignCalls = [];
+  const foreign = apiWith({
+    llmCredentialMutationEnabled: true,
+    async auditMutation(_actor, event) {
+      foreignAudits.push(event);
+      return { requestId: event.requestId };
+    },
+    async k8s(method, resourcePath, body) {
+      foreignCalls.push({ method, resourcePath, body });
+      if (method === 'POST') return { ok: false, status: 409, json: {} };
+      return {
+        ok: true, status: 200, json: {
+          apiVersion: 'v1', kind: 'Secret', type: 'Opaque',
+          metadata: {
+            name: 'osaa-llm-primary', namespace: 'opensphere-osaa-credentials',
+            uid: 'foreign-uid', resourceVersion: '7',
+            labels: { 'opensphere.io/osaa-llm-key': 'true' },
+            annotations: { 'opensphere.io/osaa-key-id': 'primary' },
+          },
+        },
+      };
+    },
+  });
+  await assert.rejects(foreign.instance.upsertLlmKey(actor(), input), { code: 409 });
+  assert.deepEqual(foreignCalls.map((call) => call.method), ['POST', 'GET']);
+  assert.deepEqual(foreignAudits.map((entry) => entry.phase), ['intent', 'failed']);
+
+  const staleAudits = [];
+  const existing = {
+    apiVersion: 'v1', kind: 'Secret', type: 'Opaque',
+    metadata: {
+      name: 'osaa-llm-primary', namespace: 'opensphere-osaa-credentials',
+      uid: 'secret-uid-1', resourceVersion: '7',
+      labels: {
+        'opensphere.io/part-of': 'opensphere-osaa',
+        'opensphere.io/osaa-llm-key': 'true',
+      },
+      annotations: { 'opensphere.io/osaa-key-id': 'primary' },
+    },
+  };
+  const stale = apiWith({
+    llmCredentialMutationEnabled: true,
+    async auditMutation(_actor, event) {
+      staleAudits.push(event);
+      return { requestId: event.requestId };
+    },
+    async k8s(method, _resourcePath, body) {
+      if (method === 'POST') return { ok: false, status: 409, json: {} };
+      if (method === 'GET') return { ok: true, status: 200, json: existing };
+      return {
+        ok: true, status: 200,
+        json: {
+          ...existing,
+          metadata: {
+            ...existing.metadata, ...body.metadata,
+            labels: { ...existing.metadata.labels, ...body.metadata.labels },
+            annotations: { ...existing.metadata.annotations, ...body.metadata.annotations },
+          },
+          data: { api_key: Buffer.from(body.stringData.api_key).toString('base64') },
+        },
+      };
+    },
+  });
+  await assert.rejects(stale.instance.upsertLlmKey(actor(), input), { code: 409 });
+  assert.deepEqual(staleAudits.map((entry) => entry.phase), ['intent', 'failed']);
+});
+
+test('LLM key deletion binds exact custody and UID/RV preconditions to observed absence', async () => {
+  const calls = [], audits = [], events = [];
+  const current = {
+    apiVersion: 'v1', kind: 'Secret', type: 'Opaque',
+    metadata: {
+      name: 'osaa-llm-primary', namespace: 'opensphere-osaa-credentials',
+      uid: 'secret-uid-1', resourceVersion: '77',
+      labels: {
+        'opensphere.io/part-of': 'opensphere-osaa',
+        'opensphere.io/osaa-llm-key': 'true',
+      },
+      annotations: { 'opensphere.io/osaa-key-id': 'primary' },
+    },
+  };
+  let reads = 0;
+  const { instance } = apiWith({
+    llmCredentialDeletionEnabled: true,
+    async auditMutation(_actor, event) {
+      audits.push(event);
+      events.push('audit:' + event.phase);
+      return { requestId: event.requestId };
+    },
+    async k8s(method, resourcePath, body) {
+      calls.push({ method, path: resourcePath, body });
+      events.push('k8s:' + method.toLowerCase());
+      if (method === 'GET' && reads++ === 0) return { ok: true, status: 200, json: current };
+      if (method === 'DELETE') {
+        return {
+          ok: true, status: 200,
+          json: {
+            apiVersion: 'v1', kind: 'Status', status: 'Success',
+            details: { name: 'osaa-llm-primary', uid: 'secret-uid-1' },
+          },
+        };
+      }
+      if (method === 'GET') return { ok: false, status: 404, json: null };
+      throw new Error('unexpected Kubernetes call');
+    },
+  });
+  const result = await instance.deleteLlmKey(actor(), 'primary', {
+    reason: 'Remove the compromised primary provider credential',
+    confirmation: 'delete LLM key primary',
+  });
+  assert.deepEqual(calls.map((call) => call.method), ['GET', 'DELETE', 'GET']);
+  assert.deepEqual(calls[1].body, {
+    apiVersion: 'v1', kind: 'DeleteOptions',
+    preconditions: { uid: 'secret-uid-1', resourceVersion: '77' },
+  });
+  assert.equal(result.deleted, true);
+  assert.equal(result.id, 'primary');
+  assert.deepEqual(audits.map((entry) => entry.phase), ['intent', 'applied']);
+  assert.ok(events.indexOf('audit:intent') < events.indexOf('k8s:delete'));
+});
+
+test('LLM key deletion is disabled by default and refuses replacement races', async () => {
+  const disabled = apiWith();
+  await assert.rejects(disabled.instance.deleteLlmKey(actor(), 'primary', {
+    reason: 'Remove the compromised primary provider credential',
+    confirmation: 'delete LLM key primary',
+  }), { code: 503, errorCode: 'llm_credential_deletion_disabled' });
+  assert.equal(disabled.k8sCalls.length, 0);
+
+  const audits = [];
+  const current = {
+    apiVersion: 'v1', kind: 'Secret', type: 'Opaque',
+    metadata: {
+      name: 'osaa-llm-primary', namespace: 'opensphere-osaa-credentials',
+      uid: 'secret-uid-1', resourceVersion: '77',
+      labels: {
+        'opensphere.io/part-of': 'opensphere-osaa',
+        'opensphere.io/osaa-llm-key': 'true',
+      },
+      annotations: { 'opensphere.io/osaa-key-id': 'primary' },
+    },
+  };
+  let reads = 0;
+  const raced = apiWith({
+    llmCredentialDeletionEnabled: true,
+    async auditMutation(_actor, event) {
+      audits.push(event);
+      return { requestId: event.requestId };
+    },
+    async k8s(method) {
+      if (method === 'GET' && reads++ === 0) return { ok: true, status: 200, json: current };
+      if (method === 'DELETE') {
+        return {
+          ok: true, status: 200,
+          json: {
+            apiVersion: 'v1', kind: 'Status', status: 'Success',
+            details: { name: 'osaa-llm-primary', uid: 'secret-uid-1' },
+          },
+        };
+      }
+      return {
+        ok: true, status: 200,
+        json: { ...current, metadata: { ...current.metadata, uid: 'replacement-uid', resourceVersion: '1' } },
+      };
+    },
+  });
+  await assert.rejects(raced.instance.deleteLlmKey(actor(), 'primary', {
+    reason: 'Remove the compromised primary provider credential',
+    confirmation: 'delete LLM key primary',
+  }), { code: 409 });
+  assert.deepEqual(audits.map((entry) => entry.phase), ['intent', 'failed']);
+});
+
+test('C_AI owner projections fail closed on oversized bytes and ignored list limits', async () => {
+  const oversized = apiWith({ values: {
+    c_ai_list_module_operations: [operationRow({ result: { output: 'x'.repeat(1024 * 1024) } })],
+  } });
+  await assert.rejects(oversized.instance.listOperations(), {
+    code: 503, errorCode: 'c_ai_owner_projection_invalid',
+  });
+
+  const overLimit = apiWith({ values: {
+    c_ai_list_module_operations: Array.from({ length: 3 }, () => operationRow()),
+  } });
+  await assert.rejects(overLimit.instance.listOperations('2'), {
+    code: 503, errorCode: 'c_ai_owner_projection_invalid',
+  });
+});
+
 test('missing C_AI store is explicit 503 and never empty success', async () => {
   const { instance } = apiWith({ noPool: true });
   await assert.rejects(instance.listOperations(), {
@@ -424,6 +808,11 @@ test('server routes retain target admission, permissions and fail-closed flags',
     /R2D2_ENGINEERING_EXECUTION_ENABLED = process\.env\.R2D2_ENGINEERING_EXECUTION_ENABLED === 'true'/u);
   assert.match(owner, /deployments.*encodeURIComponent\(dialogueDeployment\)/u);
   assert.match(owner, /secrets.*osaa-llm-/u);
+  assert.match(owner, /llmCredentialMutationEnabled = false/u);
+  assert.match(owner, /llmCredentialDeletionEnabled = false/u);
+  assert.match(owner, /kind: 'DeleteOptions'[\s\S]+preconditions: \{ uid: binding\.uid, resourceVersion: binding\.resourceVersion \}/u);
+  assert.match(server, /assertMutationEnabled\(actor, 'llm-key-upsert'\)[\s\S]+cAiOwnerApi\.upsertLlmKey/u);
+  assert.match(server, /assertMutationEnabled\(actor, 'llm-key-delete'\)[\s\S]+cAiOwnerApi\.deleteLlmKey/u);
   assert.doesNotMatch(owner + server,
     /console-api[\\/]runtime|r2d2-remediation-api|r2d2-operation-api/u);
   assert.match(identity, /x-os-owner-csrf-verified/u);

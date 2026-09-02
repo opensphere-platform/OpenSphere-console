@@ -9106,70 +9106,20 @@ async function durableChatCompletion(body, actor) {
   }
 }
 
-function validateKeyBody(body, rotate = false) {
-  const id = String(body.id || '').trim();
-  const provider = String(body.provider || '').trim();
-  const displayName = String(body.displayName || id || provider).trim();
-  const apiKey = String(body.apiKey || '');
-  const baseUrl = String(body.baseUrl || '').trim();
-  const defaultModel = String(body.defaultModel || '').trim();
-  const embeddingModel = String(body.embeddingModel || '').trim();
-  const reason = String(body.reason || '').trim();
-  if (!ID_RE.test(id)) throw { code: 400, msg: 'invalid id' };
-  if (!PROVIDER_RE.test(provider)) throw { code: 400, msg: 'invalid provider' };
-  if (!rotate && apiKey.length < 8) throw { code: 400, msg: 'apiKey required' };
-  if (defaultModel && !MODEL_RE.test(defaultModel)) throw { code: 400, msg: 'invalid defaultModel' };
-  if (embeddingModel && !MODEL_RE.test(embeddingModel)) throw { code: 400, msg: 'invalid embeddingModel' };
-  if (!reason) throw { code: 400, msg: 'reason required' };
-  return { id, provider, displayName, apiKey, baseUrl, defaultModel, embeddingModel, enabled: body.enabled !== false, reason };
-}
-
 async function upsertKey(body, actor) {
+  // The legacy route remains closed by the planner-only Gateway mutation gate.
+  // If ownership is activated later, the implementation behind that gate is
+  // already AAL2-, audit-, UID-, and resourceVersion-bound.
   assertMutationEnabled(actor, 'llm-key-upsert');
-  const b = validateKeyBody(body);
-  const fingerprint = createHash('sha256').update(b.apiKey).digest('hex').slice(0, 16);
-  const now = new Date().toISOString();
-  const obj = {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    metadata: {
-      name: secretName(b.id),
-      namespace: OSAA_KEY_NAMESPACE,
-      labels: { [PART_LABEL]: 'opensphere-osaa', [KEY_LABEL]: 'true' },
-      annotations: {
-        'opensphere.io/osaa-key-id': b.id,
-        'opensphere.io/osaa-provider': b.provider,
-        'opensphere.io/osaa-display-name': b.displayName,
-        'opensphere.io/osaa-base-url': b.baseUrl,
-        'opensphere.io/osaa-default-model': b.defaultModel,
-        'opensphere.io/osaa-embedding-model': b.embeddingModel,
-        'opensphere.io/osaa-enabled': String(b.enabled),
-        'opensphere.io/osaa-key-fingerprint': fingerprint,
-        'opensphere.io/osaa-updated-at': now,
-        'opensphere.io/osaa-updated-by': actor.username,
-        'opensphere.io/osaa-change-reason': b.reason,
-      },
-    },
-    type: 'Opaque',
-    stringData: { api_key: b.apiKey },
-  };
-  const created = await k8s('POST', `/api/v1/namespaces/${OSAA_KEY_NAMESPACE}/secrets`, obj);
-  if (created.ok) return { created: true, item: keyMetaFromSecret({ metadata: obj.metadata }) };
-  if (created.status !== 409) throw { code: 502, msg: `secret create HTTP ${created.status}` };
-  const patched = await k8s('PATCH', `/api/v1/namespaces/${OSAA_KEY_NAMESPACE}/secrets/${obj.metadata.name}`, {
-    metadata: { labels: obj.metadata.labels, annotations: obj.metadata.annotations },
-    stringData: obj.stringData,
-  });
-  if (!patched.ok) throw { code: 502, msg: `secret patch HTTP ${patched.status}` };
-  return { created: false, item: keyMetaFromSecret({ metadata: obj.metadata }) };
+  return cAiOwnerApi.upsertLlmKey(actor, body);
 }
 
-async function deleteKey(id) {
-  assertMutationEnabled(null, 'llm-key-delete');
-  if (!ID_RE.test(id)) throw { code: 400, msg: 'invalid id' };
-  const r = await k8s('DELETE', `/api/v1/namespaces/${OSAA_KEY_NAMESPACE}/secrets/${secretName(id)}`);
-  if (r.ok || r.status === 404) return { deleted: r.status !== 404 };
-  throw { code: 502, msg: `secret delete HTTP ${r.status}` };
+async function deleteKey(id, actor, reason, confirmation) {
+  // Deletion remains closed by the planner-only Gateway mutation gate. The
+  // owner implementation behind the gate is separately feature-disabled and
+  // binds custody, deletion preconditions, absence observation, and audit.
+  assertMutationEnabled(actor, 'llm-key-delete');
+  return cAiOwnerApi.deleteLlmKey(actor, id, { reason, confirmation });
 }
 
 function audit(actor, action, target, result, reason) {
@@ -10262,8 +10212,8 @@ const server = http.createServer(async (req, res) => {
       const actor = await verifyAdmin(req);
       const reason = url.searchParams.get('reason') || '';
       if (!reason.trim()) return json(res, 400, { error: 'reason required' });
-      const out = await deleteKey(del[1]);
-      audit(actor, 'llm-key-delete', del[1], out.deleted ? 'ok' : 'not-found', reason);
+      const confirmation = url.searchParams.get('confirmation') || '';
+      const out = await deleteKey(del[1], actor, reason, confirmation);
       return json(res, 200, out);
     }
     return json(res, 404, { error: 'not found' });
