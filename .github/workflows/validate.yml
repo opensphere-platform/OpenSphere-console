@@ -82,7 +82,7 @@ jobs:
       - name: Verify deterministic Manual seed
         run: |
           npm run manual:seed
-          git diff --exit-code -- backend/opensphere-console-osaa-gateway/manual-seeds/opensphere-core-manuals.json
+          git diff --exit-code -- apps/osaa-gateway/manual-seeds/opensphere-core-manuals.json
       - name: Test Console contracts and legacy behavior
         run: |
           npm run test:contracts

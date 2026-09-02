@@ -12,10 +12,10 @@ const incidentId = '44444444-4444-4444-8444-444444444444';
 const exact = (character) => `sha256:${character.repeat(64)}`;
 
 function body() {
-  const patchText = '--- a/backend/opensphere-console-osaa-gateway/server.js\n+++ b/backend/opensphere-console-osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const patchText = '--- a/apps/osaa-gateway/server.js\n+++ b/apps/osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
   return {
     incidentId, repositoryId: 'console', repository: REPOSITORIES.console.url,
-    baseRevision: 'a'.repeat(40), allowedPaths: ['backend/opensphere-console-osaa-gateway/'],
+    baseRevision: 'a'.repeat(40), allowedPaths: ['apps/osaa-gateway/'],
     patchText, patchDigest: exact('b'), reason: 'known runtime mismatch requires a bounded source repair',
     riskLevel: 'R2', affectedComponents: ['osaaGateway'], affectedImages: ['opensphere-console-osaa-gateway'],
     requiredTests: ['unit','contract','integration','security'], releaseScope: 'component',
@@ -69,7 +69,7 @@ test('proposal is patch-bound, session-bound and cannot activate repository or d
   assert.equal(persisted[0].actorId, '00000000-0000-4000-8000-000000000006');
   assert.equal(persisted[0].authSessionId, sessionId);
   assert.equal(persisted[0].patchDigest, patchTextDigest(body().patchText));
-  assert.deepEqual(persisted[0].patchArtifact.changedFiles, ['backend/opensphere-console-osaa-gateway/server.js']);
+  assert.deepEqual(persisted[0].patchArtifact.changedFiles, ['apps/osaa-gateway/server.js']);
   assert.match(persisted[0].approvalBindingDigest, /^sha256:[0-9a-f]{64}$/);
   assert.equal(persisted[0].approvalMode, 'local-edge-supervised');
   assert.deepEqual(result.activation, {
@@ -134,7 +134,7 @@ test('authenticated remediation list and detail expose the exact bounded work un
   const created = await prepared.api.propose({ headers: { 'x-os-idempotency-key': 'remediation-proposal-1' } }, assessmentId, body());
   const listed = await prepared.api.list({});
   assert.equal(listed.remediations.length, 1);
-  assert.deepEqual(listed.remediations[0].changedPaths, ['backend/opensphere-console-osaa-gateway/server.js']);
+  assert.deepEqual(listed.remediations[0].changedPaths, ['apps/osaa-gateway/server.js']);
   assert.equal(Object.hasOwn(listed.remediations[0], 'patchText'), false);
   const detail = await prepared.api.details({}, created.remediationRequestId);
   assert.equal(detail.requiredConfirmation,

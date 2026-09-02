@@ -58,7 +58,7 @@ test('the installed-state reader cannot become a request, route, or deployment a
   ]);
   assert.match(
     readFileSync(path.join(root, 'backend/opensphere-console-backend/Dockerfile'), 'utf8'),
-    /COPY opensphere-console-backend\/platform-release-agent-identity-cutover\.js/,
+    /COPY backend\/opensphere-console-backend\/platform-release-agent-identity-cutover\.js/,
   );
 });
 
@@ -66,8 +66,8 @@ test('current HTTP and deployment contracts expose OSAA only', () => {
   const activeFiles = [
     'nginx/default.conf.template',
     'backend/opensphere-console-backend/deploy.yaml',
-    'backend/opensphere-console-osaa-gateway/deploy.yaml',
-    'backend/opensphere-console-osaa-gateway/server.js',
+    'apps/osaa-gateway/deploy.yaml',
+    'apps/osaa-gateway/server.js',
     'src/app/os/os-osaa-agent.ts',
   ];
   const current = activeFiles.map((file) => readFileSync(path.join(root, file), 'utf8')).join('\n');

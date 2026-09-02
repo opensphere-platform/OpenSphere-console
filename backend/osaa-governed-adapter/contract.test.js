@@ -12,12 +12,12 @@ const runtimeWatchMigration = fs.readFileSync(path.join(here, '..', 'supabase', 
 const watchObserverMigration = fs.readFileSync(path.join(here, '..', 'supabase', 'migrations', '0017_oaa_watch_observer.sql'), 'utf8');
 const ownerProjectionMigration = fs.readFileSync(path.join(here, '..', 'supabase', 'migrations', '0018_oaa_owner_api_projection.sql'), 'utf8');
 const evidenceCorrelationMigration = fs.readFileSync(path.join(here, '..', 'supabase', 'migrations', '0019_oaa_evidence_correlation_retention.sql'), 'utf8');
-const gateway = fs.readFileSync(path.join(here, '..', 'opensphere-console-osaa-gateway', 'server.js'), 'utf8');
-const gatewayDeploy = fs.readFileSync(path.join(here, '..', 'opensphere-console-osaa-gateway', 'deploy.yaml'), 'utf8');
+const gateway = fs.readFileSync(path.join(here, '..', '..', 'apps', 'osaa-gateway', 'server.js'), 'utf8');
+const gatewayDeploy = fs.readFileSync(path.join(here, '..', '..', 'apps', 'osaa-gateway', 'deploy.yaml'), 'utf8');
 const backend = fs.readFileSync(path.join(here, '..', 'opensphere-console-backend', 'server.js'), 'utf8');
 const { canonicalJson, deploymentTarget, resourceTarget, resourcePath, rolloutComplete, workloadRolloutComplete, validateManifest, sha256 } = require('./server.js');
-const { RUNTIME_RESOURCE_KINDS, sanitizeKubernetesObject } = require('../opensphere-console-osaa-gateway/kubernetes-resource-catalog.js');
-const { normalizeProviderToolCalls, parseDsmlToolCalls } = require('../opensphere-console-osaa-gateway/provider-tool-calls.js');
+const { RUNTIME_RESOURCE_KINDS, sanitizeKubernetesObject } = require('../../apps/osaa-gateway/kubernetes-resource-catalog.js');
+const { normalizeProviderToolCalls, parseDsmlToolCalls } = require('../../apps/osaa-gateway/provider-tool-calls.js');
 
 test('canonical declaration digest is deterministic', () => {
   const a = { toolId: 'osaa.k8s.deployment.restart', inputs: { name: 'demo', namespace: 'opensphere-console' } };

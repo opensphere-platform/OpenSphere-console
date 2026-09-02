@@ -114,6 +114,8 @@ test('published notification dispatcher uses an exact base-image digest', () => 
   const dockerfile = fs.readFileSync(path.join(
     __dirname,
     '..',
+    '..',
+    'apps',
     'notification-dispatcher',
     'Dockerfile',
   ), 'utf8');

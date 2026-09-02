@@ -203,8 +203,8 @@ test('OSAA credential writes enter the Console Backend policy and audit boundary
   const nginx = read('nginx', 'default.conf.template');
   const backend = read('backend', 'opensphere-console-backend', 'server.js');
   const backendDeploy = read('backend', 'opensphere-console-backend', 'deploy.yaml');
-  const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
-  const gatewayDeploy = read('backend', 'opensphere-console-osaa-gateway', 'deploy.yaml');
+  const gateway = read('apps', 'osaa-gateway', 'server.js');
+  const gatewayDeploy = read('apps', 'osaa-gateway', 'deploy.yaml');
   const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
 
   assert.match(nginx, /location \^~ \/api\/osaa\/admin\/llm-keys[\s\S]*opensphere-console-backend/);
@@ -253,7 +253,7 @@ test('OSAA chat delegates provider key selection to Gateway instead of hard-codi
 test('OSAA provider usage is normalized, persisted to the Supabase ledger, and visible per response and key', () => {
   const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
   const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
-  const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
+  const gateway = read('apps', 'osaa-gateway', 'server.js');
   const migration = read('backend', 'supabase', 'migrations', '0012_oaa_llm_usage_ledger.sql');
 
   assert.match(gateway, /function normalizeProviderUsage\(raw\)/);
@@ -285,7 +285,7 @@ test('OSAA provider usage is normalized, persisted to the Supabase ledger, and v
 
 test('OSAA Admin correlates agent evidence and governs retention without a purge control', () => {
   const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
-  const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
+  const gateway = read('apps', 'osaa-gateway', 'server.js');
   const migration = read('backend', 'supabase', 'migrations', '0019_oaa_evidence_correlation_retention.sql');
 
   assert.match(admin, /Agent Evidence/);

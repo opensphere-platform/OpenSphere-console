@@ -126,7 +126,7 @@ test('build, image, and Kubernetes admission gates reject the retired Manual UI'
 });
 
 test('bundled Manual Registry provides ten readable Perspective documents and never ingests legacy docs.ts', () => {
-  const seed = JSON.parse(read('backend', 'opensphere-console-osaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'));
+  const seed = JSON.parse(read('apps', 'osaa-gateway', 'manual-seeds', 'opensphere-core-manuals.json'));
   const perspectiveDocs = seed.documents.filter((doc) => doc.tags?.includes('perspective-home'));
 
   assert.match(seed.version, /^sha256:[0-9a-f]{64}$/);

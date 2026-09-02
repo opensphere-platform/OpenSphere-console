@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-const backendSource = fs.readFileSync(path.resolve(__dirname, '../opensphere-console-backend/server.js'), 'utf8');
+const backendSource = fs.readFileSync(path.resolve(__dirname, '../../backend/opensphere-console-backend/server.js'), 'utf8');
 
 test('runtime watch discovery excludes absent APIs instead of reconnecting forever', () => {
   assert.match(source, /function discoverWatchableResource/);

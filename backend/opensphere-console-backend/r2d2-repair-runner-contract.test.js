@@ -12,7 +12,7 @@ function request(overrides = {}) {
     releaseScope: 'component', approvalMode: 'local-edge-supervised', riskLevel: 'R2',
     requiredTests: ['unit', 'contract', 'integration', 'security'],
     affectedComponents: ['osaaGateway'], affectedImages: ['opensphere-console-osaa-gateway'],
-    patchArtifact: { changedFiles: ['backend/opensphere-console-osaa-gateway/server.js'] },
+    patchArtifact: { changedFiles: ['apps/osaa-gateway/server.js'] },
     ...overrides,
   };
 }
@@ -20,7 +20,7 @@ function request(overrides = {}) {
 test('repair scope derives the exact component, publisher and workload from paths', () => {
   const scope = deriveRepairScope([
     'backend/opensphere-console-backend/server.js',
-    'backend/opensphere-console-osaa-gateway/server.js',
+    'apps/osaa-gateway/server.js',
   ]);
   assert.deepEqual(scope.sourceComponents, ['consoleBackend', 'osaaGateway']);
   assert.deepEqual(scope.releaseComponents, ['backend', 'osaaGateway']);
@@ -43,7 +43,7 @@ test('local edge repair requires exact derived components and a bounded R2 profi
   assert.throws(() => validateLocalEdgeRepair(request({
     affectedComponents: ['consoleBackend','osaaGateway'],
     affectedImages: ['opensphere-console-backend','opensphere-console-osaa-gateway'],
-    patchArtifact: { changedFiles: ['backend/opensphere-console-backend/server.js','backend/opensphere-console-osaa-gateway/server.js'] },
+    patchArtifact: { changedFiles: ['backend/opensphere-console-backend/server.js','apps/osaa-gateway/server.js'] },
   })), /exactly one component/u);
 });
 

@@ -90,7 +90,7 @@ $allowedPublisherPaths = @(
   'scripts/osaa-gateway-publisher.test.mjs'
 )
 $componentChangedPaths = @($allChangedPaths | Where-Object {
-  $_ -like 'backend/opensphere-console-osaa-gateway/*'
+  $_ -like 'apps/osaa-gateway/*'
 })
 $publisherChangedPaths = @($allChangedPaths | Where-Object { $_ -in $allowedPublisherPaths })
 $changedPaths = @($componentChangedPaths + $publisherChangedPaths | Sort-Object -Unique)
@@ -114,11 +114,11 @@ New-Item -ItemType Directory -Path $buildRoot,$outputRoot | Out-Null
 try {
   Invoke-Checked git -C $repoRoot worktree add --detach $checkout $sourceRevision | Out-Null
   Invoke-Checked node --test `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\conversation-store.test.js') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\extension-presentation.test.js') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-prompt-boundary.test.js') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-source-grounding.test.js') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-surface-diagnostics.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\conversation-store.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\extension-presentation.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\r2d2-prompt-boundary.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\r2d2-source-grounding.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\r2d2-surface-diagnostics.test.js') `
     (Join-Path $checkout 'scripts\osaa-gateway-publisher.test.mjs') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {
@@ -139,8 +139,8 @@ try {
     --label opensphere.io/build-authority=localhost `
     --label opensphere.io/release-class=pre-ga `
     --label opensphere.io/ga-eligible=false `
-    --file (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\Dockerfile') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway') | Out-Null
+    --file (Join-Path $checkout 'apps\osaa-gateway\Dockerfile') `
+    (Join-Path $checkout 'apps\osaa-gateway') | Out-Null
   $digest = [string](Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json).'containerimage.digest'
   if ($digest -notmatch '^sha256:[a-f0-9]{64}$') { throw 'OSAA Gateway build did not produce an exact digest.' }
   Set-RemoteTag -Repository $repository -Digest $digest -Tag $releaseTag -Immutable

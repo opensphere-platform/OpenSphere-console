@@ -15,7 +15,7 @@ const COMPONENT_RULES = Object.freeze([
   }),
   Object.freeze({
     sourceComponent: 'osaaGateway', releaseComponent: 'osaaGateway', image: 'opensphere-console-osaa-gateway',
-    prefixes: Object.freeze(['backend/opensphere-console-osaa-gateway/']),
+    prefixes: Object.freeze(['apps/osaa-gateway/']),
     publisher: 'scripts/Publish-LocalEdgeOsaaGateway.ps1',
     workload: Object.freeze({ namespace: 'opensphere-console', kind: 'deployment', name: 'opensphere-console-osaa-gateway', container: 'gateway' }),
   }),

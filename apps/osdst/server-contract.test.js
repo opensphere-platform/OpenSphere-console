@@ -8,7 +8,7 @@ const { join } = require('node:path');
 const server = readFileSync(join(__dirname, 'server.js'), 'utf8');
 const deploy = readFileSync(join(__dirname, 'deploy.yaml'), 'utf8');
 const dockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
-const gateway = readFileSync(join(__dirname, '..', '..', 'backend', 'opensphere-console-osaa-gateway', 'server.js'), 'utf8');
+const gateway = readFileSync(join(__dirname, '..', 'osaa-gateway', 'server.js'), 'utf8');
 const backend = readFileSync(join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
 const operationApi = readFileSync(join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'r2d2-operation-api.js'), 'utf8');
 

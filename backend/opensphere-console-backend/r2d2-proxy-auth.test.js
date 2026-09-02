@@ -136,5 +136,5 @@ test('nginx keeps Engineering Remediation on Backend and preserves the scoped Re
 
 test('Console Backend runtime image contains the R2D2 authentication mediator', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
-  assert.match(dockerfile, /COPY opensphere-console-backend\/r2d2-proxy-auth\.js \.\/r2d2-proxy-auth\.js/);
+  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/r2d2-proxy-auth\.js \.\/r2d2-proxy-auth\.js/);
 });

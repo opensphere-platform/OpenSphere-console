@@ -20,7 +20,7 @@ function fixture() {
     remediation_request_id: requestId, assessment_id: '55555555-5555-4555-8555-555555555555',
     incident_id: '66666666-6666-4666-8666-666666666666', operation_id: operationId,
     operator_id: operatorId, repository: CONSOLE_REPOSITORY, base_revision: 'a'.repeat(40),
-    allowed_paths: ['backend/opensphere-console-osaa-gateway/'], patch_digest: exact('b'), reason: 'bounded repair',
+    allowed_paths: ['apps/osaa-gateway/'], patch_digest: exact('b'), reason: 'bounded repair',
     risk_level: 'R2', affected_components: ['osaaGateway'], affected_images: ['opensphere-console-osaa-gateway'],
     required_tests: ['unit', 'contract', 'integration', 'security'], release_scope: 'component', target_channel: 'edge',
     build_authority: 'localhost', rollback_revision: 'c'.repeat(40), rollback_image_digests: [exact('d')],
@@ -37,8 +37,8 @@ function fixture() {
     if (resource === 'engineering_remediation_request') return [row];
     if (resource === 'module_operation') return [{ operation_id: operationId, actor_id: '00000000-0000-4000-8000-000000000006', auth_session_id: sessionId, authz_revision: '9' }];
     if (resource === 'remediation_patch_artifact') return [{ patch_digest: exact('b'),
-      patch_text: '--- a/backend/opensphere-console-osaa-gateway/server.js\n+++ b/backend/opensphere-console-osaa-gateway/server.js\n',
-      changed_paths: ['backend/opensphere-console-osaa-gateway/server.js'], evidence_digest: exact('f') }];
+      patch_text: '--- a/apps/osaa-gateway/server.js\n+++ b/apps/osaa-gateway/server.js\n',
+      changed_paths: ['apps/osaa-gateway/server.js'], evidence_digest: exact('f') }];
     if (resource === 'module_operation_approval') return [{ approver_id: operatorId, assurance: 'aal2',
       approval_scope: 'source_patch', binding_digest: exact('e'), approval_expires_at: '2999-01-01T00:00:00Z', revoked_at: null }];
     if (resource === 'rpc/heartbeat_engineering_remediation') return true;
@@ -70,7 +70,7 @@ test('claim returns only a patch-bound local edge request and never credentials'
   assert.equal(out.items.length, 1);
   assert.equal(out.items[0].request.actorId, operatorId);
   assert.equal(out.items[0].request.agentActorId, '00000000-0000-4000-8000-000000000006');
-  assert.equal(out.items[0].request.patchArtifact.changedFiles[0], 'backend/opensphere-console-osaa-gateway/server.js');
+  assert.equal(out.items[0].request.patchArtifact.changedFiles[0], 'apps/osaa-gateway/server.js');
   assert.equal(JSON.stringify(out).includes('accessToken'), false);
 });
 
@@ -108,8 +108,8 @@ test('Backend image carries the runner and deployment enables only the canonical
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   const deploy = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  assert.match(dockerfile, /COPY opensphere-console-backend\/r2d2-repair-runner-api\.js \.\/r2d2-repair-runner-api\.js/u);
-  assert.match(dockerfile, /COPY opensphere-console-backend\/r2d2-repair-runner-contract\.js \.\/r2d2-repair-runner-contract\.js/u);
+  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/r2d2-repair-runner-api\.js \.\/r2d2-repair-runner-api\.js/u);
+  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/r2d2-repair-runner-contract\.js \.\/r2d2-repair-runner-contract\.js/u);
   assert.match(deploy, /R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "true"/u);
   assert.match(deploy, /R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "console"/u);
   assert.match(deploy, /R2D2_ENGINEERING_EXECUTION_ENABLED, value: "true"/u);

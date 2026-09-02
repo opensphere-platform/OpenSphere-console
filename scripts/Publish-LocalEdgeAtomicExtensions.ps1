@@ -216,7 +216,7 @@ try {
       '--build-arg', "SETUP_SOURCE_REVISION=$setupRevision", '--build-context', "setup-cli=$setupCheckout"
     ) + $labels + @(
       '--file', (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'),
-      (Join-Path $consoleCheckout 'backend')
+      $consoleCheckout
     )
     Invoke-Checked docker @backendArgs | Out-Null
     $digests.backend = [string](Get-Content -Raw $backendMetadata | ConvertFrom-Json).'containerimage.digest'
@@ -228,8 +228,8 @@ try {
       'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
       '--metadata-file', $gatewayMetadata, '--tag', "$($repositories.osaaGateway):$buildTag"
     ) + $labels + @(
-      '--file', (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway\Dockerfile'),
-      (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway')
+      '--file', (Join-Path $consoleCheckout 'apps\osaa-gateway\Dockerfile'),
+      (Join-Path $consoleCheckout 'apps\osaa-gateway')
     )
     Invoke-Checked docker @gatewayArgs | Out-Null
     $digests.osaaGateway = [string](Get-Content -Raw $gatewayMetadata | ConvertFrom-Json).'containerimage.digest'

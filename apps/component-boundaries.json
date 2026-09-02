@@ -8,7 +8,7 @@
     { "id": "C_API", "path": "apps/console-api", "artifact": "opensphere-console-api", "legacySources": ["backend/opensphere-console-backend"] },
     { "id": "C_EXT", "path": "apps/extension-controller", "artifact": "opensphere-extension-controller", "legacySources": ["backend/dupa-control"] },
     { "id": "C_REG", "path": "backend/registry", "artifact": "opensphere-registry", "legacySources": [] },
-    { "id": "C_AI", "path": "apps/osaa-gateway", "artifact": "opensphere-osaa-gateway", "legacySources": ["backend/opensphere-console-osaa-gateway"] },
+    { "id": "C_AI", "path": "apps/osaa-gateway", "artifact": "opensphere-osaa-gateway", "legacySources": [] },
     { "id": "C_DST", "path": "apps/osdst", "artifact": "opensphere-osdst", "legacySources": [] },
     { "id": "C_SCTL", "path": "apps/os-shell-control", "artifact": "opensphere-os-shell-control", "legacySources": ["backend/os-shell-control"] },
     { "id": "C_BAK", "path": "apps/recovery-owner", "artifact": "opensphere-console-recovery", "legacySources": [] },

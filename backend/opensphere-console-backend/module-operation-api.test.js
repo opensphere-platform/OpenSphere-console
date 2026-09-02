@@ -177,7 +177,7 @@ test('migration makes the receipt backend-only and Setup CLI publishes it as rel
   const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
   assert.match(server, /p\.startsWith\('\/api\/modules'\) \|\| p\.startsWith\('\/api\/module-operations'\)/);
   assert.match(server, /moduleLifecycleNeedsRecentAal2\(action\)/);
-  assert.match(dockerfile, /COPY opensphere-console-backend\/module-operation-api\.js \.\/module-operation-api\.js/);
+  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/module-operation-api\.js \.\/module-operation-api\.js/);
   assert.match(nginx, /location \/api\/modules[\s\S]+opensphere-console-backend/);
   assert.match(nginx, /location \/api\/module-operations[\s\S]+opensphere-console-backend/);
 });

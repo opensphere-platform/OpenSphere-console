@@ -144,6 +144,6 @@ test('Console Backend runtime image contains the plugin authorization mediator',
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   assert.match(
     dockerfile,
-    /COPY opensphere-console-backend\/plugin-proxy-auth\.js \.\/plugin-proxy-auth\.js/,
+    /COPY backend\/opensphere-console-backend\/plugin-proxy-auth\.js \.\/plugin-proxy-auth\.js/,
   );
 });

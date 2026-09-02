@@ -8,7 +8,7 @@ const path = require('node:path');
 const read = (relative) => fs.readFileSync(path.join(__dirname, relative), 'utf8');
 const dupa = read('dupa-control/controller.js');
 const backend = read('opensphere-console-backend/server.js');
-const gateway = read('opensphere-console-osaa-gateway/server.js');
+const gateway = read('../apps/osaa-gateway/server.js');
 const nginx = read('../nginx/default.conf.template');
 const registrySource = read('registry/internal/registry/registry.go');
 const registryManifest = read('registry/deploy/registry.yaml');

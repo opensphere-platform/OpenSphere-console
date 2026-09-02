@@ -43,9 +43,9 @@ test('exact source revision and archive paths fail closed', () => {
 test('OSAA reads and searches only bounded allowlisted text at one exact revision', async (t) => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'osaa-source-authority-test-'));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
-  await fsp.mkdir(path.join(root, 'backend', 'opensphere-console-osaa-gateway'), { recursive: true });
+  await fsp.mkdir(path.join(root, 'apps', 'osaa-gateway'), { recursive: true });
   await fsp.mkdir(path.join(root, 'src', 'app'), { recursive: true });
-  await fsp.writeFile(path.join(root, 'backend', 'opensphere-console-osaa-gateway', 'server.js'), [
+  await fsp.writeFile(path.join(root, 'apps', 'osaa-gateway', 'server.js'), [
     "const authority = 'runtime';",
     "const diagnosis = 'HOST_NAVIGATION_LAZY_UI_SEPARATION';",
     'module.exports = { authority, diagnosis };',
@@ -57,16 +57,16 @@ test('OSAA reads and searches only bounded allowlisted text at one exact revisio
     assert.equal(repository.id, 'console'); assert.equal(requestedRevision, revision); return root;
   } });
   const read = await source.readSource({
-    repositoryId: 'console', revision, path: 'backend/opensphere-console-osaa-gateway/server.js', startLine: 2, endLine: 3,
+    repositoryId: 'console', revision, path: 'apps/osaa-gateway/server.js', startLine: 2, endLine: 3,
   });
   assert.equal(read.revision, revision);
   assert.equal(read.startLine, 2);
   assert.match(read.text, /HOST_NAVIGATION_LAZY_UI_SEPARATION/);
   assert.match(read.digest, /^sha256:[0-9a-f]{64}$/);
 
-  const search = await source.searchSource({ repositoryId: 'console', revision, query: 'runtime', pathPrefix: 'backend/', limit: 10 });
+  const search = await source.searchSource({ repositoryId: 'console', revision, query: 'runtime', pathPrefix: 'apps/osaa-gateway/', limit: 10 });
   assert.equal(search.items.length, 1);
-  assert.equal(search.items[0].path, 'backend/opensphere-console-osaa-gateway/server.js');
+  assert.equal(search.items[0].path, 'apps/osaa-gateway/server.js');
   assert.equal(search.items[0].line, 1);
   assert.equal(search.complete, true);
   await assert.rejects(() => source.readSource({ repositoryId: 'console', revision, path: 'secret.env' }), (error) => error?.code === 403);

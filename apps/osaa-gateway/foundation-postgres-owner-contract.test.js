@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-const transitionSource = fs.readFileSync(path.join(__dirname, '..', 'opensphere-osdst', 'dialogue-transition.js'), 'utf8');
+const transitionSource = fs.readFileSync(path.join(__dirname, '..', 'osdst', 'dialogue-transition.js'), 'utf8');
 
 test('R2D2 exposes PFSS PostgreSQL status, Admission plan, and owner create capability', () => {
   assert.match(source, /id: 'osaa\.foundation\.postgres\.status'/);

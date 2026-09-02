@@ -802,7 +802,7 @@ function verifyR2d2DurabilityAndRemediation() {
   const mismatch = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const assessment = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   const remediation = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-  const patchText = '--- a/backend/opensphere-console-osaa-gateway/server.js\n+++ b/backend/opensphere-console-osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const patchText = '--- a/apps/osaa-gateway/server.js\n+++ b/apps/osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
   const patchDigest = `sha256:${createHash('sha256').update(patchText).digest('hex')}`;
   psql(`INSERT INTO osaa.observer_fence(cluster_id,fencing_epoch,collector_id,lease_identity,lease_expires_at)
     VALUES('local',1,'ledger-verifier','ledger-verifier',clock_timestamp()+interval '1 hour')
@@ -823,8 +823,8 @@ function verifyR2d2DurabilityAndRemediation() {
   const proposalSql = `SELECT stage||'|'||remediation_request_id FROM osaa.propose_engineering_remediation_v2(
     '${remediation}','r2d2-remediation-proposal-db','${actor}','aal2','ffffffff-ffff-4fff-8fff-ffffffffffff','9',
     '${assessment}','${incident}','https://github.com/opensphere-platform/OpenSphere-console.git',
-    '${'1'.repeat(40)}',ARRAY['backend/opensphere-console-osaa-gateway/'],'${patchDigest}',
-    $patch$${patchText}$patch$,ARRAY['backend/opensphere-console-osaa-gateway/server.js'],'${digestB}',
+    '${'1'.repeat(40)}',ARRAY['apps/osaa-gateway/'],'${patchDigest}',
+    $patch$${patchText}$patch$,ARRAY['apps/osaa-gateway/server.js'],'${digestB}',
     'known mismatch requires bounded source repair','R2',ARRAY['osaaGateway'],ARRAY['opensphere-console-osaa-gateway'],
     ARRAY['unit','contract','integration','security'],'component',NULL::text,'edge','localhost','${'2'.repeat(40)}',
     ARRAY['${digestA}'],'${digestC}',clock_timestamp()+interval '1 hour');`;

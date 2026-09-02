@@ -83,7 +83,7 @@ an explicit confirmation path and admin authorization.
 ## Local Checks
 
 ```powershell
-node --check backend/opensphere-console-osaa-gateway/server.js
+node --check apps/osaa-gateway/server.js
 npm.cmd test
 npm.cmd run build
 ```

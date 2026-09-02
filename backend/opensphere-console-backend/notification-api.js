@@ -1,6 +1,6 @@
 'use strict';
 
-const { channelInput, emailList, maskTarget } = require('../notification-dispatcher/contract');
+const { channelInput, emailList, maskTarget } = require('../../apps/notification-dispatcher/contract');
 
 const TYPE = { slack: 'chat', discord: 'chat', smtp: 'email', twilio: 'sms' };
 const SEVERITIES = new Set(['info', 'success', 'warning', 'error', 'critical']);

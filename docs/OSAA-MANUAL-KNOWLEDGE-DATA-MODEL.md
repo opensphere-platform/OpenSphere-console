@@ -836,7 +836,7 @@ Recommended ingestion order:
 3. `_DOCS_/02-평면설계/*`: tier 1
 4. `OpenSphere-console/docs/PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md`: tier 1
 5. `OpenSphere-console/docs/OSAA-MANUAL-KNOWLEDGE-DATA-MODEL.md`: tier 3
-6. Manual Registry seed/canonical docs (`backend/opensphere-console-osaa-gateway/manual-seeds/opensphere-core-manuals.json`): tier 2 Help Center source
+6. Manual Registry seed/canonical docs (`apps/osaa-gateway/manual-seeds/opensphere-core-manuals.json`): tier 2 Help Center source
 
 The Manual Registry seed/canonical docs are authoritative. The legacy standalone Manual source was retired after migration verification; the Help Center, the Console-native `/manual` page, and OSAA all consume the same canonical content served from the Manual Registry.
 

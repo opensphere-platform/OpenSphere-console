@@ -95,7 +95,7 @@ test('Dialogue State transition and assistant message share one fail-closed tran
   assert.match(source, /osaa_dialogue_revision_conflict/);
   assert.doesNotMatch(source, /dialogue_state_transition[\s\S]*?ON CONFLICT[^;]*DO NOTHING/);
   const server = readFileSync(join(__dirname, 'server.js'), 'utf8');
-  const gateway = readFileSync(join(__dirname, '..', '..', 'backend', 'opensphere-console-osaa-gateway', 'server.js'), 'utf8');
+  const gateway = readFileSync(join(__dirname, '..', 'osaa-gateway', 'server.js'), 'utf8');
   const transition = readFileSync(join(__dirname, 'dialogue-transition.js'), 'utf8');
   assert.match(transition, /function dialogueTransitionForToolResult/);
   assert.match(transition, /r2d2[.]foundation-postgres-status\/v1/);

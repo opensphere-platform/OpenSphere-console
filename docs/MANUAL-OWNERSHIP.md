@@ -11,7 +11,7 @@ OpenSphere Manual의 유일한 제품 소유자는 Main Shell인 `OpenSphere-con
 | 사용자 화면과 문서 리더 | `src/app/pages/manual.ts`, route `/manual` |
 | 전역 진입점과 통합 검색 | Main Shell header, `src/app/core/search.service.ts` |
 | 정본 Help Center 문서 | `docs/manual/*.md` |
-| 릴리스 seed 생성 | `backend/opensphere-console-osaa-gateway/scripts/build-manual-seed.js` |
+| 릴리스 seed 생성 | `apps/osaa-gateway/scripts/build-manual-seed.js` |
 | 검색·문서 API 소비 계약 | `src/app/core/manual.service.ts` |
 | 내구 저장·검색 실행 | Console-owned OSAA Gateway와 Supabase `osaa` Manual Registry |
 | 회귀 방지 | `backend/dupa-control/manual-native.test.js` |

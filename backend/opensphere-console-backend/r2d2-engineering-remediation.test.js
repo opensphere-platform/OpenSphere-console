@@ -11,7 +11,7 @@ const sha = 'a'.repeat(40); const image = `sha256:${'b'.repeat(64)}`; const patc
 function envelope() {
   return validateEnvelope({
     remediationRequestId: 'request-1', incidentId: 'incident-1', repositoryId: 'console', repository: REPOSITORIES.console.url,
-    baseRevision: sha, allowedPaths: ['backend/opensphere-console-osaa-gateway/'], patchDigest: patch, reason: 'runtime mismatch requires source repair',
+    baseRevision: sha, allowedPaths: ['apps/osaa-gateway/'], patchDigest: patch, reason: 'runtime mismatch requires source repair',
     riskLevel: 'R2', affectedComponents: ['osaaGateway'], affectedImages: ['opensphere-console-osaa-gateway'],
     requiredTests: ['unit','contract','security'], releaseScope: 'component', targetChannel: 'edge', buildAuthority: 'localhost',
     rollbackRevision: sha, rollbackImageDigests: [image], approvalExpiresAt: '2999-01-01T00:00:00Z',
@@ -48,14 +48,14 @@ test('sandbox is ephemeral, credential-free, networkless and command-closed', ()
   assert.equal(spec.network, 'none'); assert.deepEqual(spec.credentials, []); assert.equal(spec.ephemeral, true);
   assert.ok(spec.commands.every((item) => item.shell === false && item.arguments.length === 0));
   assert.throws(() => validatePatchFiles(['../../outside'], envelope()), /escapes/);
-  assert.deepEqual(validatePatchFiles(['backend/opensphere-console-osaa-gateway/server.js'], envelope()), ['backend/opensphere-console-osaa-gateway/server.js']);
+  assert.deepEqual(validatePatchFiles(['apps/osaa-gateway/server.js'], envelope()), ['apps/osaa-gateway/server.js']);
 });
 
 test('unified diff artifact is byte-bounded, credential-free, path-closed and exact-digest bound', () => {
-  const text = '--- a/backend/opensphere-console-osaa-gateway/server.js\n+++ b/backend/opensphere-console-osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
+  const text = '--- a/apps/osaa-gateway/server.js\n+++ b/apps/osaa-gateway/server.js\n@@ -1 +1 @@\n-old\n+new\n';
   const approved = { ...envelope(), patchDigest: patchTextDigest(text) };
   const artifact = validatePatchArtifact(text, approved);
-  assert.deepEqual(artifact.changedFiles, ['backend/opensphere-console-osaa-gateway/server.js']);
+  assert.deepEqual(artifact.changedFiles, ['apps/osaa-gateway/server.js']);
   assert.equal(artifact.patchDigest, approved.patchDigest);
   assert.throws(() => validatePatchArtifact(text.replace('+new', '+Bearer abcdefghijklmnopqrstuvwxyz'), { ...approved, patchDigest: patchTextDigest(text.replace('+new', '+Bearer abcdefghijklmnopqrstuvwxyz')) }), /credential-like/);
   const escape = '--- a/../secret\n+++ b/../secret\n@@ -1 +1 @@\n-old\n+new\n';

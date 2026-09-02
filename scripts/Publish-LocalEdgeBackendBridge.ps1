@@ -154,7 +154,7 @@ try {
     '--build-context',"setup-cli=$setupCheckout",
     '--build-arg',"SETUP_SOURCE_REVISION=$setupRevision",
     '--file',(Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'),
-    (Join-Path $consoleCheckout 'backend')
+    $consoleCheckout
   )
   Invoke-Checked docker @arguments | Out-Null
   $digest = [string](Get-Content -Raw -LiteralPath $metadataFile | ConvertFrom-Json).'containerimage.digest'

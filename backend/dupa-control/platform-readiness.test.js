@@ -45,7 +45,7 @@ test('OSAA consumes a narrow lifecycle gate instead of rebuilding full platform 
   assert.equal(blocked.ready, false);
   assert.equal(blocked.reason, 'his_preflight_not_ready');
   const controller = read('backend', 'dupa-control', 'controller.js');
-  const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
+  const gateway = read('apps', 'osaa-gateway', 'server.js');
   assert.match(controller, /\/api\/admin\/platform-readiness\/lifecycle/);
   assert.match(gateway, /DUPA_CONTROL_URL\}\/api\/admin\/platform-readiness\/lifecycle/);
   const observedAt = Date.parse('2026-08-22T00:00:00.000Z');

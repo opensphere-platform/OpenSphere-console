@@ -9,7 +9,7 @@ const { createSupabaseVerifier } = require('./supabase-auth');
 const { createNotificationApi } = require('./notification-api');
 const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
-const { normalizedEvent } = require('../notification-dispatcher/contract');
+const { normalizedEvent } = require('../../apps/notification-dispatcher/contract');
 const {
   DEFAULT_DURATION: DEFAULT_SESSION_PERSISTENCE,
   SESSION_PERSISTENCE_METADATA_KEY,

@@ -143,7 +143,7 @@ test('DUPA active runtime depends on Supabase audit and never ships legacy data 
 });
 
 test('OSAA runs in the Console namespace and HISS remains the telemetry owner', () => {
-  const gateway = read('backend', 'opensphere-console-osaa-gateway', 'server.js');
+  const gateway = read('apps', 'osaa-gateway', 'server.js');
   const nginx = read('nginx', 'default.conf.template');
   const plan = read('docs', 'PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md');
   assert.match(gateway, /const OSAA_NAMESPACE = process\.env\.OSAA_NAMESPACE \|\| 'opensphere-console'/);
@@ -164,7 +164,7 @@ test('Supabase revocation ledger is append-only and correlated with audit eviden
 
 test('recovery readiness consumes current Supabase and Gitea evidence, never a legacy data stack', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
-  const recovery = read('backend', 'recovery', 'opensphere-platform-recovery-evidence.yaml');
+  const recovery = read('apps', 'recovery-owner', 'opensphere-platform-recovery-evidence.yaml');
   const start = controller.indexOf('async function backupRestoreEvidence()');
   const end = controller.indexOf('async function securityPolicyEvidence()');
   const evidence = controller.slice(start, end);

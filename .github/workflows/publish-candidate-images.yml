@@ -123,8 +123,8 @@ jobs:
             context: OpenSphere-console/backend/registry
             file: OpenSphere-console/backend/registry/deploy/Dockerfile
           - image: opensphere-console-osaa-gateway
-            context: OpenSphere-console/backend/opensphere-console-osaa-gateway
-            file: OpenSphere-console/backend/opensphere-console-osaa-gateway/Dockerfile
+            context: OpenSphere-console/apps/osaa-gateway
+            file: OpenSphere-console/apps/osaa-gateway/Dockerfile
           - image: opensphere-osdst
             context: OpenSphere-console/apps/osdst
             file: OpenSphere-console/apps/osdst/Dockerfile

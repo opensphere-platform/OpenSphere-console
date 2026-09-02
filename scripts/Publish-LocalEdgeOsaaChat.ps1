@@ -138,7 +138,7 @@ foreach ($baseRevision in @($consoleBaseRevision,$gatewayBaseRevision)) {
 $consoleChangedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $consoleBaseRevision $sourceRevision -- `
   Dockerfile angular.json package.json package-lock.json packages/contracts nginx public scripts src)
 $gatewayChangedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $gatewayBaseRevision $sourceRevision -- `
-  backend/opensphere-console-osaa-gateway)
+  apps/osaa-gateway)
 if ('src/app/os/os-osaa-agent.ts' -notin $consoleChangedPaths -or -not $gatewayChangedPaths.Count) {
   throw 'OSAA chat publication requires both the native Console agent and Gateway component changes.'
 }
@@ -159,10 +159,10 @@ New-Item -ItemType Directory -Path $buildRoot,$metadataRoot,$outputRoot | Out-Nu
 try {
   Invoke-Checked git -C $repoRoot worktree add --detach $checkout $sourceRevision | Out-Null
   Invoke-Checked node --test `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-prompt-boundary.test.js') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-source-grounding.test.js') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\r2d2-surface-diagnostics.test.js') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\conversation-store.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\r2d2-prompt-boundary.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\r2d2-source-grounding.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\r2d2-surface-diagnostics.test.js') `
+    (Join-Path $checkout 'apps\osaa-gateway\conversation-store.test.js') `
     (Join-Path $checkout 'backend\dupa-control\osaa-native-ui.test.js') `
     (Join-Path $checkout 'scripts\osaa-chat-publisher.test.mjs') | Out-Null
 
@@ -191,8 +191,8 @@ try {
     --file (Join-Path $checkout 'Dockerfile') $checkout | Out-Null
   Invoke-Checked docker buildx build --platform linux/amd64 --push --provenance=mode=max `
     --metadata-file $gatewayMetadata --tag "${gatewayRepository}:$localTag" @commonLabels `
-    --file (Join-Path $checkout 'backend\opensphere-console-osaa-gateway\Dockerfile') `
-    (Join-Path $checkout 'backend\opensphere-console-osaa-gateway') | Out-Null
+    --file (Join-Path $checkout 'apps\osaa-gateway\Dockerfile') `
+    (Join-Path $checkout 'apps\osaa-gateway') | Out-Null
 
   $consoleDigest = [string](Get-Content -Raw -LiteralPath $consoleMetadata | ConvertFrom-Json).'containerimage.digest'
   $gatewayDigest = [string](Get-Content -Raw -LiteralPath $gatewayMetadata | ConvertFrom-Json).'containerimage.digest'

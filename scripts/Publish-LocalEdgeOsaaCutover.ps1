@@ -113,7 +113,7 @@ if ($legacyGateway.Count -ne 1 -or $legacyAdapter.Count -ne 1) {
 $profile = @(
   [ordered]@{ Key='console'; BaseRevision=[string]$installedLock.components.console.sourceRevision; Image='opensphere-console'; Context='OpenSphere-console'; File='OpenSphere-console\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='dupaController'; BaseRevision=[string]$installedLock.components.dupaController.sourceRevision; Image='opensphere-console-dupa-controller'; Context='OpenSphere-console\backend\dupa-control'; File='OpenSphere-console\backend\dupa-control\Dockerfile'; Sdk=$false },
-  [ordered]@{ Key='osaaGateway'; BaseRevision=[string]$legacyGateway[0].Value.sourceRevision; Image='opensphere-console-osaa-gateway'; Context='OpenSphere-console\backend\opensphere-console-osaa-gateway'; File='OpenSphere-console\backend\opensphere-console-osaa-gateway\Dockerfile'; Sdk=$false },
+  [ordered]@{ Key='osaaGateway'; BaseRevision=[string]$legacyGateway[0].Value.sourceRevision; Image='opensphere-console-osaa-gateway'; Context='OpenSphere-console\apps\osaa-gateway'; File='OpenSphere-console\apps\osaa-gateway\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='osaaGovernedAdapter'; BaseRevision=[string]$legacyAdapter[0].Value.sourceRevision; Image='opensphere-osaa-governed-adapter'; Context='OpenSphere-console\backend\osaa-governed-adapter'; File='OpenSphere-console\backend\osaa-governed-adapter\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='recovery'; BaseRevision=[string]$installedLock.components.recovery.sourceRevision; Image='opensphere-console-recovery'; Context='OpenSphere-console\apps\recovery-owner'; File='OpenSphere-console\apps\recovery-owner\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='supabasePostgres'; BaseRevision=[string]$installedLock.components.supabasePostgres.sourceRevision; Image='opensphere-console-supabase-postgres'; Context='OpenSphere-console\backend\supabase\images\postgres'; File='OpenSphere-console\backend\supabase\images\postgres\Dockerfile'; Sdk=$false }
@@ -153,7 +153,7 @@ try {
   Invoke-Checked node --test `
     (Join-Path $consoleCheckout 'scripts\osaa-canonical-identity.test.mjs') `
     (Join-Path $consoleCheckout 'scripts\osaa-cutover-publisher.test.mjs') `
-    (Join-Path $consoleCheckout 'backend\opensphere-console-osaa-gateway\conversation-store.test.js') | Out-Null
+    (Join-Path $consoleCheckout 'apps\osaa-gateway\conversation-store.test.js') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {
     $token = ((Invoke-Checked gh auth token) -join '').Trim()

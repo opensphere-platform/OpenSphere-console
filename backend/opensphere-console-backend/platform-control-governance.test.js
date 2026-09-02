@@ -121,7 +121,7 @@ test('durable local-edge R1 uses one recent-AAL2 administrator without bypassing
   assert.match(server, /local edge R1 OSAA operation authorization/);
   assert.match(server, /async function authorizeLocalEdgeR1Operation/);
   assert.match(server, /async function authorizeLocalEdgeGovernedChange/);
-  assert.match(dockerfile, /COPY opensphere-console-backend\/local-edge-r1-approval\.js \.\/local-edge-r1-approval\.js/);
+  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/local-edge-r1-approval\.js \.\/local-edge-r1-approval\.js/);
   assert.match(governed, /LOCAL_EDGE_R1_MODE/);
   assert.match(governed, /authToken: GITEA_REVIEW_TOKEN/);
   assert.match(governed, /await assertVerifiedGovernedMerge\(mergeRevision\)/);
