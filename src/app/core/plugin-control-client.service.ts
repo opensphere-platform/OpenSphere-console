@@ -74,19 +74,19 @@ export interface AuditEvent {
   result: string; reason: string; opId?: string; source?: string;
 }
 export interface RegistryCredentialStatus {
-  registry: 'ghcr.io'; configured: boolean; username?: string; secretName: string; updatedAt?: string;
+  connectionId: 'opensphere-ghcr'; registryOrigin: 'ghcr.io'; namespace: 'opensphere-platform';
+  username: string | null; credentialPresent: boolean; credentialVersion: string | null;
+  configurationState: string; lastVerifiedAt: string | null; lastVerificationCode: string | null; updatedAt: string;
 }
 export interface ImageRevocation {
-  repository: string; digest: string; replacementDigest?: string; revokedAt: string; actor: string; reason: string;
+  imageRef: string; operationId: string; payloadDigest: string; actionVersion: string; claimEpoch: number; revokedAt: string;
 }
-export interface ExtensionInstallResult {
-  accepted: boolean;
-  id: string;
-  operation: 'Install' | 'Update';
-  desiredState: 'Installed' | 'Enabled' | 'Disabled';
-  image: string;
-  activation?: { allowed: false; reason: string; pendingCapabilities: string[] };
+export interface OperationReceipt {
+  schemaVersion: '1.0'; operationId: string; actionId: string; actionVersion: string;
+  targetRef: string; state: 'Planned' | 'Authorized' | 'Submitted' | 'Reconciling' | 'Applied' | 'Verified' | 'Failed' | 'Unknown' | 'RolledBack';
+  stateVersion: number; approvalRequired: boolean; correlationId: string;
 }
+interface ReadEnvelope<T> { schemaVersion: '1.0'; data: T; authority: string; observedAt: string; freshness: string; correlationId: string; evidenceRefs: string[]; }
 export interface ExtensionProjectionStatus {
   ready: boolean;
   state: 'live' | 'stale' | 'unavailable';
@@ -134,39 +134,43 @@ export class PluginControlClient {
     return (await r.json()).items;
   }
   registryCredentialStatus(): Promise<RegistryCredentialStatus> {
-    return this.http.request('/api/admin/extensions/registry-credentials', { cache: 'no-store' })
-      .then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}`); return r.json(); });
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', { cache: 'no-store' })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`registry connection HTTP ${r.status}`);
+        return (await r.json() as ReadEnvelope<RegistryCredentialStatus>).data;
+      });
   }
-  configureRegistryCredentials(username: string, token: string, reason: string): Promise<RegistryCredentialStatus> {
-    return this.http.request('/api/admin/extensions/registry-credentials', {
-      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, token, reason }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  configureRegistryCredentials(username: string, credential: string, reason: string): Promise<OperationReceipt> {
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, credential, reason }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`registry connection HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
-  removeRegistryCredentials(reason: string): Promise<RegistryCredentialStatus> {
-    return this.http.request('/api/admin/extensions/registry-credentials', {
-      method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`registry credentials HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
+  removeRegistryCredentials(reason: string): Promise<OperationReceipt> {
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', {
+      method: 'DELETE',
+      headers: { 'X-OpenSphere-Reason': reason, 'X-OpenSphere-Confirmation': 'REMOVE opensphere-ghcr' },
+    }).then(async (r) => { if (!r.ok) throw new Error(`registry connection HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
   revocations(): Promise<ImageRevocation[]> {
     return this.http.request('/api/admin/extensions/revocations', { cache: 'no-store' })
-      .then(async (r) => { if (!r.ok) throw new Error(`revocations HTTP ${r.status}`); return (await r.json()).items; });
+      .then(async (r) => { if (!r.ok) throw new Error(`revocations HTTP ${r.status}`); return (await r.json() as ReadEnvelope<ImageRevocation[]>).data; });
   }
-  revokeImage(image: string, replacementImage: string, reason: string): Promise<ImageRevocation> {
+  revokeImage(image: string, reason: string): Promise<OperationReceipt> {
     return this.http.request('/api/admin/extensions/revocations', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, replacementImage, reason }),
-    }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return (await r.json()).item; });
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, reason, confirmation: `REVOKE ${image}` }),
+    }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
-  install(image: string, reason: string, client: 'cli:os' | 'console:web' = 'console:web'): Promise<ExtensionInstallResult> {
+  install(descriptorId: string, catalogRevision: string, reason: string): Promise<OperationReceipt> {
     return this.http.request('/api/admin/extensions/install', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ image: image.trim(), reason: reason.trim(), client }),
+      body: JSON.stringify({ descriptorId: descriptorId.trim(), catalogRevision: catalogRevision.trim(), reason: reason.trim() }),
     }).then(async (r) => {
       if (!r.ok) {
         const body = await r.json().catch(() => ({})) as { message?: unknown; error?: unknown };
         throw new Error(`install HTTP ${r.status}: ${String(body.message || body.error || 'request failed')}`);
       }
-      return r.json() as Promise<ExtensionInstallResult>;
+      return r.json() as Promise<OperationReceipt>;
     });
   }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */

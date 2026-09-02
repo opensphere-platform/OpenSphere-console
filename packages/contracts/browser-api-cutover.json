@@ -8,7 +8,7 @@
   "targetSessionAuthority": "console_identity.browser_session",
   "inventory": {
     "routePatternCount": 120,
-    "setDigest": "sha256:8aa6281cb15558e4141261b807143bd28cc91a8c8f3b355cf5e2b9553f3eb2ad"
+    "setDigest": "sha256:98c78d335b77d5a2e1a5c5777bce5614141f749291652838ca5aa989ae9da943"
   },
   "targetSessionCapabilities": [
     { "id": "password-login", "status": "implemented-and-verified" },

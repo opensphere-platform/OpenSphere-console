@@ -162,7 +162,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
           <p class="os-sub">공개 전환 없이 private OpenSphere 패키지를 검사하고 Kubernetes workload가 pull하도록 동일한 read-only 자격증명을 사용합니다. 토큰은 화면에 다시 표시되지 않습니다.</p>
         </div>
         @if (registryStatus(); as registry) {
-          <span class="label" [class.label-success]="registry.configured">{{ registry.configured ? 'Configured' : 'Not configured' }}</span>
+          <span class="label" [class.label-success]="registry.credentialPresent">{{ registry.credentialPresent ? 'Configured' : 'Not configured' }}</span>
         }
       </div>
       <div class="registry-access-form registry-access-form--credentials">
@@ -185,7 +185,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
           </div></div>
         </div>
         <button class="btn btn-outline" [disabled]="registryToken.value.length < 20 || registryReason.value.trim().length < 8" (click)="configureRegistryCredentials(registryUser.value, registryToken.value, registryReason.value); registryToken.value = ''">저장</button>
-        <button class="btn btn-danger-outline" [disabled]="!registryStatus()?.configured || registryReason.value.trim().length < 8" (click)="removeRegistryCredentials(registryReason.value)">제거</button>
+        <button class="btn btn-danger-outline" [disabled]="!registryStatus()?.credentialPresent || registryReason.value.trim().length < 8" (click)="removeRegistryCredentials(registryReason.value)">제거</button>
       </div>
     </section>
 
@@ -203,20 +203,16 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
           <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-image" #revokeImageRef class="clr-input" size="70" placeholder="ghcr.io/opensphere-platform/...@sha256:..." /></div></div>
         </div>
         <div class="clr-form-control">
-          <label for="replacement-image" class="clr-control-label">Replacement digest (optional)</label>
-          <div class="clr-control-container"><div class="clr-input-wrapper"><input id="replacement-image" #replacementImageRef class="clr-input" size="52" placeholder="same repository@sha256:..." /></div></div>
-        </div>
-        <div class="clr-form-control">
           <label for="revoke-reason" class="clr-control-label">Revocation reason</label>
           <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-reason" #revokeReason class="clr-input" placeholder="철회 근거(8자 이상)" /></div></div>
         </div>
-        <button class="btn btn-danger" [disabled]="!revokeImageRef.value.includes('@sha256:') || revokeReason.value.trim().length < 8" (click)="revokeImage(revokeImageRef.value, replacementImageRef.value, revokeReason.value)">Digest 철회</button>
+        <button class="btn btn-danger" [disabled]="!revokeImageRef.value.includes('@sha256:') || revokeReason.value.trim().length < 8" (click)="revokeImage(revokeImageRef.value, revokeReason.value)">Digest 철회</button>
       </div>
       @if (revocations().length) {
         <table class="table table-compact">
-          <thead><tr><th class="left">Image digest</th><th>Replacement</th><th>Actor</th><th>Time</th><th class="left">Reason</th></tr></thead>
-          <tbody>@for (item of revocations(); track item.repository + item.digest) {
-            <tr><td class="left os-mono">{{ item.repository }}&#64;{{ item.digest }}</td><td class="os-mono">{{ item.replacementDigest || '—' }}</td><td>{{ item.actor }}</td><td>{{ item.revokedAt }}</td><td class="left">{{ item.reason }}</td></tr>
+          <thead><tr><th class="left">Image digest</th><th>Operation</th><th>Epoch</th><th>Time</th></tr></thead>
+          <tbody>@for (item of revocations(); track item.imageRef) {
+            <tr><td class="left os-mono">{{ item.imageRef }}</td><td class="os-mono">{{ item.operationId }}</td><td>{{ item.claimEpoch }}</td><td>{{ item.revokedAt }}</td></tr>
           }</tbody>
         </table>
       }
@@ -224,17 +220,21 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
 
     <section class="oci-install" aria-labelledby="oci-install-title">
       <h2 id="oci-install-title">Extension 설치</h2>
-      <p class="os-sub">Console과 <code>os</code> CLI는 같은 lifecycle API, 서명·권한 검증과 감사 원장을 사용합니다. 개발용 local edge의 설치·업데이트는 MFA를 생략하고, 다른 환경과 다른 lifecycle 작업은 최근 MFA를 요구합니다. 사유는 항상 8자 이상 필요합니다.</p>
+      <p class="os-sub">현재 Registry 스냅샷에서 설치 가능한 Extension을 선택합니다. Console은 브라우저 입력 image를 신뢰하지 않고 descriptor와 정확한 catalog revision을 C_REG에서 다시 해석합니다. 사유는 항상 8자 이상 필요합니다.</p>
       <div class="registry-access-form registry-access-form--install">
         <div class="clr-form-control">
-          <label for="extension-image" class="clr-control-label">OCI image</label>
-          <div class="clr-control-container"><div class="clr-input-wrapper"><input
-            id="extension-image"
-            class="clr-input"
-            placeholder="ghcr.io/opensphere-platform/opensphere-…:edge"
-            [value]="extensionInstallImage()"
-            (input)="extensionInstallImage.set($any($event.target).value)"
-          /></div></div>
+          <label for="extension-descriptor" class="clr-control-label">Registry Extension</label>
+          <div class="clr-control-container"><div class="clr-select-wrapper"><select
+            id="extension-descriptor"
+            class="clr-select"
+            [value]="extensionInstallDescriptorId()"
+            (change)="extensionInstallDescriptorId.set($any($event.target).value)"
+          >
+            <option value="">Extension 선택</option>
+            @for (descriptor of installableExtensionDescriptors(); track descriptor.id) {
+              <option [value]="descriptor.id">{{ descriptor.displayName }} · {{ descriptor.id }}</option>
+            }
+          </select></div></div>
         </div>
         <div class="clr-form-control">
           <label for="extension-install-reason" class="clr-control-label">설치 사유</label>
@@ -249,8 +249,8 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         </div>
         <button
           class="btn btn-primary"
-          [disabled]="installing() || !extensionInstallImage().trim() || extensionInstallReason().trim().length < 8"
-          (click)="installModule(extensionInstallImage(), extensionInstallReason())"
+          [disabled]="installing() || !extensionInstallDescriptorId() || !installCatalogReady() || extensionInstallReason().trim().length < 8"
+          (click)="installModule(extensionInstallDescriptorId(), extensionInstallReason())"
         >
           설치
         </button>
@@ -1156,8 +1156,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
       .registry-access-form--credentials .clr-form-control:nth-child(2) { flex: 1.15 1 22rem; }
       .registry-access-form--credentials .clr-form-control:nth-child(3) { flex: 1.35 1 26rem; }
       .registry-access-form--revocation .clr-form-control:nth-child(1) { flex: 1.5 1 34rem; }
-      .registry-access-form--revocation .clr-form-control:nth-child(2) { flex: 1.25 1 30rem; }
-      .registry-access-form--revocation .clr-form-control:nth-child(3) { flex: 1 1 22rem; }
+      .registry-access-form--revocation .clr-form-control:nth-child(2) { flex: 1 1 22rem; }
       .registry-access-form--install .clr-form-control:nth-child(1) { flex: 1.5 1 36rem; }
       .registry-access-form--install .clr-form-control:nth-child(2) { flex: 1 1 28rem; }
       .registry-access-form > .btn { flex: 0 0 auto; }
@@ -1523,8 +1522,16 @@ export class AdminPlugins implements OnInit {
   private readonly operationalDataWarning = signal<string | null>(null);
   readonly dataWarning = computed(() => [this.coreDataWarning(), this.operationalDataWarning()].filter(Boolean).join(' ') || null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
-  readonly extensionInstallImage = signal('');
+  readonly extensionInstallDescriptorId = signal('');
   readonly extensionInstallReason = signal('');
+  readonly installableExtensionDescriptors = computed(() =>
+    (this.foundationCatalogSnapshot()?.inventory?.descriptors || [])
+      .filter((descriptor) => descriptor.class === 'extension' && descriptor.installation?.eligible === true),
+  );
+  readonly installCatalogReady = computed(() => {
+    const snapshot = this.foundationCatalogSnapshot();
+    return Boolean(snapshot && !snapshot.stale && /^sha256:[a-f0-9]{64}$/.test(snapshot.revision));
+  });
   readonly pendingAction = signal<{ action: 'enable' | 'disable' | 'uninstall'; id: string } | null>(null);
   readonly expandedSet = signal<Set<string>>(new Set(['console', 'core-surfaces', 'system-plugins', 'bindings']));
   readonly tree = computed<TreeNode[]>(() => this.buildTree());
@@ -2164,44 +2171,25 @@ export class AdminPlugins implements OnInit {
 
   async configureRegistryCredentials(username: string, token: string, reason: string): Promise<void> {
     try {
-      this.registryStatus.set(await this.ctl.configureRegistryCredentials(username.trim(), token.trim(), reason.trim()));
-      this.msg.set({ type: 'success', text: 'Private GHCR read credential이 저장되었습니다. 토큰 값은 다시 표시되지 않습니다.' });
+      const receipt = await this.ctl.configureRegistryCredentials(username.trim(), token.trim(), reason.trim());
+      this.msg.set({ type: 'info', text: `Private GHCR 자격증명 변경이 ${receipt.state} 상태로 접수되었습니다. 작업 ${receipt.operationId}의 Owner 검증 후 상태가 갱신됩니다.` });
+      this.registryStatus.set(await this.ctl.registryCredentialStatus());
     } catch (err) { this.msg.set({ type: 'danger', text: `GHCR 자격증명 저장 실패: ${err}` }); }
-  }
-
-  async installExtension(image: string, reason: string): Promise<void> {
-    if (this.installing()) return;
-    this.installing.set(true);
-    try {
-      const result = await this.ctl.install(image.trim(), reason.trim());
-      const waiting = result.activation?.allowed === false
-        ? ` 활성화는 ${result.activation.pendingCapabilities.join(', ') || result.activation.reason} 충족까지 대기합니다.`
-        : '';
-      const operation = result.operation === 'Update' ? '업데이트' : '설치';
-      const intent = result.desiredState === 'Enabled' ? '기존 활성 상태를 유지합니다.'
-        : result.desiredState === 'Disabled' ? '기존 비활성 상태를 유지합니다.'
-          : '검증 후 관리자가 활성화할 수 있습니다.';
-      this.msg.set({ type: 'success', text: `${result.id} ${operation}가 접수되었습니다. ${intent}${waiting}` });
-      await this.refresh();
-    } catch (err) {
-      this.msg.set({ type: 'danger', text: `Extension 설치 실패: ${err}` });
-    } finally {
-      this.installing.set(false);
-    }
   }
 
   async removeRegistryCredentials(reason: string): Promise<void> {
     try {
-      this.registryStatus.set(await this.ctl.removeRegistryCredentials(reason.trim()));
-      this.msg.set({ type: 'success', text: 'Private GHCR read credential이 제거되었습니다.' });
+      const receipt = await this.ctl.removeRegistryCredentials(reason.trim());
+      this.msg.set({ type: 'info', text: `Private GHCR 자격증명 제거가 ${receipt.state} 상태로 접수되었습니다. 작업 ${receipt.operationId}은 아직 제거 완료를 뜻하지 않습니다.` });
+      this.registryStatus.set(await this.ctl.registryCredentialStatus());
     } catch (err) { this.msg.set({ type: 'danger', text: `GHCR 자격증명 제거 실패: ${err}` }); }
   }
 
-  async revokeImage(image: string, replacementImage: string, reason: string): Promise<void> {
+  async revokeImage(image: string, reason: string): Promise<void> {
     try {
-      await this.ctl.revokeImage(image.trim(), replacementImage.trim(), reason.trim());
+      const receipt = await this.ctl.revokeImage(image.trim(), reason.trim());
       this.revocations.set(await this.ctl.revocations());
-      this.msg.set({ type: 'success', text: 'Image digest가 철회되었고 신규 설치 및 활성 Registry 투영이 차단됩니다.' });
+      this.msg.set({ type: 'info', text: `Image digest 철회가 ${receipt.state} 상태로 접수되었습니다. 작업 ${receipt.operationId}의 C_EXT 적용 영수증을 기다립니다.` });
       await this.refresh();
     } catch (err) { this.msg.set({ type: 'danger', text: `Image 철회 실패: ${err}` }); }
   }
@@ -2459,16 +2447,21 @@ export class AdminPlugins implements OnInit {
     }
   }
 
-  async installModule(image: string, reason: string): Promise<void> {
+  async installModule(descriptorId: string, reason: string): Promise<void> {
     if (this.installing()) return;
     this.installing.set(true);
     try {
-      const result = await this.ctl.install(image, reason);
-      const id = String((result as { id?: unknown })?.id || image);
-      const operation = result.operation === 'Update' ? 'update' : 'install';
-      this.extensionInstallImage.set('');
+      const snapshot = this.foundationCatalogSnapshot();
+      if (!snapshot || snapshot.stale || !/^sha256:[a-f0-9]{64}$/.test(snapshot.revision)) {
+        throw new Error('현재의 fresh Registry catalog revision이 필요합니다.');
+      }
+      if (!this.installableExtensionDescriptors().some((descriptor) => descriptor.id === descriptorId)) {
+        throw new Error('선택한 Extension이 현재 Registry 설치 후보가 아닙니다.');
+      }
+      const receipt = await this.ctl.install(descriptorId, snapshot.revision, reason);
+      this.extensionInstallDescriptorId.set('');
       this.extensionInstallReason.set('');
-      this.msg.set({ type: 'info', text: `${operation} 요청됨: ${id} — 관리자 의도 ${result.desiredState}를 보존하며 검증과 workload를 조정 중…` });
+      this.msg.set({ type: 'info', text: `설치 요청 ${receipt.operationId}이 ${receipt.state} 상태로 접수되었습니다. 독립 승인과 C_EXT 적용·관측 후에만 완료됩니다.` });
       await this.refresh();
     } catch (error) {
       this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });

@@ -29,6 +29,21 @@ test('Console Web exposes only the implemented interactive CLI credential surfac
   assert(!profileSource.includes('/api/identity/cli/tokens'));
 });
 
+test('Console Web extension actions use the target authority contracts', async () => {
+  const clientSource = await readFile(new URL('../src/app/core/plugin-control-client.service.ts', import.meta.url), 'utf8');
+  const pageSource = await readFile(new URL('../src/app/pages/admin-plugins.ts', import.meta.url), 'utf8');
+  assert(clientSource.includes('/api/admin/extensions/registry-connections/opensphere-ghcr'));
+  assert(clientSource.includes('JSON.stringify({ username, credential, reason })'));
+  assert(clientSource.includes("'X-OpenSphere-Confirmation': 'REMOVE opensphere-ghcr'"));
+  assert(clientSource.includes('confirmation: `REVOKE ${image}`'));
+  assert(clientSource.includes('JSON.stringify({ descriptorId: descriptorId.trim(), catalogRevision: catalogRevision.trim(), reason: reason.trim() })'));
+  assert(!clientSource.includes('/api/admin/extensions/registry-credentials'));
+  assert(!clientSource.includes('replacementImage'));
+  assert(pageSource.includes('installableExtensionDescriptors'));
+  assert(pageSource.includes('snapshot.revision'));
+  assert(!pageSource.includes('extensionInstallImage'));
+});
+
 test('official publication remains blocked until every target component boundary is release-ready', async () => {
   await assert.rejects(
     verifyContracts(process.cwd(), { requireReleaseReady: true }),
