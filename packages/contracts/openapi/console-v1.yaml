@@ -1128,6 +1128,24 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
+  /api/status/api/status:
+    get:
+      operationId: getPlatformStatus
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-authority: PlatformStatusObservation
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      responses:
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "503":
+          description: Platform status observation owner is deliberately unconfigured; C_API has no Kubernetes credential or RBAC
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
   /api/catalog/entities:
     get:
       operationId: listCatalogEntities

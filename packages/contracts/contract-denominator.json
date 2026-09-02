@@ -49,6 +49,7 @@
     "getMe",
     "getSupabaseStatus",
     "listAuditEvents",
+    "getPlatformStatus",
     "listCatalogEntities",
     "getCatalogRuntimeResources",
     "getPlatformChangeTemplate",

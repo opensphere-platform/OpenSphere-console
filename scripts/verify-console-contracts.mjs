@@ -404,6 +404,12 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     === '../schemas/current-session-response.schema.json', 'getSession must use the closed current-session projection schema');
   assert(currentSessionRead?.responses?.['503']?.$ref === '#/components/responses/AuthorityUnavailable',
     'getSession must fail closed when a current identity authority is unavailable');
+  const platformStatusRead = entries.find(({ operation }) => operation.operationId === 'getPlatformStatus')?.operation;
+  assert(platformStatusRead?.['x-opensphere-authority'] === 'PlatformStatusObservation',
+    'getPlatformStatus must name its missing observation authority');
+  assert(platformStatusRead?.responses?.['200'] === undefined
+    && platformStatusRead?.responses?.['503']?.content?.['application/json']?.schema?.$ref === '#/components/schemas/ErrorEnvelope',
+  'getPlatformStatus must not claim platform state before an observation owner exists');
   const catalogRead = entries.find(({ operation }) => operation.operationId === 'listCatalogEntities')?.operation;
   assert(catalogRead?.['x-opensphere-authority'] === 'OpenSphereRegistry',
     'listCatalogEntities must declare C_REG read authority');

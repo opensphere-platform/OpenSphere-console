@@ -91,12 +91,12 @@ function isHealthy(type: string, o: any): boolean {
   }
 }
 
-export interface PlatformStatus {
-  meta: { service: string; version: string; servedBy: string; time: string };
-  platformConfigs: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
-  platformVersions: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
-  hostRequirements: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
-  observabilityStacks: { name: string; spec: Record<string, any>; status: Record<string, any> }[];
+export class PlatformStatusUnavailableError extends Error {
+  override readonly name = 'PlatformStatusUnavailableError';
+
+  constructor() {
+    super('Platform status observation owner is not configured');
+  }
 }
 
 @Injectable({ providedIn: 'root' })
@@ -164,9 +164,17 @@ export class ApiService {
     return out;
   }
 
-  async platformStatus(): Promise<PlatformStatus> {
+  async platformStatus(): Promise<never> {
     const res = await this.http.request('/api/status/api/status');
-    if (!res.ok) throw new Error(`status: HTTP ${res.status}`);
-    return res.json();
+    const error = await res.clone().json().catch(() => null) as {
+      code?: string;
+      details?: { reasonCode?: string; authority?: string };
+    } | null;
+    if (res.status === 503 && error?.code === 'AuthorityUnavailable'
+      && error.details?.reasonCode === 'PlatformStatusOwnerUnconfigured'
+      && error.details.authority === 'PlatformStatusObservation') {
+      throw new PlatformStatusUnavailableError();
+    }
+    throw new Error(`status: unexpected HTTP ${res.status}`);
   }
 }

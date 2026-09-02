@@ -69,6 +69,10 @@ function onlyQueryParameter(url, name) {
 
 function errorEnvelope(error, correlationId) {
   const internalCode = error?.code || 'AuthorityUnavailable';
+  const unavailableAuthority = {
+    RuntimeObservationOwnerUnconfigured: 'KubernetesRuntimeObservation',
+    PlatformStatusOwnerUnconfigured: 'PlatformStatusObservation',
+  }[error?.reasonCode];
   const code = {
     SessionInvalid: 'AuthenticationRequired',
     CsrfRejected: 'PermissionDenied',
@@ -89,8 +93,7 @@ function errorEnvelope(error, correlationId) {
     sideEffect,
     correlationId,
     operationId: error?.operationId || null,
-    details: error?.reasonCode === 'RuntimeObservationOwnerUnconfigured'
-      && error?.authority === 'KubernetesRuntimeObservation'
+    details: unavailableAuthority && error?.authority === unavailableAuthority
       ? { reasonCode: error.reasonCode, authority: error.authority }
       : {},
   };
@@ -657,6 +660,16 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         return send(response, 202, result.receipt, {
           location: '/api/platform/operations/' + result.receipt.operationId,
           'x-idempotent-replay': String(result.replayed),
+        });
+      }
+      if (url.pathname === '/api/status/api/status' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        await resolveSession(request, { requireCsrf: false, correlationId });
+        throw Object.assign(new Error('Platform status observation owner is not configured'), {
+          code: 'AuthorityUnavailable',
+          status: 503,
+          reasonCode: 'PlatformStatusOwnerUnconfigured',
+          authority: 'PlatformStatusObservation',
         });
       }
       if (url.pathname === '/api/catalog/entities' && request.method === 'GET') {
