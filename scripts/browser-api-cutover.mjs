@@ -8,7 +8,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const targetConsoleApi = 'opensphere-console-api.opensphere-console.svc.cluster.local';
 const allowedCapabilityStatuses = new Set(['missing', 'direct-test', 'implemented-and-verified']);
 const allowedSessionPolicies = new Set(['browser-session', 'owner-admission', 'public-read', 'public-static']);
-const allowedFamilyStatuses = new Set(['legacy-session-authority', 'target-routed']);
+const allowedFamilyStatuses = new Set(['legacy-session-authority', 'target-implemented-and-verified', 'target-routed']);
 
 async function sourceFiles(directory) {
   const output = [];
@@ -86,7 +86,25 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
     assert(/^C_[A-Z]+$/u.test(family.targetOwner), `invalid browser API owner: ${family.id}`);
     assert(allowedSessionPolicies.has(family.sessionPolicy), `invalid browser API session policy: ${family.id}`);
     assert(allowedFamilyStatuses.has(family.status), `invalid browser API family status: ${family.id}`);
-    if (family.status === 'target-routed') assert(['public-read', 'public-static'].includes(family.sessionPolicy));
+    if (family.status === 'target-implemented-and-verified'
+        || (family.status === 'target-routed' && !['public-read', 'public-static'].includes(family.sessionPolicy))) {
+      assert(Array.isArray(family.evidence) && family.evidence.length >= 2,
+        `target browser API family has no implementation evidence: ${family.id}`);
+      assert.equal(new Set(family.evidence).size, family.evidence.length,
+        `target browser API family evidence must be unique: ${family.id}`);
+      for (const evidencePath of family.evidence) {
+        assert(typeof evidencePath === 'string' && !evidencePath.includes('\\')
+          && !evidencePath.startsWith('/') && !evidencePath.split('/').includes('..'),
+        `target browser API family has an invalid evidence path: ${family.id}`);
+        const absoluteEvidence = resolve(root, evidencePath);
+        assert(absoluteEvidence.startsWith(resolve(root) + sep),
+          `target browser API family evidence escapes the repository: ${family.id}`);
+        await readFile(absoluteEvidence);
+      }
+    } else {
+      assert(family.evidence === undefined,
+        `unverified browser API family must not claim implementation evidence: ${family.id}`);
+    }
   }
 
   const inventory = await inventoryBrowserApi({ root, contract });
@@ -96,9 +114,10 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
   const nginxSource = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   const targetSessionReady = contract.targetSessionCapabilities.every(({ status }) => status === 'implemented-and-verified');
   const authenticatedFamilies = contract.families.filter(({ sessionPolicy }) => !['public-read', 'public-static'].includes(sessionPolicy));
-  const authenticatedFamilyStatuses = new Set(authenticatedFamilies.map(({ status }) => status));
-  assert.equal(authenticatedFamilyStatuses.size, 1, 'partial authenticated browser-family cutover is forbidden');
-  const authenticatedFamiliesTargetRouted = authenticatedFamilies.every(({ status }) => status === 'target-routed');
+  const routedAuthenticatedFamilies = authenticatedFamilies.filter(({ status }) => status === 'target-routed');
+  assert([0, authenticatedFamilies.length].includes(routedAuthenticatedFamilies.length),
+    'partial authenticated browser-family routing is forbidden');
+  const authenticatedFamiliesTargetRouted = routedAuthenticatedFamilies.length === authenticatedFamilies.length;
   if (authenticatedFamiliesTargetRouted) {
     assert(targetSessionReady, 'authenticated browser families require the complete target session authority');
   }

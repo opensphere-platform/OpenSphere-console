@@ -26,7 +26,20 @@
     { "id": "initial-admin-bootstrap", "status": "implemented-and-verified" }
   ],
   "families": [
-    { "id": "identity", "prefix": "/api/identity", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    {
+      "id": "identity",
+      "prefix": "/api/identity",
+      "targetOwner": "C_API",
+      "sessionPolicy": "browser-session",
+      "status": "target-implemented-and-verified",
+      "evidence": [
+        "apps/console-api/src/http-handler.mjs",
+        "apps/console-api/src/identity-session-broker.mjs",
+        "apps/console-api/test/identity-session-broker.test.mjs",
+        "apps/console-web/src/app/core/auth.service.ts",
+        "packages/contracts/schemas/current-session-response.schema.json"
+      ]
+    },
     { "id": "platform", "prefix": "/api/platform", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     { "id": "admin", "prefix": "/api/admin", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
     { "id": "monitoring", "prefix": "/api/monitoring", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
