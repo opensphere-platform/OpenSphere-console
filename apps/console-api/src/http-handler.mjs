@@ -122,6 +122,23 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           correlationId,
         }));
       }
+      if (url.pathname === '/api/identity' && request.method === 'GET') {
+        if (!identitySessionBroker?.listManagedIdentities) {
+          throw Object.assign(new Error('managed identity inventory is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await identitySessionBroker.listManagedIdentities(request, { correlationId }));
+      }
+      const managedRoleMatch = url.pathname.match(/^\/api\/identity\/users\/([0-9a-fA-F-]{36})\/group$/u);
+      if (managedRoleMatch && request.method === 'POST') {
+        if (!identitySessionBroker?.changeManagedIdentityRole) {
+          throw Object.assign(new Error('managed identity role change is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await identitySessionBroker.changeManagedIdentityRole(request, {
+          targetSubjectId: managedRoleMatch[1], body: await jsonBody(request), correlationId,
+        }));
+      }
       if (url.pathname === '/api/identity/session/events' && request.method === 'GET') {
         if (!identitySessionBroker?.listSessionEvents) {
           throw Object.assign(new Error('session event history is unavailable'), { code: 'AuthorityUnavailable', status: 503 });

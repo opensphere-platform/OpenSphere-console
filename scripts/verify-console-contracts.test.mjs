@@ -9,12 +9,12 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 38,
+    operations: 40,
     actionPolicies: 5,
-    schemas: 32,
+    schemas: 35,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 32,
+    consoleApiDatabaseFunctions: 34,
     browserApiPatterns: 122,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
@@ -46,7 +46,8 @@ test('Console API authority verification rejects missing grants and direct table
   const eventSource = await readFile(new URL('../migrations/versions/0013_owned_browser_session_events.sql', import.meta.url), 'utf8');
   const recoveryLinkSource = await readFile(new URL('../migrations/versions/0014_owned_password_recovery_link.sql', import.meta.url), 'utf8');
   const avatarSource = await readFile(new URL('../migrations/versions/0015_owned_profile_avatar.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource].join('\n');
+  const managedIdentitySource = await readFile(new URL('../migrations/versions/0016_managed_identity_roles.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource, managedIdentitySource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

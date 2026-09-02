@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-role-change-request.schema.json",
+  "title": "Managed Console identity role change",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["op", "group", "reason"],
+  "properties": {
+    "op": { "enum": ["add", "remove"] },
+    "group": { "enum": ["console-admins", "console-operators", "console-viewers"] },
+    "reason": { "type": "string", "minLength": 8, "maxLength": 500, "pattern": "^[^\\r\\n]+$" }
+  }
+}

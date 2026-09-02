@@ -125,6 +125,83 @@ test('Supabase session preference uses only the current subject access credentia
   }), { code: 'AuthorityUnavailable' });
 });
 
+test('Supabase managed-user projection is bounded to one service-role subject', async () => {
+  const calls = [];
+  const serviceRoleKey = 'service-role-' + 's'.repeat(64);
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', serviceRoleKey, now: () => now,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      return jsonResponse({
+        id: subjectId,
+        email: 'operator@example.test',
+        user_metadata: { preferred_username: 'operator', display_name: 'Console Operator' },
+        banned_until: '2026-09-01T00:00:00.000Z',
+        factors: [
+          { id: 'totp-1', factor_type: 'totp', status: 'verified' },
+          { id: 'phone-1', factor_type: 'phone', status: 'verified' },
+        ],
+      });
+    },
+  });
+  assert.deepEqual(await client.readManagedUser(subjectId), {
+    id: subjectId,
+    username: 'operator',
+    displayName: 'Console Operator',
+    email: 'operator@example.test',
+    enabled: true,
+    mfa: { totpCount: 1, verifiedTotpCount: 1, status: 'registered' },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `http://supabase-auth.test/admin/users/${subjectId}`);
+  assert.equal(calls[0].init.headers.authorization, 'Bearer ' + serviceRoleKey);
+  assert.equal(calls[0].init.headers.apikey, serviceRoleKey);
+});
+
+test('HTTP managed identity routes preserve read and CSRF-bound mutation separation', async (t) => {
+  const calls = [];
+  const handler = createConsoleApiHandler({
+    resolveSession: async () => { throw new Error('direct resolver must not run'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    dataIdentityOperations: {},
+    identitySessionBroker: {
+      async listManagedIdentities(_request, options) {
+        calls.push({ operation: 'list', options });
+        return { meta: { service: 'opensphere-identity', idp: 'supabase', scope: 'self', writeEnabled: false }, users: [], groups: [] };
+      },
+      async changeManagedIdentityRole(_request, options) {
+        calls.push({ operation: 'change', options });
+        return { ok: true, targetSubjectId: options.targetSubjectId, roles: ['console-viewers'], permissionRevision: 2, revokeEpoch: 1, revokedSessionCount: 1, replayed: false };
+      },
+    },
+  });
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  const read = await fetch(origin + '/api/identity', {
+    headers: { 'x-os-correlation-id': 'managed-identity-read-0001' },
+  });
+  assert.equal(read.status, 200);
+  const change = await fetch(origin + `/api/identity/users/${subjectId}/group`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-os-correlation-id': 'managed-role-change-0001' },
+    body: JSON.stringify({ op: 'add', group: 'console-viewers', reason: 'grant read access' }),
+  });
+  assert.equal(change.status, 200);
+  assert.deepEqual(calls, [
+    { operation: 'list', options: { correlationId: 'managed-identity-read-0001' } },
+    {
+      operation: 'change',
+      options: {
+        targetSubjectId: subjectId,
+        body: { op: 'add', group: 'console-viewers', reason: 'grant read access' },
+        correlationId: 'managed-role-change-0001',
+      },
+    },
+  ]);
+});
+
 test('Supabase MFA client binds the verified factor and returns only an aal2 session', async () => {
   const accessToken = token();
   const aal2Token = token({ aal: 'aal2', session_id: 'auth-session-aal2' });

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-role-change-response.schema.json",
+  "title": "Managed Console identity role change result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "targetSubjectId", "roles", "permissionRevision", "revokeEpoch", "revokedSessionCount", "replayed"],
+  "properties": {
+    "ok": { "const": true },
+    "targetSubjectId": { "type": "string", "format": "uuid" },
+    "roles": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "enum": ["console-admins", "console-operators", "console-viewers"] }
+    },
+    "permissionRevision": { "type": "integer", "minimum": 0 },
+    "revokeEpoch": { "type": "integer", "minimum": 0 },
+    "revokedSessionCount": { "type": "integer", "minimum": 0 },
+    "replayed": { "type": "boolean" }
+  }
+}

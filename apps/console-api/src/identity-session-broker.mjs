@@ -87,6 +87,31 @@ function initialAdministratorInput(body) {
   return { username, displayName, email, password };
 }
 
+const MANAGED_ROLES = new Set(['console-admins', 'console-operators', 'console-viewers']);
+
+function managedRoleChangeInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    fail('ValidationFailed', 'managed role body must be an object', 400);
+  }
+  const unknown = Object.keys(body).filter((key) => !['op', 'group', 'reason'].includes(key));
+  const operation = String(body.op || '').trim().toLowerCase();
+  const role = String(body.group || '').trim();
+  const reason = String(body.reason || '').trim();
+  if (unknown.length || !['add', 'remove'].includes(operation) || !MANAGED_ROLES.has(role)
+      || reason.length < 8 || reason.length > 500 || /[\r\n]/u.test(reason)) {
+    fail('ValidationFailed', 'managed role change is invalid', 400);
+  }
+  return { operation, role, reason };
+}
+
+async function mapBounded(items, mapper, concurrency = 8) {
+  const output = [];
+  for (let offset = 0; offset < items.length; offset += concurrency) {
+    output.push(...await Promise.all(items.slice(offset, offset + concurrency).map(mapper)));
+  }
+  return output;
+}
+
 function cookie(name, value, maxAge, httpOnly = false, persistent = true) {
   return [
     `${name}=${encodeURIComponent(value)}`,
@@ -184,6 +209,83 @@ export function createIdentitySessionBroker({
   }
 
   const broker = {
+    async listManagedIdentities(request, { correlationId } = {}) {
+      if (!store?.listManagedIdentities || !authClient?.readManagedUser) {
+        fail('AuthorityUnavailable', 'managed identity authority is unavailable', 503);
+      }
+      const session = await broker.resolveSession(request, { requireCsrf: false, correlationId });
+      const inventory = await store.listManagedIdentities({
+        sessionId: session.sessionId,
+        actorRef: session.subjectId,
+        expectedPermissionRevision: session.permissionRevision,
+        expectedRevokeEpoch: session.revokeEpoch,
+        correlationId,
+      });
+      if (!['self', 'managed'].includes(inventory?.scope)
+          || !Array.isArray(inventory?.items) || inventory.items.length > 200
+          || !Array.isArray(inventory?.groups) || inventory.groups.length !== 3) {
+        fail('AuthorityUnavailable', 'managed identity authority returned an invalid inventory', 503);
+      }
+      const users = await mapBounded(inventory.items, async (item) => {
+        const subjectId = String(item?.subjectId || '');
+        const roles = Array.isArray(item?.roles) ? item.roles.map(String) : [];
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(subjectId)
+            || roles.some((role) => !MANAGED_ROLES.has(role))) {
+          fail('AuthorityUnavailable', 'managed identity authority returned an invalid subject', 503);
+        }
+        const profile = await authClient.readManagedUser(subjectId);
+        if (profile?.id !== subjectId) fail('AuthorityUnavailable', 'Supabase Auth changed the managed identity subject', 503);
+        return Object.freeze({
+          ...profile,
+          groups: Object.freeze(roles.map((name) => Object.freeze({ id: name, name, path: '/' + name }))),
+        });
+      });
+      const groups = inventory.groups.map((group) => {
+        const name = String(group?.name || '');
+        if (!MANAGED_ROLES.has(name)) fail('AuthorityUnavailable', 'managed identity role catalog is invalid', 503);
+        return Object.freeze({ id: name, name, path: '/' + name, description: String(group?.description || '') });
+      });
+      return Object.freeze({
+        meta: Object.freeze({ service: 'opensphere-identity', idp: 'supabase', scope: inventory.scope, writeEnabled: inventory.scope === 'managed' }),
+        users: Object.freeze(users),
+        groups: Object.freeze(groups),
+      });
+    },
+
+    async changeManagedIdentityRole(request, { targetSubjectId, body, correlationId }) {
+      if (!store?.changeManagedIdentityRole) {
+        fail('AuthorityUnavailable', 'managed identity role authority is unavailable', 503);
+      }
+      const target = String(targetSubjectId || '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(target)) {
+        fail('ValidationFailed', 'managed identity subject is invalid', 400);
+      }
+      const input = managedRoleChangeInput(body);
+      const session = await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const changed = await store.changeManagedIdentityRole({
+        sessionId: session.sessionId,
+        actorRef: session.subjectId,
+        expectedPermissionRevision: session.permissionRevision,
+        expectedRevokeEpoch: session.revokeEpoch,
+        targetSubjectId: target,
+        ...input,
+        correlationId,
+      });
+      if (String(changed?.targetSubjectId || '') !== target || !Array.isArray(changed?.roles)
+          || changed.roles.some((role) => !MANAGED_ROLES.has(String(role)))) {
+        fail('AuthorityUnavailable', 'managed identity role authority returned an invalid result', 503);
+      }
+      return Object.freeze({
+        ok: true,
+        targetSubjectId: target,
+        roles: Object.freeze(changed.roles.map(String)),
+        permissionRevision: Number(changed.permissionRevision),
+        revokeEpoch: Number(changed.revokeEpoch),
+        revokedSessionCount: Number(changed.revokedSessionCount || 0),
+        replayed: Boolean(changed.replayed),
+      });
+    },
+
     async getProfileAvatar(request, { correlationId } = {}) {
       if (!store?.prepareOwnedProfileAvatarAccess || !authClient?.readProfileAvatar) {
         fail('AuthorityUnavailable', 'profile avatar authority is unavailable', 503);

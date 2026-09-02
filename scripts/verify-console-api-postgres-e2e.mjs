@@ -19,6 +19,7 @@ const port = Number(process.env.CONSOLE_TEST_PORT || 58080);
 const origin = 'http://127.0.0.1:' + port;
 const publicOrigin = 'https://console.integration.test';
 const loginSubjectId = '11111111-1111-4111-8111-111111111111';
+const managedTargetSubjectId = '77777777-7777-4777-8777-777777777777';
 function integrationAccessToken({ aal, expiresInSeconds, sessionId, amr }) {
   return [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -181,6 +182,25 @@ const authorityServer = createServer(async (request, response) => {
       id: loginSubjectId,
       action_link: authorityOrigin + '/verify?token=integration-recovery-link-token&type=recovery&redirect_to='
         + encodeURIComponent(publicOrigin + '/auth/recovery'),
+    }));
+    return;
+  }
+  const managedUserMatch = request.url?.match(/^\/admin\/users\/([0-9a-f-]{36})$/u);
+  if (managedUserMatch && request.method === 'GET') {
+    assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
+    assert.equal(request.headers.apikey, serviceRoleKey);
+    const requestedSubject = managedUserMatch[1];
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      id: requestedSubject,
+      email: requestedSubject === managedTargetSubjectId ? 'viewer@opensphere.test' : 'operator@opensphere.test',
+      user_metadata: {
+        preferred_username: requestedSubject === managedTargetSubjectId ? 'viewer' : 'operator-' + requestedSubject.slice(0, 4),
+        display_name: requestedSubject === managedTargetSubjectId ? 'Console Viewer' : 'Console Operator',
+      },
+      factors: requestedSubject === loginSubjectId
+        ? [{ id: 'factor-enrollment-1', factor_type: 'totp', status: totpEnrollmentState === 'none' ? 'unverified' : totpEnrollmentState }]
+        : [],
     }));
     return;
   }
@@ -533,6 +553,47 @@ function verification(operationId, candidateBody, candidateHeaders = {}) {
 }
 
 try {
+  await admin.query('BEGIN');
+  try {
+    await admin.query('INSERT INTO auth.users(id) VALUES ($1) ON CONFLICT DO NOTHING', [managedTargetSubjectId]);
+    await admin.query([
+      'INSERT INTO console_identity.permission_grant(subject_id, permission, grant_revision, granted_by)',
+      'SELECT $1, desired_permission.permission_name, authority.permission_revision, $1',
+      'FROM console_identity.subject_authority authority',
+      "CROSS JOIN unnest(ARRAY['console.identity.manage','console.role.admin']::text[]) AS desired_permission(permission_name)",
+      'WHERE authority.subject_id=$1 AND NOT EXISTS (',
+      ' SELECT 1 FROM console_identity.permission_grant current_grant',
+      ' WHERE current_grant.subject_id=$1 AND current_grant.permission=desired_permission.permission_name AND current_grant.revoked_at IS NULL)',
+    ].join(' '), [loginSubjectId]);
+    await admin.query([
+      'UPDATE console_identity.browser_session session_row',
+      'SET permission_revision=authority.permission_revision, revoke_epoch=authority.revoke_epoch,',
+      'revoked_at=NULL, revoke_reason=NULL, last_reauthenticated_at=statement_timestamp()',
+      'FROM console_identity.subject_authority authority',
+      "WHERE session_row.session_id='22222222-2222-4222-8222-222222222222'",
+      'AND authority.subject_id=$1 AND session_row.subject_id=authority.subject_id',
+    ].join(' '), [loginSubjectId]);
+    await admin.query([
+      'INSERT INTO console_identity.subject_authority(subject_id, person_ref, permission_revision, revoke_epoch)',
+      "VALUES ($1, '77777777-0000-4000-8000-000000000001', 1, 0)",
+    ].join(' '), [managedTargetSubjectId]);
+    await admin.query([
+      'INSERT INTO console_identity.permission_grant(subject_id, permission, grant_revision, granted_by)',
+      "SELECT $1, permission, 1, $2 FROM unnest(console_identity.managed_role_permissions('console-viewers')) permission",
+    ].join(' '), [managedTargetSubjectId, loginSubjectId]);
+    await admin.query([
+      'SELECT console_identity.issue_browser_session(',
+      "$1, sha256(convert_to('managed-target-e2e-handle','UTF8')), sha256(convert_to('managed-target-e2e-csrf','UTF8')),",
+      "'v1.TUFOQUdFRFRBUkdFVEFDQ0VTUw.TUFOQUdFRFRBUkdFVEFDQ0VTUw.TUFOQUdFRFRBUkdFVEFDQ0VTUw',",
+      "'v1.TUFOQUdFRFRBUkdFVFJFRlJFU0g.TUFOQUdFRFRBUkdFVFJFRlJFU0g.TUFOQUdFRFRBUkdFVFJFRlJFU0g',",
+      "'managed-target-auth-session', 'aal1', statement_timestamp()+interval '1 hour',",
+      "statement_timestamp()+interval '24 hours', '24h', false, 'managed-target-session-0001')",
+    ].join(' '), [managedTargetSubjectId]);
+    await admin.query('COMMIT');
+  } catch (error) {
+    await admin.query('ROLLBACK');
+    throw error;
+  }
   await waitForReady();
   const bootstrapStatusResponse = await fetch(origin + '/api/identity/bootstrap/status');
   assert.equal(bootstrapStatusResponse.status, 200);
@@ -615,6 +676,19 @@ try {
   assert.equal(refreshedLoginEvidence.rows[0].expires_at.toISOString(), loginEvidence.rows[0].expires_at.toISOString());
   assert.equal(refreshedLoginEvidence.rows[0].absolute_expires_at.toISOString(), loginEvidence.rows[0].absolute_expires_at.toISOString());
   assert.doesNotMatch(refreshedLoginEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature/i);
+
+  const managedDirectoryResponse = await fetch(origin + '/api/identity', {
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-managed-identity-list-0001' },
+  });
+  assert.equal(managedDirectoryResponse.status, 200);
+  const managedDirectory = await managedDirectoryResponse.json();
+  assert.equal(managedDirectory.meta.scope, 'managed');
+  assert.equal(managedDirectory.meta.writeEnabled, true);
+  assert.equal(managedDirectory.groups.length, 3);
+  const managedTarget = managedDirectory.users.find((user) => user.id === managedTargetSubjectId);
+  assert.equal(managedTarget.username, 'viewer');
+  assert.deepEqual(managedTarget.groups.map(({ name }) => name), ['console-viewers']);
+  assert.doesNotMatch(JSON.stringify(managedDirectory), /service-role|token_digest|refresh_token|apikey/i);
 
   const preferenceRead = await fetch(origin + '/api/identity/session/preference', {
     headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-session-preference-read-0001' },
@@ -879,6 +953,16 @@ try {
   const stalePrivilegedResponse = await mutation(body, staleStepUpHeaders);
   assert.equal(stalePrivilegedResponse.status, 428);
   assert.equal((await stalePrivilegedResponse.json()).code, 'StepUpRequired');
+  const staleManagedRoleResponse = await fetch(origin + `/api/identity/users/${managedTargetSubjectId}/group`, {
+    method: 'POST',
+    headers: {
+      cookie: loginCookieHeader, 'x-os-csrf-token': loginCsrf, 'content-type': 'application/json',
+      'x-os-correlation-id': 'integration-managed-role-stale-0001',
+    },
+    body: JSON.stringify({ op: 'add', group: 'console-operators', reason: 'grant operations access' }),
+  });
+  assert.equal(staleManagedRoleResponse.status, 428);
+  assert.equal((await staleManagedRoleResponse.json()).code, 'StepUpRequired');
   const stepUpResponse = await fetch(origin + '/api/identity/session/step-up', {
     method: 'POST',
     headers: {
@@ -905,6 +989,44 @@ try {
     [loginBody.session.id, 'integration-session-step-up-0001'],
   );
   assert.deepEqual(stepUpEvidence.rows[0], { recent: true, audit_events: 1 });
+
+  const managedRoleHeaders = {
+    cookie: loginCookieHeader,
+    'x-os-csrf-token': loginCsrf,
+    'content-type': 'application/json',
+    'x-os-correlation-id': 'integration-managed-role-add-0001',
+  };
+  const managedRoleBody = JSON.stringify({
+    op: 'add', group: 'console-operators', reason: 'grant operations access',
+  });
+  const managedRoleChange = await fetch(origin + `/api/identity/users/${managedTargetSubjectId}/group`, {
+    method: 'POST', headers: managedRoleHeaders, body: managedRoleBody,
+  });
+  assert.equal(managedRoleChange.status, 200);
+  const managedRoleResult = await managedRoleChange.json();
+  assert.deepEqual(managedRoleResult.roles, ['console-operators', 'console-viewers']);
+  assert.equal(managedRoleResult.permissionRevision, 2);
+  assert.equal(managedRoleResult.revokeEpoch, 1);
+  assert.equal(managedRoleResult.revokedSessionCount, 1);
+  const managedRoleEvidence = await admin.query(
+    [
+      'SELECT a.permission_revision, a.revoke_epoch,',
+      '(SELECT count(*)::int FROM console_identity.browser_session s',
+      ' WHERE s.subject_id=a.subject_id AND s.revoked_at IS NULL) AS active_sessions,',
+      '(SELECT count(*)::int FROM console_audit.event e',
+      " WHERE e.correlation_id='integration-managed-role-add-0001'",
+      " AND e.action='console.identity.role.add' AND e.outcome='succeeded') AS audit_events,",
+      '(SELECT COALESCE(string_agg(e.evidence::text,\'\'),\'\') FROM console_audit.event e',
+      " WHERE e.correlation_id='integration-managed-role-add-0001') AS audit_evidence",
+      'FROM console_identity.subject_authority a WHERE a.subject_id=$1',
+    ].join(' '),
+    [managedTargetSubjectId],
+  );
+  assert.deepEqual(managedRoleEvidence.rows[0], {
+    permission_revision: '2', revoke_epoch: '1', active_sessions: 0, audit_events: 1,
+    audit_evidence: managedRoleEvidence.rows[0].audit_evidence,
+  });
+  assert.doesNotMatch(managedRoleEvidence.rows[0].audit_evidence, /service-role|refresh|token|apikey/i);
 
   const secondLoginResponse = await fetch(origin + '/api/identity/session/login', {
     method: 'POST',
@@ -1694,6 +1816,7 @@ try {
     mfaLoginChallengeLifecycle: true,
     mfaEnrollmentLifecycle: true,
     privilegedStepUpLifecycle: true,
+    managedIdentityRoleLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     passwordRecoveryLifecycle: true,

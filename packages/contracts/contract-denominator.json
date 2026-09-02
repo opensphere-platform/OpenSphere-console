@@ -9,6 +9,8 @@
   "operations": [
     "getInitialAdministratorBootstrapStatus",
     "bootstrapInitialAdministrator",
+    "listManagedIdentities",
+    "changeManagedIdentityRole",
     "getSessionPreference",
     "updateSessionPreference",
     "getProfileAvatar",
@@ -61,6 +63,9 @@
     "profile-avatar-selection-request.schema.json",
     "profile-avatar-upload-request.schema.json",
     "profile-avatar-response.schema.json",
+    "managed-identity-directory-response.schema.json",
+    "managed-identity-role-change-request.schema.json",
+    "managed-identity-role-change-response.schema.json",
     "session-event-response.schema.json",
     "error-envelope.schema.json",
     "operation-receipt.schema.json",

@@ -117,6 +117,19 @@ const PREPARE_OWNED_PROFILE_AVATAR_ACCESS_SQL = [
   ') AS avatar_record',
 ].join(' ');
 
+const LIST_MANAGED_IDENTITIES_SQL = [
+  'SELECT console_identity.list_managed_identities(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::text',
+  ') AS identity_inventory',
+].join(' ');
+
+const CHANGE_MANAGED_IDENTITY_ROLE_SQL = [
+  'SELECT console_identity.change_managed_identity_role(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid,',
+  '$6::text, $7::text, $8::text, $9::text',
+  ') AS role_change',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -204,6 +217,7 @@ function databaseError(error) {
     'SelfApprovalDenied', 'ApprovalNotRequired', 'StaleRevision',
     'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
     'ObservationMismatch', 'NotFound', 'RefreshNotRequired', 'BootstrapComplete',
+    'RoleContinuityRequired', 'InventoryLimitExceeded',
   ]);
   const mapped = known.has(code) ? code : 'AuthorityUnavailable';
   const status = {
@@ -227,6 +241,8 @@ function databaseError(error) {
     NotFound: 404,
     RefreshNotRequired: 409,
     BootstrapComplete: 409,
+    RoleContinuityRequired: 409,
+    InventoryLimitExceeded: 409,
   }[mapped];
   const messages = {
     ValidationFailed: 'operation request failed database validation',
@@ -249,6 +265,8 @@ function databaseError(error) {
     NotFound: 'operation was not found',
     RefreshNotRequired: 'browser session access credential does not require refresh',
     BootstrapComplete: 'initial administrator bootstrap is already complete',
+    RoleContinuityRequired: 'at least one Console administrator must remain',
+    InventoryLimitExceeded: 'managed identity inventory exceeds the bounded Console view',
   };
   return Object.assign(new Error(messages[mapped]), {
     code: mapped,
@@ -542,6 +560,48 @@ export function createPostgresOperationStore({ query }) {
           throw new Error('prepare_owned_profile_avatar_access returned no record');
         }
         return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listManagedIdentities(input) {
+      try {
+        const result = await query(LIST_MANAGED_IDENTITIES_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.correlationId,
+        ]);
+        const inventory = result?.rows?.[0]?.identity_inventory;
+        if (!Array.isArray(inventory?.items) || !Array.isArray(inventory?.groups)) {
+          throw new Error('list_managed_identities returned no inventory');
+        }
+        return inventory;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async changeManagedIdentityRole(input) {
+      try {
+        const result = await query(CHANGE_MANAGED_IDENTITY_ROLE_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.targetSubjectId,
+          input.operation,
+          input.role,
+          input.reason,
+          input.correlationId,
+        ]);
+        const changed = result?.rows?.[0]?.role_change;
+        if (!changed?.targetSubjectId || !Array.isArray(changed?.roles)) {
+          throw new Error('change_managed_identity_role returned no result');
+        }
+        return changed;
       } catch (error) {
         throw databaseError(error);
       }

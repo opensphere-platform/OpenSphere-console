@@ -123,6 +123,50 @@ export function createSupabaseAuthClient({
   }
 
   return Object.freeze({
+    async readManagedUser(subjectId) {
+      if (!adminKey) fail('AuthorityUnavailable', 'Supabase managed-user authority is unavailable', 503);
+      const expectedSubjectId = String(subjectId || '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(expectedSubjectId)) {
+        fail('ValidationFailed', 'managed-user subject is invalid', 400);
+      }
+      const user = await request(`/admin/users/${encodeURIComponent(expectedSubjectId)}`, {
+        token: adminKey,
+        apiKey: adminKey,
+        rejectedCode: 'ManagedIdentityNotFound',
+        rejectedMessage: 'managed identity was not found in Supabase Auth',
+        rejectedStatus: 404,
+        rejectedStatuses: [404],
+      });
+      if (String(user?.id || '') !== expectedSubjectId) {
+        fail('AuthorityUnavailable', 'Supabase Auth changed the managed-user subject', 503);
+      }
+      const metadata = user?.user_metadata && typeof user.user_metadata === 'object' && !Array.isArray(user.user_metadata)
+        ? user.user_metadata : {};
+      const email = String(user?.email || '').trim().toLowerCase();
+      const username = String(metadata.preferred_username || (email.includes('@') ? email.split('@')[0] : '')).trim();
+      const displayName = String(metadata.display_name || metadata.name || username).trim();
+      if (email.length > 254 || username.length < 1 || username.length > 63
+          || displayName.length < 1 || displayName.length > 120
+          || /[\r\n\u0000-\u001f\u007f]/u.test(username + displayName)) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned an invalid managed-user profile', 503);
+      }
+      const factors = Array.isArray(user?.factors) ? user.factors.filter((factor) => factor?.factor_type === 'totp') : [];
+      const verifiedTotpCount = factors.filter((factor) => factor?.status === 'verified').length;
+      const bannedUntil = Date.parse(String(user?.banned_until || ''));
+      return Object.freeze({
+        id: expectedSubjectId,
+        username,
+        displayName,
+        email,
+        enabled: !Number.isFinite(bannedUntil) || bannedUntil <= now().getTime(),
+        mfa: Object.freeze({
+          totpCount: factors.length,
+          verifiedTotpCount,
+          status: verifiedTotpCount ? 'registered' : 'enrollment-required',
+        }),
+      });
+    },
+
     async readProfileAvatar({ accessToken, expectedSubjectId }) {
       const claims = jwtClaims(accessToken, now());
       if (String(claims.sub) !== String(expectedSubjectId || '')) {

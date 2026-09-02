@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-directory-response.schema.json",
+  "title": "Managed Console identity directory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meta", "users", "groups"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "idp", "scope", "writeEnabled"],
+      "properties": {
+        "service": { "const": "opensphere-identity" },
+        "idp": { "const": "supabase" },
+        "scope": { "enum": ["self", "managed"] },
+        "writeEnabled": { "type": "boolean" }
+      }
+    },
+    "users": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "username", "displayName", "email", "enabled", "groups", "mfa"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "username": { "type": "string", "minLength": 1, "maxLength": 63 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "email": { "type": "string", "maxLength": 254 },
+          "enabled": { "type": "boolean" },
+          "groups": {
+            "type": "array",
+            "maxItems": 3,
+            "items": { "$ref": "#/$defs/group" }
+          },
+          "mfa": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["totpCount", "verifiedTotpCount", "status"],
+            "properties": {
+              "totpCount": { "type": "integer", "minimum": 0 },
+              "verifiedTotpCount": { "type": "integer", "minimum": 0 },
+              "status": { "enum": ["registered", "enrollment-required"] }
+            }
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/group" },
+          {
+            "type": "object",
+            "required": ["description"],
+            "properties": { "description": { "type": "string", "maxLength": 240 } }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "path"],
+      "properties": {
+        "id": { "enum": ["console-admins", "console-operators", "console-viewers"] },
+        "name": { "enum": ["console-admins", "console-operators", "console-viewers"] },
+        "path": { "enum": ["/console-admins", "/console-operators", "/console-viewers"] },
+        "description": { "type": "string", "maxLength": 240 }
+      }
+    }
+  }
+}
