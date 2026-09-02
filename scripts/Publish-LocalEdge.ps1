@@ -10,8 +10,8 @@ param(
   [string]$CliUpdateSigningPublicKey = '',
   [switch]$UseExistingRegistryLogin,
   [switch]$AdvanceOsShellUxConsoleEdge,
-  [ValidateSet('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend', 'dupaController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')]
-  [string[]]$Components = @('console', 'backend', 'dupaController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres')
+  [ValidateSet('console', 'consoleApi', 'extensionController', 'dupaController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend')]
+  [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'dupaController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -146,6 +146,21 @@ if ($Components -contains 'backend') {
   throw 'Backend component publication is blocked until its runtime installer consumes the fresh Console migration lineage.'
 }
 
+# This is the governed release family, not Setup's smaller bootstrapCore subset.
+$canonicalComponentKeys = @(
+  'console', 'consoleApi', 'extensionController', 'dupaController', 'registry',
+  'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher',
+  'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage',
+  'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap'
+)
+$requestedForGate = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($component in $Components) { [void]$requestedForGate.Add($component) }
+$integratedRequest = $requestedForGate.Count -eq $canonicalComponentKeys.Count -and
+  @($canonicalComponentKeys | Where-Object { -not $requestedForGate.Contains($_) }).Count -eq 0
+# The explicit OS Shell UX exception can move the Console edge anchor for a
+# partial publication, so it inherits the same release-ready gate.
+$canonicalAnchorMayMove = $integratedRequest -or $AdvanceOsShellUxConsoleEdge
+
 $epochText = (& git -C $repoRoot show -s --format=%ct $SourceRevision).Trim()
 if ($epochText -notmatch '^\d+$') {
   throw "Could not resolve commit timestamp for $SourceRevision"
@@ -174,6 +189,17 @@ Write-Host "[policy] build-authority=localhost, release-class=pre-ga, ga-eligibl
 
 Write-Host '[step 01/06] Prepare clean Console and governed Setup source'
 Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRevision
+# Every publication validates repository contracts in the clean checkout.
+# A complete BOM, or any exception that can move Console:edge, additionally
+# proves the release-ready boundary before registry authentication or build.
+Push-Location $consoleCheckout
+try {
+  $contractArguments = @('scripts/verify-console-contracts.mjs')
+  if ($canonicalAnchorMayMove) { $contractArguments += '--release-ready' }
+  Invoke-Checked node @contractArguments | Out-Null
+} finally {
+  Pop-Location
+}
 $migrationManifestPath = Join-Path $consoleCheckout 'migrations\manifest.json'
 if (-not (Test-Path -LiteralPath $migrationManifestPath)) {
   throw "Fresh Console migration manifest is missing: $migrationManifestPath"
@@ -222,7 +248,8 @@ function Assert-LocalEdgeImageMetadata {
     [Parameter(Mandatory)][string]$Digest,
     [Parameter(Mandatory)][string]$ExpectedSourceRevision,
     [Parameter(Mandatory)][string]$ExpectedReleaseTag,
-    [Parameter(Mandatory)][string]$ExpectedPlatform
+    [Parameter(Mandatory)][string]$ExpectedPlatform,
+    [Parameter(Mandatory)][ValidateSet('canonical', 'auxiliary')][string]$ExpectedReleaseScope
   )
 
   $reference = "${Repository}@${Digest}"
@@ -241,6 +268,7 @@ function Assert-LocalEdgeImageMetadata {
   }
   $expectedLabels = [ordered]@{
     'io.opensphere.channel' = 'edge'
+    'io.opensphere.release-scope' = $ExpectedReleaseScope
     'io.opensphere.source-revision' = $ExpectedSourceRevision
     'io.opensphere.release-tag' = $ExpectedReleaseTag
     'org.opencontainers.image.version' = $ExpectedReleaseTag
@@ -277,12 +305,16 @@ Write-Host '[step 03/06] Confirm GHCR authentication mode'
 if ($UseExistingRegistryLogin) {
   Write-Host '[auth] Reusing the existing Docker credential for ghcr.io'
 } else {
+  $registryActor = (& gh api user --jq .login).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $registryActor) {
+    throw 'GitHub CLI did not return the authenticated registry actor.'
+  }
   $token = (& gh auth token).Trim()
   if (-not $token) {
     throw 'GitHub CLI did not return an authentication token.'
   }
   try {
-    $token | docker login ghcr.io -u opensphere-platform --password-stdin
+    $token | docker login ghcr.io -u $registryActor --password-stdin
     if ($LASTEXITCODE -ne 0) {
       throw "docker login failed with exit code $LASTEXITCODE"
     }
@@ -292,39 +324,55 @@ if ($UseExistingRegistryLogin) {
 }
 
 $allImages = @(
+  # The canonical release family covers Setup's governed install catalog;
+  # bootstrapCore is a required subset selected by Setup. Keep
+  # this list ordered and complete so the Console anchor always represents one
+  # exact 19-component BOM.
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-web\Dockerfile') },
-  # CLI artifacts are a Console-native auxiliary workload with an independent
-  # build and rollout. They are intentionally not added to the 14-component
-  # Platform Release lock merely to decouple an Angular UI build.
-  [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'cmd\os-cli'); File = (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile') },
-  # CBSS OS Shell images are auxiliary component workloads. Selecting one may
-  # never expand a local edge change into the 14-image integrated release.
-  [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile') },
-  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile.runtime') },
-  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'); SetupContext = $setupCheckout },
+  [ordered]@{ Key = 'consoleApi'; Image = 'opensphere-console-api'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\Dockerfile') },
+  [ordered]@{ Key = 'extensionController'; Image = 'opensphere-extension-controller'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\extension-controller\Dockerfile') },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'apps\extension-controller\runtime'); File = (Join-Path $consoleCheckout 'apps\extension-controller\runtime\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'apps\osaa-gateway'); File = (Join-Path $consoleCheckout 'apps\osaa-gateway\Dockerfile') },
   [ordered]@{ Key = 'osdst'; Image = 'opensphere-osdst'; Context = (Join-Path $consoleCheckout 'apps\osdst'); File = (Join-Path $consoleCheckout 'apps\osdst\Dockerfile') },
   [ordered]@{ Key = 'osaaGovernedAdapter'; Image = 'opensphere-osaa-governed-adapter'; Context = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter'); File = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter\Dockerfile') },
   [ordered]@{ Key = 'notificationDispatcher'; Image = 'opensphere-console-notification-dispatcher'; Context = (Join-Path $consoleCheckout 'apps\notification-dispatcher'); File = (Join-Path $consoleCheckout 'apps\notification-dispatcher\Dockerfile') },
-  [ordered]@{ Key = 'recovery'; Image = 'opensphere-console-recovery'; Context = (Join-Path $consoleCheckout 'apps\recovery-owner'); File = (Join-Path $consoleCheckout 'apps\recovery-owner\Dockerfile') },
   [ordered]@{ Key = 'gitea'; Image = 'opensphere-console-gitea'; Context = (Join-Path $consoleCheckout 'backend\gitea\image'); File = (Join-Path $consoleCheckout 'backend\gitea\image\Dockerfile') },
   [ordered]@{ Key = 'supabasePostgres'; Image = 'opensphere-console-supabase-postgres'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\postgres'); File = (Join-Path $consoleCheckout 'backend\supabase\images\postgres\Dockerfile') },
   [ordered]@{ Key = 'supabaseAuth'; Image = 'opensphere-console-supabase-auth'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\auth'); File = (Join-Path $consoleCheckout 'backend\supabase\images\auth\Dockerfile') },
   [ordered]@{ Key = 'supabaseRest'; Image = 'opensphere-console-supabase-rest'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\rest'); File = (Join-Path $consoleCheckout 'backend\supabase\images\rest\Dockerfile') },
   [ordered]@{ Key = 'supabaseStorage'; Image = 'opensphere-console-supabase-storage'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\storage'); File = (Join-Path $consoleCheckout 'backend\supabase\images\storage\Dockerfile') },
-  [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') }
+  [ordered]@{ Key = 'giteaPostgres'; Image = 'opensphere-console-gitea-postgres'; Context = (Join-Path $consoleCheckout 'backend\gitea\postgres-image'); File = (Join-Path $consoleCheckout 'backend\gitea\postgres-image\Dockerfile') },
+  [ordered]@{ Key = 'recovery'; Image = 'opensphere-console-recovery'; Context = (Join-Path $consoleCheckout 'apps\recovery-owner'); File = (Join-Path $consoleCheckout 'apps\recovery-owner\Dockerfile') },
+  [ordered]@{ Key = 'beszelHub'; Image = 'opensphere-console-beszel-hub'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'deploy\baseline-monitoring\images\hub\Dockerfile') },
+  [ordered]@{ Key = 'beszelAgent'; Image = 'opensphere-console-beszel-agent'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'deploy\baseline-monitoring\images\agent\Dockerfile') },
+  [ordered]@{ Key = 'beszelBootstrap'; Image = 'opensphere-console-beszel-bootstrap'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'deploy\baseline-monitoring\images\bootstrap\Dockerfile') },
+  # CLI and OS Shell artifacts are independently selectable auxiliary output.
+  [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'cmd\os-cli'); File = (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile') },
+  [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile') },
+  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile.runtime') },
+  # Retained only to reject stale explicit callers before registry mutation.
+  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'); SetupContext = $setupCheckout }
 )
 $auxiliaryComponentKeys = @('cliArtifacts', 'osShellControl', 'osShellRuntime')
-$canonicalImages = @($allImages | Where-Object { $_.Key -notin $auxiliaryComponentKeys })
+$blockedLegacyComponentKeys = @('backend')
+$canonicalImages = @($allImages | Where-Object {
+  $_.Key -notin $auxiliaryComponentKeys -and $_.Key -notin $blockedLegacyComponentKeys
+})
+if ($canonicalImages.Count -ne 19) {
+  throw "Canonical local edge release must contain exactly 19 components; found $($canonicalImages.Count)."
+}
 $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
 $images = @($allImages | Where-Object { $requestedComponents.Contains($_.Key) })
 if (-not $images.Count) { throw 'At least one Console component must be selected.' }
 $integratedPublication = $images.Count -eq $canonicalImages.Count `
   -and @($images | Where-Object { $_.Key -in $auxiliaryComponentKeys }).Count -eq 0 `
+  -and @($images | Where-Object { $_.Key -in $blockedLegacyComponentKeys }).Count -eq 0 `
   -and @($canonicalImages | Where-Object { -not $requestedComponents.Contains($_.Key) }).Count -eq 0
+if ($integratedPublication -ne $integratedRequest) {
+  throw 'Canonical release gate and image matrix disagree about integrated publication scope.'
+}
 $partialPublication = -not $integratedPublication
 $osShellUxComponentSet = (@($images.Key | Sort-Object) -join ',') -eq 'console,osShellRuntime'
 if ($AdvanceOsShellUxConsoleEdge -and -not $osShellUxComponentSet) {
@@ -341,6 +389,7 @@ Write-Host "[scope] $($images.Key -join ', ')"
 $digests = [ordered]@{}
 $imagesToBuild = [Collections.Generic.List[object]]::new()
 foreach ($item in $images) {
+  $releaseScope = if ($item.Key -in $auxiliaryComponentKeys) { 'auxiliary' } else { 'canonical' }
   $repository = "$Registry/$($item.Image)"
   $localReference = "${repository}:$localTag"
   $versionReference = "${repository}:$releaseTag"
@@ -350,12 +399,12 @@ foreach ($item in $images) {
   if ($existingLocalDigest) {
     Assert-LocalEdgeImageMetadata -Repository $repository -Digest $existingLocalDigest `
       -ExpectedSourceRevision $SourceRevision -ExpectedReleaseTag $releaseTag `
-      -ExpectedPlatform $Platform
+      -ExpectedPlatform $Platform -ExpectedReleaseScope $releaseScope
   }
   if ($existingVersionDigest) {
     Assert-LocalEdgeImageMetadata -Repository $repository -Digest $existingVersionDigest `
       -ExpectedSourceRevision $SourceRevision -ExpectedReleaseTag $releaseTag `
-      -ExpectedPlatform $Platform
+      -ExpectedPlatform $Platform -ExpectedReleaseScope $releaseScope
   }
   if ($existingVersionDigest -and -not $existingLocalDigest) {
     throw "Immutable publication is incomplete: $versionReference exists but $localReference is missing"
@@ -373,6 +422,7 @@ foreach ($item in $images) {
 
 for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
   $item = $imagesToBuild[$index]
+  $releaseScope = if ($item.Key -in $auxiliaryComponentKeys) { 'auxiliary' } else { 'canonical' }
   $repository = "$Registry/$($item.Image)"
   $metadataFile = Join-Path $metadataRoot "$($item.Image).json"
   Write-Host ("[build {0:d2}/{1:d2}] {2}:{3}" -f ($index + 1), $imagesToBuild.Count, $repository, $localTag)
@@ -384,6 +434,7 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
     '--metadata-file', $metadataFile,
     '--tag', "${repository}:$localTag",
     '--label', 'io.opensphere.channel=edge',
+    '--label', "io.opensphere.release-scope=$releaseScope",
     '--label', "io.opensphere.source-revision=$SourceRevision",
     '--label', "io.opensphere.release-tag=$releaseTag",
     '--label', "org.opencontainers.image.version=$releaseTag",
@@ -459,6 +510,9 @@ foreach ($item in $images) {
     image = "${repository}@$($digests[$item.Key])"
     sourceRevision = $SourceRevision
   }
+}
+if (-not $partialPublication -and $componentEvidence.Count -ne 19) {
+  throw "Complete local edge BOM must contain exactly 19 components; found $($componentEvidence.Count)."
 }
 $releaseArtifacts = [ordered]@{
   supabaseMigrationManifest = [ordered]@{

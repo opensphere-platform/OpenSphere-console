@@ -99,7 +99,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # HOLD: independent-Kubernetes install/upgrade/rollback and off-backbone
+  # recovery evidence are not yet accepted. Matrix validation may evolve, but
+  # official candidate artifacts cannot publish until this explicit gate is
+  # replaced by an approved release decision.
   publish:
+    if: ${{ false }}
     needs: [test, build-macos-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -108,62 +113,93 @@ jobs:
       matrix:
         include:
           - image: opensphere-console
+            scope: canonical
             context: OpenSphere-console
             file: OpenSphere-console/apps/console-web/Dockerfile
           - image: opensphere-os-cli
+            scope: auxiliary
             context: OpenSphere-console/cmd/os-cli
             file: OpenSphere-console/cmd/os-cli/Dockerfile
           - image: opensphere-console-api
+            scope: canonical
             context: OpenSphere-console
             file: OpenSphere-console/apps/console-api/Dockerfile
           - image: opensphere-extension-controller
+            scope: canonical
             context: OpenSphere-console
             file: OpenSphere-console/apps/extension-controller/Dockerfile
           - image: opensphere-console-os-shell-control
+            scope: auxiliary
             context: OpenSphere-console
             file: OpenSphere-console/apps/os-shell-control/Dockerfile
           - image: opensphere-os-shell-runtime
+            scope: auxiliary
             context: OpenSphere-console
             file: OpenSphere-console/apps/os-shell-control/Dockerfile.runtime
           - image: opensphere-console-dupa-controller
+            scope: canonical
             context: OpenSphere-console/apps/extension-controller/runtime
             file: OpenSphere-console/apps/extension-controller/runtime/Dockerfile
           - image: opensphere-registry
+            scope: canonical
             context: OpenSphere-console/backend/registry
             file: OpenSphere-console/backend/registry/deploy/Dockerfile
           - image: opensphere-console-osaa-gateway
+            scope: canonical
             context: OpenSphere-console/apps/osaa-gateway
             file: OpenSphere-console/apps/osaa-gateway/Dockerfile
           - image: opensphere-osdst
+            scope: canonical
             context: OpenSphere-console/apps/osdst
             file: OpenSphere-console/apps/osdst/Dockerfile
           - image: opensphere-osaa-governed-adapter
+            scope: canonical
             context: OpenSphere-console/backend/osaa-governed-adapter
             file: OpenSphere-console/backend/osaa-governed-adapter/Dockerfile
           - image: opensphere-console-notification-dispatcher
+            scope: canonical
             context: OpenSphere-console/apps/notification-dispatcher
             file: OpenSphere-console/apps/notification-dispatcher/Dockerfile
           - image: opensphere-console-recovery
+            scope: canonical
             context: OpenSphere-console/apps/recovery-owner
             file: OpenSphere-console/apps/recovery-owner/Dockerfile
           - image: opensphere-console-gitea
+            scope: canonical
             context: OpenSphere-console/backend/gitea/image
             file: OpenSphere-console/backend/gitea/image/Dockerfile
           - image: opensphere-console-supabase-postgres
+            scope: canonical
             context: OpenSphere-console/backend/supabase/images/postgres
             file: OpenSphere-console/backend/supabase/images/postgres/Dockerfile
           - image: opensphere-console-supabase-auth
+            scope: canonical
             context: OpenSphere-console/backend/supabase/images/auth
             file: OpenSphere-console/backend/supabase/images/auth/Dockerfile
           - image: opensphere-console-supabase-rest
+            scope: canonical
             context: OpenSphere-console/backend/supabase/images/rest
             file: OpenSphere-console/backend/supabase/images/rest/Dockerfile
           - image: opensphere-console-supabase-storage
+            scope: canonical
             context: OpenSphere-console/backend/supabase/images/storage
             file: OpenSphere-console/backend/supabase/images/storage/Dockerfile
           - image: opensphere-console-gitea-postgres
+            scope: canonical
             context: OpenSphere-console/backend/gitea/postgres-image
             file: OpenSphere-console/backend/gitea/postgres-image/Dockerfile
+          - image: opensphere-console-beszel-hub
+            scope: canonical
+            context: OpenSphere-console
+            file: OpenSphere-console/deploy/baseline-monitoring/images/hub/Dockerfile
+          - image: opensphere-console-beszel-agent
+            scope: canonical
+            context: OpenSphere-console
+            file: OpenSphere-console/deploy/baseline-monitoring/images/agent/Dockerfile
+          - image: opensphere-console-beszel-bootstrap
+            scope: canonical
+            context: OpenSphere-console
+            file: OpenSphere-console/deploy/baseline-monitoring/images/bootstrap/Dockerfile
     steps:
       - name: Checkout Console
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -204,6 +240,7 @@ jobs:
           labels: |
             io.opensphere.channel=candidate
             io.opensphere.built-channel=candidate
+            io.opensphere.release-scope=${{ matrix.scope }}
             io.opensphere.source-revision=${{ github.sha }}
             io.opensphere.release-tag=${{ steps.release.outputs.version }}
             org.opencontainers.image.version=${{ steps.release.outputs.version }}
@@ -309,6 +346,9 @@ jobs:
             opensphere-console-supabase-rest
             opensphere-console-supabase-storage
             opensphere-console-gitea-postgres
+            opensphere-console-beszel-hub
+            opensphere-console-beszel-agent
+            opensphere-console-beszel-bootstrap
           )
           component_keys=(
             console
@@ -327,7 +367,12 @@ jobs:
             supabaseRest
             supabaseStorage
             giteaPostgres
+            beszelHub
+            beszelAgent
+            beszelBootstrap
           )
+          test "${#images[@]}" -eq 19
+          test "${#component_keys[@]}" -eq 19
           declare -A digests
           components='{}'
           migration_manifest='migrations/manifest.json'
@@ -345,12 +390,17 @@ jobs:
             source="$repository:$source_tag"
             digest="$(crane digest "$source")"
             revision="$(crane config "$source" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
+            scope="$(crane config "$source" | jq -r '.config.Labels["io.opensphere.release-scope"] // empty')"
             if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
               echo "$source has an invalid digest: $digest" >&2
               exit 1
             fi
             if [[ "$revision" != "$GITHUB_SHA" ]]; then
               echo "$source revision $revision differs from workflow $GITHUB_SHA" >&2
+              exit 1
+            fi
+            if [[ "$scope" != canonical ]]; then
+              echo "$source release scope $scope is not canonical" >&2
               exit 1
             fi
             digests[$image]="$digest"
@@ -386,7 +436,7 @@ jobs:
             > "$RUNNER_TEMP/opensphere-release-bom.json"
 
           jq -e --arg revision "$GITHUB_SHA" \
-            '.sourceRevision == $revision and (.components | length) == 16
+            '.sourceRevision == $revision and (.components | length) == 19
               and (.artifacts.supabaseMigrationManifest.sha256 | test("^sha256:[0-9a-f]{64}$"))' \
             "$RUNNER_TEMP/opensphere-release-bom.json" >/dev/null
           echo "anchor-digest=${digests[opensphere-console]}" >> "$GITHUB_OUTPUT"
@@ -434,6 +484,9 @@ jobs:
             opensphere-console-supabase-rest
             opensphere-console-supabase-storage
             opensphere-console-gitea-postgres
+            opensphere-console-beszel-hub
+            opensphere-console-beszel-agent
+            opensphere-console-beszel-bootstrap
           )
           component_keys=(
             consoleApi
@@ -451,7 +504,12 @@ jobs:
             supabaseRest
             supabaseStorage
             giteaPostgres
+            beszelHub
+            beszelAgent
+            beszelBootstrap
           )
+          test "${#images[@]}" -eq 18
+          test "${#component_keys[@]}" -eq 18
 
           # Non-anchor tags may move first. Setup never samples them; it reads
           # their immutable digests from the signed BOM attached to Console.
@@ -464,18 +522,27 @@ jobs:
             crane tag "$repository@$digest" candidate
           done
 
-          # Downloadable CLI artifacts have an independent lifecycle so a UI
-          # change never recompiles or rolls them. They remain exact-digest,
-          # provenance/SBOM-attested candidate output, but are intentionally outside
-          # the 16-component Console runtime BOM.
-          cli_repository="ghcr.io/opensphere-platform/opensphere-os-cli"
-          cli_source="$cli_repository:sha-${GITHUB_SHA:0:7}"
-          cli_digest="$(crane digest "$cli_source")"
-          cli_revision="$(crane config "$cli_source" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
-          test "$cli_revision" = "$GITHUB_SHA"
-          publish_immutable_tag "$cli_repository" "$cli_digest"
-          crane tag "$cli_repository@$cli_digest" candidate
-          test "$(crane digest "$cli_repository:candidate")" = "$cli_digest"
+          # CLI and OS Shell are provenance/SBOM-attested auxiliary artifacts.
+          # Each advances independently and remains outside the canonical BOM.
+          auxiliary_images=(
+            opensphere-os-cli
+            opensphere-console-os-shell-control
+            opensphere-os-shell-runtime
+          )
+          test "${#auxiliary_images[@]}" -eq 3
+          for image in "${auxiliary_images[@]}"; do
+            repository="ghcr.io/opensphere-platform/$image"
+            source="$repository:sha-${GITHUB_SHA:0:7}"
+            digest="$(crane digest "$source")"
+            revision="$(crane config "$source" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
+            scope="$(crane config "$source" | jq -r '.config.Labels["io.opensphere.release-scope"] // empty')"
+            test "$digest" != ""
+            test "$revision" = "$GITHUB_SHA"
+            test "$scope" = auxiliary
+            publish_immutable_tag "$repository" "$digest"
+            crane tag "$repository@$digest" candidate
+            test "$(crane digest "$repository:candidate")" = "$digest"
+          done
 
           # This is the atomic publication point. If any earlier step fails,
           # Console:candidate still anchors the previous complete signed BOM.

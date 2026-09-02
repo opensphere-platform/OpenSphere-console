@@ -37,7 +37,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # HOLD: stable/GA promotion remains unavailable until the outstanding
+  # independent-cluster and off-backbone recovery gates are accepted.
   promote:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.target_channel == 'ga' && 'console-ga' || 'console-stable' }}
     steps:
@@ -65,7 +68,7 @@ jobs:
             ga) source_channel=stable; test -n "$AZURE_RELEASE_EVIDENCE" ;;
             *) echo 'target channel is outside the closed promotion chain' >&2; exit 1 ;;
           esac
-          images=(
+          canonical_images=(
             opensphere-console
             opensphere-console-api
             opensphere-extension-controller
@@ -75,27 +78,40 @@ jobs:
             opensphere-osdst
             opensphere-osaa-governed-adapter
             opensphere-console-notification-dispatcher
-            opensphere-console-recovery
             opensphere-console-gitea
             opensphere-console-supabase-postgres
             opensphere-console-supabase-auth
             opensphere-console-supabase-rest
             opensphere-console-supabase-storage
             opensphere-console-gitea-postgres
-            opensphere-os-cli
+            opensphere-console-recovery
+            opensphere-console-beszel-hub
+            opensphere-console-beszel-agent
+            opensphere-console-beszel-bootstrap
           )
+          auxiliary_images=(
+            opensphere-os-cli
+            opensphere-console-os-shell-control
+            opensphere-os-shell-runtime
+          )
+          test "${#canonical_images[@]}" -eq 19
+          test "${#auxiliary_images[@]}" -eq 3
           components='{}'
-          for image in "${images[@]}"; do
+          for image in "${canonical_images[@]}"; do
             repository="ghcr.io/opensphere-platform/$image"
             source_digest="$(crane digest "$repository:$source_channel")"
             release_digest="$(crane digest "$repository:$RELEASE_TAG")"
             revision="$(crane config "$repository@$source_digest" | jq -r '.config.Labels["io.opensphere.source-revision"] // empty')"
             built_channel="$(crane config "$repository@$source_digest" | jq -r '.config.Labels["io.opensphere.built-channel"] // empty')"
+            release_scope="$(crane config "$repository@$source_digest" | jq -r '.config.Labels["io.opensphere.release-scope"] // empty')"
             test "$source_digest" = "$release_digest"
             test "$revision" = "$SOURCE_REVISION"
             test "$built_channel" = candidate
+            test "$release_scope" = canonical
             components="$(jq -c --arg image "$image" --arg digest "$source_digest" '. + {($image): $digest}' <<<"$components")"
           done
+          # Auxiliary artifacts are intentionally outside this canonical
+          # promotion. Their independent channel policy requires its own approval.
           jq -n \
             --arg schemaVersion '1.0' \
             --arg sourceChannel "$source_channel" \
@@ -111,6 +127,7 @@ jobs:
               azureReleaseEvidence: (if ($azureReleaseEvidence | length) > 0 then $azureReleaseEvidence else null end),
               actor: $actor, components: $components}' \
             > "$RUNNER_TEMP/opensphere-promotion-receipt.json"
+          jq -e '(.components | length) == 19' "$RUNNER_TEMP/opensphere-promotion-receipt.json" >/dev/null
           anchor_digest="$(jq -r '.components["opensphere-console"]' "$RUNNER_TEMP/opensphere-promotion-receipt.json")"
           echo "anchor-digest=$anchor_digest" >> "$GITHUB_OUTPUT"
           echo "source-channel=$source_channel" >> "$GITHUB_OUTPUT"
