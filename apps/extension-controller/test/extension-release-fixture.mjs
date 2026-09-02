@@ -7,10 +7,21 @@ export function makeReleaseFixture({
   entrySource = 'export const activate = () => true;\n',
   contributions = { api: { enabled: true, basePath: '/api/plugins/workspace' }, navigation: [] },
   permissions = ['console.workspace.read'],
+  assetSources = [],
 } = {}) {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const keyId = 'release-key';
   const entryBytes = Buffer.from(entrySource, 'utf8');
+  const assetBodies = new Map(assetSources.map((asset) => [
+    asset.path,
+    Buffer.isBuffer(asset.source) ? Buffer.from(asset.source) : Buffer.from(asset.source, 'utf8'),
+  ]));
+  const assets = assetSources.map((asset) => ({
+    id: asset.id,
+    type: asset.type,
+    path: asset.path,
+    sha256: digest(assetBodies.get(asset.path)),
+  }));
   const manifest = {
     manifestVersion: 3,
     id: extensionId,
@@ -25,7 +36,7 @@ export function makeReleaseFixture({
     entry: 'main.js',
     entrySha256: digest(entryBytes),
     apiBase: contributions.api?.enabled === true ? `/api/plugins/${extensionId}` : '',
-    assets: [],
+    assets,
   };
   const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
   const signatureBytes = Buffer.from(sign('sha256', manifestBytes, {
@@ -103,6 +114,7 @@ export function makeReleaseFixture({
     manifestBytes,
     signatureBytes,
     entryBytes,
+    assetBodies,
     trustedKeys: { [keyId]: publicKeyBase64 },
   };
 }
@@ -113,6 +125,7 @@ export function artifactFetch(fixture, overrides = {}) {
     [fixture.pkg.spec.manifest.signaturePath, overrides.signatureBytes || fixture.signatureBytes],
     [`/plugins/${fixture.manifest.entry}`, overrides.entryBytes || fixture.entryBytes],
   ]);
+  for (const [path, bytes] of fixture.assetBodies || []) bodies.set(path, bytes);
   return async (url) => {
     const path = new URL(url).pathname;
     if (!bodies.has(path)) {

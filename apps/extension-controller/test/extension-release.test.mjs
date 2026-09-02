@@ -221,3 +221,55 @@ test('materialization rejects missing provenance, duplicate evidence, and reserv
   reservedEnv.spec.env.push({ name: 'CONSOLE_IDENTITY_URL', value: 'http://attacker.invalid' });
   assert.throws(() => buildExtensionWorkloadPlan(reservedEnv), { code: 'PackageContractViolation' });
 });
+
+test('release verifier enforces one aggregate asset byte budget including an exhausted exact boundary', async () => {
+  const asset = (id, source) => ({ id, type: 'style', path: `/app/${id}.css`, source });
+  const within = makeReleaseFixture({ assetSources: [asset('one', '1234'), asset('two', '5678'), asset('empty', '')] });
+  await assert.doesNotReject(verifyExtensionRelease({
+    pkg: within.pkg,
+    serviceName: 'workspace-r-0123456789abcdef0123',
+    trustedKeys: within.trustedKeys,
+    fetchImpl: artifactFetch(within),
+    assetMaximumTotalBytes: 8,
+  }));
+
+  const excessive = makeReleaseFixture({
+    assetSources: [asset('one', '1234'), asset('two', '5678'), asset('three', '9')],
+  });
+  await assert.rejects(verifyExtensionRelease({
+    pkg: excessive.pkg,
+    serviceName: 'workspace-r-0123456789abcdef0123',
+    trustedKeys: excessive.trustedKeys,
+    fetchImpl: artifactFetch(excessive),
+    assetMaximumTotalBytes: 8,
+  }), { code: 'ArtifactTooLarge' });
+});
+
+test('pure GC planner refuses more than two inactive revisions or eight resources', () => {
+  const current = buildExtensionWorkloadPlan(makeReleaseFixture().pkg);
+  const oldPlans = ['c', 'd', 'e'].map((digit) => {
+    const fixture = makeReleaseFixture();
+    fixture.pkg.spec.image.digest = `sha256:${digit.repeat(64)}`;
+    fixture.pkg.spec.resolution.resolvedDigest = fixture.pkg.spec.image.digest;
+    fixture.pkg.spec.manifest.sha256 = digit.repeat(64);
+    return buildExtensionWorkloadPlan(fixture.pkg);
+  });
+  const inventoryByPath = new Map(current.resources.map((item) => [
+    item.basePath,
+    { basePath: item.basePath, kind: item.manifest.kind, items: [] },
+  ]));
+  for (const [index, plan] of oldPlans.entries()) {
+    for (const item of plan.resources) {
+      inventoryByPath.get(item.basePath).items.push(stored(item.manifest, String(index + 1)));
+    }
+  }
+  assert.throws(() => planInactiveExtensionRevisionCleanup({
+    plan: current,
+    inventories: [...inventoryByPath.values()],
+  }), { code: 'AuthorityContractViolation' });
+  assert.throws(() => planInactiveExtensionRevisionCleanup({
+    plan: current,
+    inventories: current.resources.map((item) => ({ basePath: item.basePath, kind: item.manifest.kind, items: [] })),
+    maximumDeletes: 9,
+  }), TypeError);
+});

@@ -30,6 +30,8 @@ test('C_EXT target proxy and lifecycle are packaged without legacy runtime depen
   assert.match(crds, /name: uipluginregistrations[.]plugins[.]opensphere[.]io/u);
   assert.match(crds, /enum: \[Pending, NotReady, Ready, Degraded, Removed\]/u);
   assert.match(crds, /enum: \[Pending, Current, LastKnownGood, Disabled, Unavailable\]/u);
+  assert.match(crds, /currentArtifactVersion:[\s\S]*previousArtifactVersion:/u);
+  assert.match(crds, /currentStaticContractSha256:[\s\S]*previousStaticContractSha256:/u);
   assert.doesNotMatch(
     `${manifest}\n${dockerfile}\n${server}\n${lifecycle}\n${release}\n${crds}`,
     /extension-controller\/runtime|dupa-controller|dupa admin/iu,

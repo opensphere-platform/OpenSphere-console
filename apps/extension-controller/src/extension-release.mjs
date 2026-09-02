@@ -157,6 +157,42 @@ function packageContract(pkg, namespace) {
   });
 }
 
+function staticContractDigest(pkg, contract) {
+  const spec = pkg.spec;
+  const resources = spec.runtime?.resources || {};
+  const projection = {
+    kind: spec.kind,
+    hostRef: spec.hostRef,
+    hostCompat: spec.hostCompat,
+    hostApiVersion: spec.hostApiVersion,
+    shellCompat: spec.shellCompat,
+    contributions: spec.contributions,
+    permissions: contract.permissions,
+    permissionProfile: String(spec.permissionProfile || 'none'),
+    env: contract.env,
+    runtime: {
+      port: contract.port,
+      replicas: contract.replicas,
+      minAvailable: contract.minAvailable,
+      healthPath: contract.healthPath,
+      resources: {
+        cpuRequest: String(resources.cpuRequest || '20m'),
+        memoryRequest: String(resources.memoryRequest || '32Mi'),
+        cpuLimit: String(resources.cpuLimit || '200m'),
+        memoryLimit: String(resources.memoryLimit || '128Mi'),
+      },
+    },
+  };
+  const bytes = Buffer.from(JSON.stringify(canonical(projection)), 'utf8');
+  if (bytes.length > 128 * 1024) throw fault('Extension static contract is too large');
+  return hash(bytes);
+}
+
+export function extensionStaticContractSha256(pkg, { namespace = 'opensphere-console' } = {}) {
+  if (!DNS_LABEL.test(namespace)) throw new TypeError('Extension namespace must be a DNS label');
+  return staticContractDigest(pkg, packageContract(pkg, namespace));
+}
+
 function revisionName(name, token) {
   const maximumPrefix = 63 - 3 - token.length;
   const prefix = name.slice(0, maximumPrefix).replace(/-+$/u, '');
@@ -166,6 +202,7 @@ function revisionName(name, token) {
 export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-console' } = {}) {
   if (!DNS_LABEL.test(namespace)) throw new TypeError('Extension namespace must be a DNS label');
   const contract = packageContract(pkg, namespace);
+  const staticContractSha256 = staticContractDigest(pkg, contract);
   const revision = hash(Buffer.from(`${contract.name}\n${contract.imageDigest}\n${contract.manifestSha256}`, 'utf8')).slice(0, 20);
   const revisionResourceName = revisionName(contract.name, revision);
   const serviceAccountName = revisionName(`uip-${contract.name}`, revision.slice(0, 12));
@@ -255,17 +292,17 @@ export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-consol
       spec: { selector, ports: [{ name: 'http', port: contract.port, targetPort: 'http' }] },
     },
   });
-  return Object.freeze({ contract, revision, revisionResourceName, serviceAccountName, labels, annotations, resources, activeService });
+  return Object.freeze({ contract, staticContractSha256, revision, revisionResourceName, serviceAccountName, labels, annotations, resources, activeService });
 }
 
 export function planInactiveExtensionRevisionCleanup({
   plan,
   inventories,
   retainRevision = plan?.revision,
-  maximumDeletes = 1024,
+  maximumDeletes = 8,
 } = {}) {
   if (!plan?.contract || !Array.isArray(plan.resources) || !Array.isArray(inventories)
-      || !Number.isInteger(maximumDeletes) || maximumDeletes < 1 || maximumDeletes > 1024
+      || !Number.isInteger(maximumDeletes) || maximumDeletes < 1 || maximumDeletes > 8
       || (retainRevision != null && !/^[a-f0-9]{20}$/u.test(String(retainRevision)))) {
     throw new TypeError('Extension revision cleanup planning input is invalid');
   }
@@ -276,6 +313,7 @@ export function planInactiveExtensionRevisionCleanup({
   const seenCollections = new Set();
   const seenResources = new Set();
   const candidates = [];
+  const candidateRevisions = new Set();
   let observed = 0;
   for (const inventory of inventories) {
     const basePath = String(inventory?.basePath || '');
@@ -317,6 +355,10 @@ export function planInactiveExtensionRevisionCleanup({
       }
       seenResources.add(coordinate);
       if (!stableService && (retainRevision == null || revision !== retainRevision)) {
+        candidateRevisions.add(revision);
+        if (candidateRevisions.size > 2) {
+          throw fault('Extension revision cleanup plan exceeds its revision bound', 'AuthorityContractViolation');
+        }
         candidates.push(Object.freeze({
           apiPath: coordinate,
           kind,
@@ -411,8 +453,13 @@ export async function verifyExtensionRelease({
   timeoutMs = 10000,
   manifestMaximumBytes = 256 * 1024,
   entryMaximumBytes = 4 * 1024 * 1024,
+  assetMaximumTotalBytes = 16 * 1024 * 1024,
 } = {}) {
-  if (typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000) {
+  if (typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000
+      || !Number.isInteger(manifestMaximumBytes) || manifestMaximumBytes < 1 || manifestMaximumBytes > 1024 * 1024
+      || !Number.isInteger(entryMaximumBytes) || entryMaximumBytes < 1 || entryMaximumBytes > 16 * 1024 * 1024
+      || !Number.isInteger(assetMaximumTotalBytes) || assetMaximumTotalBytes < 1
+      || assetMaximumTotalBytes > 64 * 1024 * 1024) {
     throw new TypeError('Extension verifier configuration is invalid');
   }
   const contract = packageContract(pkg, namespace);
@@ -469,6 +516,7 @@ export async function verifyExtensionRelease({
   }
   const assets = [];
   const ids = new Set();
+  let assetBytesUsed = 0;
   for (const asset of manifestAssets) {
     if (!/^[a-z][a-z0-9-]{0,63}$/u.test(String(asset?.id || '')) || ids.has(asset.id)
         || !['module', 'style'].includes(asset.type) || !HEX_DIGEST.test(String(asset.sha256 || ''))
@@ -477,7 +525,9 @@ export async function verifyExtensionRelease({
       throw fault('Signed auxiliary asset contract is invalid', 'AssetContractInvalid');
     }
     ids.add(asset.id);
-    const bytes = await fetchBytes(asset.path, entryMaximumBytes, 'AssetUnreachable');
+    const remainingBytes = assetMaximumTotalBytes - assetBytesUsed;
+    const bytes = await fetchBytes(asset.path, Math.min(entryMaximumBytes, remainingBytes), 'AssetUnreachable');
+    assetBytesUsed += bytes.length;
     if (hash(bytes) !== asset.sha256) throw fault('Auxiliary asset bytes differ from the signed manifest', 'AssetDigestMismatch');
     if (asset.type === 'module' && moduleDependencySpecifiers(bytes.toString('utf8')).length) {
       throw fault('Extension asset is not a closed module artifact', 'NonClosedModuleArtifact');

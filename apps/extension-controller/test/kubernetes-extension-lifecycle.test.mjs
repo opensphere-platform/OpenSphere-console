@@ -12,6 +12,14 @@ const namespace = 'opensphere-console';
 const registrations = '/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginregistrations';
 const packages = '/apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginpackages';
 
+function statusPatched(source, status) {
+  return {
+    ...structuredClone(source),
+    metadata: { ...structuredClone(source.metadata), resourceVersion: `${source.metadata.resourceVersion}-status` },
+    status: structuredClone(status),
+  };
+}
+
 function registration(desiredState = 'Enabled') {
   return {
     apiVersion: 'plugins.opensphere.io/v1alpha1',
@@ -49,6 +57,11 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
       currentDigest: 'sha256:' + 'c'.repeat(64),
       currentManifestSha256: 'd'.repeat(64),
       currentVersion: '1.1.0',
+      currentArtifactVersion: '202608310001',
+      currentRepository: fixture.pkg.spec.image.repository,
+      currentManifestPath: fixture.pkg.spec.manifest.path,
+      currentSignaturePath: fixture.pkg.spec.manifest.signaturePath,
+      currentStaticContractSha256: plan.staticContractSha256,
       currentCompatibilityVersion: '1.0.0',
       currentBuildAuthority: 'localhost',
       currentRequestedRef: 'edge',
@@ -92,7 +105,7 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
       return json(200, { data: { 'trusted-keys.json': JSON.stringify({ trustedKeys: fixture.trustedKeys }) } });
     }
     if (method === 'PATCH' && parsed.pathname === registrations + '/workspace/status') {
-      return json(200, { ...currentRegistration, status: body.status });
+      return json(200, statusPatched(currentRegistration, body.status));
     }
 
     if (method === 'GET') {
@@ -166,15 +179,30 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
     digest: statusPatch.body.status.previousDigest,
     manifestSha256: statusPatch.body.status.previousManifestSha256,
     version: statusPatch.body.status.previousVersion,
+    artifactVersion: statusPatch.body.status.previousArtifactVersion,
+    repository: statusPatch.body.status.previousRepository,
+    manifestPath: statusPatch.body.status.previousManifestPath,
+    signaturePath: statusPatch.body.status.previousSignaturePath,
+    staticContractSha256: statusPatch.body.status.previousStaticContractSha256,
     revision: statusPatch.body.status.previousRevision,
     evidenceRefs: statusPatch.body.status.previousEvidenceRefs,
   }, {
     digest: 'sha256:' + 'c'.repeat(64),
     manifestSha256: 'd'.repeat(64),
     version: '1.1.0',
+    artifactVersion: '202608310001',
+    repository: fixture.pkg.spec.image.repository,
+    manifestPath: fixture.pkg.spec.manifest.path,
+    signaturePath: fixture.pkg.spec.manifest.signaturePath,
+    staticContractSha256: plan.staticContractSha256,
     revision: 'c'.repeat(40),
     evidenceRefs: ['release:previous'],
   });
+  assert.equal(statusPatch.body.status.currentArtifactVersion, fixture.pkg.spec.resolution.artifactVersion);
+  assert.equal(statusPatch.body.status.currentRepository, fixture.pkg.spec.image.repository);
+  assert.equal(statusPatch.body.status.currentManifestPath, fixture.pkg.spec.manifest.path);
+  assert.equal(statusPatch.body.status.currentSignaturePath, fixture.pkg.spec.manifest.signaturePath);
+  assert.equal(statusPatch.body.status.currentStaticContractSha256, plan.staticContractSha256);
   assert.equal(statusPatch.body.status.currentRequestedRef, 'edge');
   assert.equal(statusPatch.body.status.currentBuildAuthority, 'localhost');
   assert.equal(statusPatch.body.status.currentRegistryCredentialsRequired, true);
@@ -215,7 +243,7 @@ test('an unowned resource collision is never patched or deleted', async () => {
         });
       }
       if (parsed.pathname === registrations + '/workspace/status' && method === 'PATCH') {
-        return json(200, { ...registration(), status: body.status });
+        return json(200, statusPatched(registration(), body.status));
       }
       throw new Error('unexpected call ' + method + ' ' + parsed.pathname);
     },
@@ -253,14 +281,18 @@ test('existing owned resource update is fenced by its current resourceVersion', 
             uid: 'service-account-uid',
             resourceVersion: '41',
           },
+          automountServiceAccountToken: true,
         });
       }
       if (parsed.pathname === first.basePath + '/' + first.manifest.metadata.name && method === 'PATCH') {
         assert.equal(body.metadata.resourceVersion, '41');
-        return json(200, body);
+        return json(200, {
+          ...body,
+          metadata: { ...body.metadata, uid: 'service-account-uid', resourceVersion: '42' },
+        });
       }
       if (parsed.pathname === registrations + '/workspace/status' && method === 'PATCH') {
-        return json(200, { ...registration(), status: body.status });
+        return json(200, statusPatched(registration(), body.status));
       }
       if (method === 'GET') return json(404, { reason: 'NotFound' });
       if (method === 'POST') return json(201, body);
@@ -288,7 +320,7 @@ test('malformed Package fails before any workload authority call', async () => {
       if (parsed.pathname === registrations && method === 'GET') return json(200, { items: [registration()] });
       if (parsed.pathname === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
       if (parsed.pathname === registrations + '/workspace/status' && method === 'PATCH') {
-        return json(200, { ...registration(), status: body.status });
+        return json(200, statusPatched(registration(), body.status));
       }
       throw new Error('unexpected workload call');
     },
@@ -327,7 +359,9 @@ test('bounded round-robin prevents one Registration from starving its peers', as
         return json(404, { reason: 'NotFound' });
       }
       if (parsed.pathname.startsWith(registrations + '/') && parsed.pathname.endsWith('/status') && method === 'PATCH') {
-        return json(200, {});
+        const name = parsed.pathname.slice((registrations + '/').length, -'/status'.length);
+        const source = listed.find((item) => item.metadata.name === name);
+        return json(200, statusPatched(source, JSON.parse(options.body).status));
       }
       throw new Error('unexpected round-robin call ' + method + ' ' + parsed.pathname);
     },
@@ -386,4 +420,213 @@ test('cross-namespace or wrong-kind Registration projection fails before Package
     await assert.rejects(lifecycle.reconcileOnce(), { code: 'RegistrationContractViolation' });
     assert.deepEqual(calls, [registrations]);
   }
+});
+
+test('malformed Registration list never becomes an Idle lifecycle observation', async () => {
+  for (const value of [null, {}, { items: 'not-an-array' }]) {
+    const lifecycle = createKubernetesExtensionLifecycle({
+      baseUrl: origin,
+      token: 'service-account-token-value',
+      fetchImpl: async () => json(200, value),
+    });
+    await assert.rejects(lifecycle.reconcileOnce(), { code: 'AuthorityContractViolation' });
+  }
+});
+
+test('workload write response and complete post-write inventory are independently verified', async () => {
+  const fixture = makeReleaseFixture();
+  const plan = buildExtensionWorkloadPlan(fixture.pkg);
+  const first = plan.resources[0];
+  const calls = [];
+  const immediate = createKubernetesExtensionLifecycle({
+    baseUrl: origin,
+    token: 'service-account-token-value',
+    fetchImpl: async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      const method = options.method || 'GET';
+      const body = options.body ? JSON.parse(options.body) : null;
+      calls.push({ path, method });
+      if (path === registrations && method === 'GET') return json(200, { items: [registration()] });
+      if (path === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
+      if (path === first.basePath + '/' + first.manifest.metadata.name && method === 'GET') return json(404, {});
+      if (path === first.basePath && method === 'POST') return json(201, {
+        ...body,
+        automountServiceAccountToken: true,
+        metadata: { ...body.metadata, uid: 'created-uid', resourceVersion: '1' },
+      });
+      if (path === registrations + '/workspace/status' && method === 'PATCH') return json(200, statusPatched(registration(), body.status));
+      throw new Error(`unexpected immediate evidence call ${method} ${path}`);
+    },
+  });
+  const immediateResult = await immediate.reconcileOnce();
+  assert.equal(immediateResult.state, 'Failed');
+  assert.equal(immediateResult.reason, 'AuthorityContractViolation');
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
+
+  const resources = new Map();
+  let writes = 0;
+  let artifactReads = 0;
+  const reread = createKubernetesExtensionLifecycle({
+    baseUrl: origin,
+    token: 'service-account-token-value',
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url);
+      const path = parsed.pathname;
+      const method = options.method || 'GET';
+      const body = options.body ? JSON.parse(options.body) : null;
+      if (parsed.origin !== origin) {
+        artifactReads += 1;
+        return artifactFetch(fixture)(url, options);
+      }
+      if (path === registrations && method === 'GET') return json(200, { items: [registration()] });
+      if (path === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
+      if (path === registrations + '/workspace/status' && method === 'PATCH') return json(200, statusPatched(registration(), body.status));
+      if (method === 'GET') {
+        if (!resources.has(path)) return json(404, {});
+        const observed = structuredClone(resources.get(path));
+        if (writes === plan.resources.length && observed.kind === 'Service') observed.spec.selector['opensphere.io/extension-revision'] = 'f'.repeat(20);
+        return json(200, observed);
+      }
+      if (method === 'POST') {
+        writes += 1;
+        const pathWithName = path + '/' + body.metadata.name;
+        resources.set(pathWithName, { ...structuredClone(body), metadata: { ...structuredClone(body.metadata), uid: `${body.metadata.name}-uid`, resourceVersion: String(writes) } });
+        return json(201, resources.get(pathWithName));
+      }
+      throw new Error(`unexpected reread evidence call ${method} ${path}`);
+    },
+  });
+  const rereadResult = await reread.reconcileOnce();
+  assert.equal(rereadResult.state, 'Failed');
+  assert.equal(rereadResult.reason, 'AuthorityContractViolation');
+  assert.equal(writes, plan.resources.length);
+  assert.equal(artifactReads, 0);
+});
+
+test('Uninstalled workload deletion binds both UID and resourceVersion preconditions', async () => {
+  const fixture = makeReleaseFixture();
+  const plan = buildExtensionWorkloadPlan(fixture.pkg);
+  const targetRegistration = registration('Uninstalled');
+  const storedByPath = new Map([...plan.resources, plan.activeService].map((item, index) => [
+    item.basePath + '/' + item.manifest.metadata.name,
+    { ...structuredClone(item.manifest), metadata: { ...structuredClone(item.manifest.metadata), uid: `resource-${index}-uid`, resourceVersion: String(index + 10) } },
+  ]));
+  const deletes = [];
+  const lifecycle = createKubernetesExtensionLifecycle({
+    baseUrl: origin,
+    token: 'service-account-token-value',
+    fetchImpl: async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      const method = options.method || 'GET';
+      const body = options.body ? JSON.parse(options.body) : null;
+      if (path === registrations && method === 'GET') return json(200, { items: [targetRegistration] });
+      if (path === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
+      if (path === registrations + '/workspace/status' && method === 'PATCH') return json(200, statusPatched(targetRegistration, body.status));
+      if (path === registrations + '/workspace' && method === 'DELETE') {
+        deletes.push({ path, body });
+        return json(200, {});
+      }
+      if (method === 'GET' && storedByPath.has(path)) return json(200, storedByPath.get(path));
+      if (method === 'DELETE' && storedByPath.has(path)) {
+        deletes.push({ path, body });
+        storedByPath.delete(path);
+        return json(200, {});
+      }
+      return json(404, {});
+    },
+  });
+  assert.equal((await lifecycle.reconcileOnce()).state, 'Removed');
+  assert.equal(deletes.length, plan.resources.length + 2);
+  for (const deletion of deletes) {
+    assert.match(deletion.body.preconditions.uid, /.+/u);
+    assert.match(deletion.body.preconditions.resourceVersion, /^[0-9A-Za-z._:-]+$/u);
+  }
+});
+
+
+test('Registration status evidence rejects replacement, stale RV, and no-op status', async () => {
+  const fixture = makeReleaseFixture();
+  for (const mutate of [
+    (value) => { value.metadata.uid = 'replacement-registration-uid'; },
+    (value) => { value.metadata.resourceVersion = '19'; },
+    (value) => { value.status = {}; },
+  ]) {
+    const source = registration();
+    const lifecycle = createKubernetesExtensionLifecycle({
+      baseUrl: origin,
+      token: 'service-account-token-value',
+      fetchImpl: async (url, options = {}) => {
+        const path = new URL(url).pathname;
+        const method = options.method || 'GET';
+        if (path === registrations && method === 'GET') return json(200, { items: [source] });
+        if (path === packages + '/workspace' && method === 'GET') return json(200, { ...fixture.pkg, kind: 'WrongKind' });
+        if (path === registrations + '/workspace/status' && method === 'PATCH') {
+          const value = statusPatched(source, JSON.parse(options.body).status);
+          mutate(value);
+          return json(200, value);
+        }
+        throw new Error(`unexpected status evidence call ${method} ${path}`);
+      },
+    });
+    await assert.rejects(lifecycle.reconcileOnce(), { code: 'AuthorityContractViolation' });
+  }
+});
+
+test('changed workload PATCH requires a new RV and Uninstalled stays pending until same-UID absence', async () => {
+  const fixture = makeReleaseFixture();
+  const plan = buildExtensionWorkloadPlan(fixture.pkg);
+  const first = plan.resources[0];
+  const source = registration();
+  const stalePatch = createKubernetesExtensionLifecycle({
+    baseUrl: origin,
+    token: 'service-account-token-value',
+    fetchImpl: async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      const method = options.method || 'GET';
+      const body = options.body ? JSON.parse(options.body) : null;
+      if (path === registrations && method === 'GET') return json(200, { items: [source] });
+      if (path === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
+      if (path === first.basePath + '/' + first.manifest.metadata.name && method === 'GET') return json(200, {
+        ...structuredClone(first.manifest),
+        automountServiceAccountToken: true,
+        metadata: { ...structuredClone(first.manifest.metadata), uid: 'workload-uid', resourceVersion: '7' },
+      });
+      if (path === first.basePath + '/' + first.manifest.metadata.name && method === 'PATCH') return json(200, {
+        ...body,
+        metadata: { ...body.metadata, uid: 'workload-uid', resourceVersion: '7' },
+      });
+      if (path === registrations + '/workspace/status' && method === 'PATCH') return json(200, statusPatched(source, body.status));
+      throw new Error(`unexpected workload RV call ${method} ${path}`);
+    },
+  });
+  assert.deepEqual(await stalePatch.reconcileOnce(), {
+    state: 'Failed', extensionId: 'workspace', reason: 'AuthorityContractViolation',
+  });
+
+  const uninstall = registration('Uninstalled');
+  const active = {
+    ...structuredClone(plan.activeService.manifest),
+    metadata: { ...structuredClone(plan.activeService.manifest.metadata), uid: 'active-uid', resourceVersion: '8' },
+  };
+  let registrationDelete = 0;
+  const pendingDelete = createKubernetesExtensionLifecycle({
+    baseUrl: origin,
+    token: 'service-account-token-value',
+    fetchImpl: async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      const method = options.method || 'GET';
+      const body = options.body ? JSON.parse(options.body) : null;
+      if (path === registrations && method === 'GET') return json(200, { items: [uninstall] });
+      if (path === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
+      if (path === plan.activeService.basePath + '/workspace' && method === 'GET') return json(200, active);
+      if (path === plan.activeService.basePath + '/workspace' && method === 'DELETE') return json(202, {});
+      if (path === registrations + '/workspace' && method === 'DELETE') registrationDelete += 1;
+      if (path === registrations + '/workspace/status' && method === 'PATCH') return json(200, statusPatched(uninstall, body.status));
+      throw new Error(`unexpected pending deletion call ${method} ${path}`);
+    },
+  });
+  assert.deepEqual(await pendingDelete.reconcileOnce(), {
+    state: 'Pending', extensionId: 'workspace', reason: 'DeletionPending',
+  });
+  assert.equal(registrationDelete, 0);
 });

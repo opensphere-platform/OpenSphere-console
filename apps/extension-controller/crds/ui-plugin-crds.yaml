@@ -333,6 +333,11 @@ spec:
                 currentDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
                 currentManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 currentVersion: { type: string }
+                currentArtifactVersion: { type: string, pattern: '^(|[0-9]{12})$' }
+                currentRepository: { type: string, pattern: '^(|ghcr[.]io/opensphere-platform/[a-z0-9][a-z0-9._-]{0,127})$' }
+                currentManifestPath: { type: string, pattern: '^(|/plugins/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json)$' }
+                currentSignaturePath: { type: string, pattern: '^(|/plugins/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]sig)$' }
+                currentStaticContractSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 currentCompatibilityVersion: { type: string }
                 currentBuildAuthority: { type: string, enum: ["", localhost, github-actions] }
                 currentRequestedRef: { type: string }
@@ -354,6 +359,11 @@ spec:
                 previousDigest: { type: string, pattern: '^(|sha256:[a-f0-9]{64})$' }
                 previousManifestSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 previousVersion: { type: string }
+                previousArtifactVersion: { type: string, pattern: '^(|[0-9]{12})$' }
+                previousRepository: { type: string, pattern: '^(|ghcr[.]io/opensphere-platform/[a-z0-9][a-z0-9._-]{0,127})$' }
+                previousManifestPath: { type: string, pattern: '^(|/plugins/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]json)$' }
+                previousSignaturePath: { type: string, pattern: '^(|/plugins/[A-Za-z0-9][A-Za-z0-9._-]{0,127}[.]sig)$' }
+                previousStaticContractSha256: { type: string, pattern: '^(|[a-f0-9]{64})$' }
                 previousCompatibilityVersion: { type: string }
                 previousBuildAuthority: { type: string, enum: ["", localhost, github-actions] }
                 previousRequestedRef: { type: string }

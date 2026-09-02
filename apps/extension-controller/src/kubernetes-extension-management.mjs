@@ -1,10 +1,15 @@
+import { extensionStaticContractSha256 } from './extension-release.mjs';
+
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/u;
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST = /^[a-f0-9]{64}$/u;
+const IMAGE_REPOSITORY = /^ghcr[.]io\/opensphere-platform\/[a-z0-9][a-z0-9._-]{0,127}$/u;
+const FILE_PATH = /^\/plugins\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const ARTIFACT_VERSION = /^[0-9]{12}$/u;
 const COMPATIBILITY_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
 const SOURCE_REVISION = /^[a-f0-9]{40}$/u;
+const PERMISSION = /^[a-z][a-z0-9._:-]{0,127}$/u;
 const MAX_ITEMS = 256;
 const NATIVE_BINDINGS = new Set(['os', 'os-cli', 'opensphere-os-cli']);
 
@@ -46,21 +51,41 @@ function safeText(value, maximum, fallback = '') {
   if (result.length > maximum || /[\u0000-\u001f\u007f]/u.test(result)) throw fault('Kubernetes projection contains invalid text', 'AuthorityContractViolation');
   return result;
 }
+function exactMutationText(value, minimum, maximum) {
+  return typeof value === 'string' && value.trim().length >= minimum && value.trim().length <= maximum
+    && !/[\u0000-\u001f\u007f]/u.test(value);
+}
 function boundedList(value) {
   const items = Array.isArray(value?.items) ? value.items : null;
   if (!items || items.length > MAX_ITEMS) throw fault('Kubernetes inventory is invalid or unbounded', 'AuthorityContractViolation');
   return items;
 }
-function metadata(resource) {
-  const name = String(resource?.metadata?.name || '');
-  const resourceVersion = String(resource?.metadata?.resourceVersion || '');
-  if (!DNS_LABEL.test(name) || !RESOURCE_VERSION.test(resourceVersion)) throw fault('Kubernetes resource identity is invalid', 'AuthorityContractViolation');
+function metadata(resource, { apiVersion, kind, namespace = null } = {}) {
+  const source = resource?.metadata || {};
+  const name = String(source.name || '');
+  const uid = String(source.uid || '');
+  const resourceVersion = String(source.resourceVersion || '');
+  const namespaceMatches = namespace == null ? source.namespace == null : source.namespace === namespace;
+  if (resource?.apiVersion !== apiVersion || resource?.kind !== kind || !namespaceMatches
+      || !DNS_LABEL.test(name) || !RESOURCE_VERSION.test(resourceVersion)
+      || uid.length < 1 || uid.length > 128 || /[\u0000-\u001f\u007f]/u.test(uid)) {
+    throw fault('Kubernetes resource identity is invalid', 'AuthorityContractViolation');
+  }
   return Object.freeze({
     name,
+    uid,
     resourceVersion,
-    generation: Number.isSafeInteger(Number(resource?.metadata?.generation)) ? Number(resource.metadata.generation) : null,
-    scope: safeText(resource?.metadata?.labels?.['opensphere.io/scope'], 128),
+    generation: Number.isSafeInteger(Number(source.generation)) ? Number(source.generation) : null,
+    scope: safeText(source.labels?.['opensphere.io/scope'], 128),
   });
+}
+
+function packageIdentity(pkg, expectedName, namespace) {
+  const current = metadata(pkg, { apiVersion: 'plugins.opensphere.io/v1alpha1', kind: 'UIPluginPackage', namespace });
+  if ((expectedName && current.name !== expectedName) || current.generation == null || current.generation < 1) {
+    throw fault('UIPluginPackage identity changed', 'AuthorityContractViolation');
+  }
+  return current;
 }
 function boundedCopy(value, maximumBytes, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -68,15 +93,25 @@ function boundedCopy(value, maximumBytes, label) {
   if (Buffer.byteLength(JSON.stringify(copy)) > maximumBytes) throw fault(label + ' projection is too large', 'AuthorityContractViolation');
   return copy;
 }
+function permissionProjection(value) {
+  if (!Array.isArray(value) || value.length > MAX_ITEMS
+      || value.some((permission) => typeof permission !== 'string' || !PERMISSION.test(permission))
+      || new Set(value).size !== value.length) {
+    throw fault('Extension permission projection is invalid', 'AuthorityContractViolation');
+  }
+  return [...value];
+}
 function statusProjection(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const allowed = [
     'phase', 'reason', 'manifestUrl', 'lastTransitionTime', 'retryable', 'nextRetryAt',
-    'observedGeneration', 'observedVersion', 'currentVersion', 'currentCompatibilityVersion',
+    'observedGeneration', 'observedVersion', 'currentVersion', 'currentArtifactVersion', 'currentRepository',
+    'currentManifestPath', 'currentSignaturePath', 'currentStaticContractSha256', 'currentCompatibilityVersion',
     'currentBuildAuthority', 'currentDigest', 'currentManifestSha256', 'currentRequestedRef',
     'currentRequestedChannel', 'currentResolvedAt', 'currentSource', 'currentRevision',
     'currentSignatureIdentity', 'currentEvidenceRefs', 'currentRegistryCredentialsRequired',
-    'previousDigest', 'previousManifestSha256', 'previousVersion', 'previousCompatibilityVersion',
+    'previousDigest', 'previousManifestSha256', 'previousVersion', 'previousArtifactVersion', 'previousRepository',
+    'previousManifestPath', 'previousSignaturePath', 'previousStaticContractSha256', 'previousCompatibilityVersion',
     'previousBuildAuthority', 'previousRequestedRef', 'previousRequestedChannel', 'previousResolvedAt',
     'previousSource', 'previousRevision', 'previousSignatureIdentity', 'previousEvidenceRefs',
     'previousRegistryCredentialsRequired', 'currentChannelDigest', 'channelState', 'channelCheckedAt',
@@ -87,16 +122,19 @@ function statusProjection(value) {
   if (Buffer.byteLength(JSON.stringify(result)) > 65536) throw fault('Extension status projection is too large', 'AuthorityContractViolation');
   return result;
 }
-function registrationIdentity(registration, expectedName) {
-  const current = metadata(registration);
-  if (current.name !== expectedName || registration?.spec?.packageRef?.name !== expectedName
+function registrationIdentity(registration, expectedName, namespace) {
+  const current = metadata(registration, {
+    apiVersion: 'plugins.opensphere.io/v1alpha1', kind: 'UIPluginRegistration', namespace,
+  });
+  if (current.name !== expectedName || current.generation == null || current.generation < 1
+      || registration?.spec?.packageRef?.name !== expectedName
       || !['Installed', 'Enabled', 'Disabled', 'Uninstalled'].includes(registration?.spec?.desiredState)) {
     throw fault('UIPluginRegistration contract is invalid', 'AuthorityContractViolation');
   }
   return current;
 }
-function projectRegistration(registration) {
-  const current = registrationIdentity(registration, String(registration?.metadata?.name || ''));
+function projectRegistration(registration, namespace) {
+  const current = registrationIdentity(registration, String(registration?.metadata?.name || ''), namespace);
   const status = statusProjection(registration.status);
   const installation = registration?.spec?.installation && typeof registration.spec.installation === 'object'
     ? boundedCopy(registration.spec.installation, 4096, 'Extension installation') : null;
@@ -111,8 +149,8 @@ function projectRegistration(registration) {
     health: status?.workload?.phase === 'Ready' ? 'Ready' : status?.workload?.phase ? 'NotReady' : 'N/A',
   });
 }
-function projectPackage(pkg, registration, preference) {
-  const current = metadata(pkg);
+function projectPackage(pkg, registration, preference, namespace) {
+  const current = packageIdentity(pkg, String(pkg?.metadata?.name || ''), namespace);
   const spec = pkg?.spec || {};
   if (!['plugin', 'subShell'].includes(spec.kind) || !DNS_LABEL.test(String(spec.hostRef || ''))
       || !COMPATIBILITY_VERSION.test(String(spec.hostCompat || ''))
@@ -121,8 +159,8 @@ function projectPackage(pkg, registration, preference) {
   }
   const defaultNavigation = spec.nav && typeof spec.nav === 'object' && !Array.isArray(spec.nav)
     ? boundedCopy(spec.nav, 4096, 'Extension navigation') : null;
-  const navigation = preference?.navigation && typeof preference.navigation === 'object'
-    ? { ...(defaultNavigation || {}), ...preference.navigation } : defaultNavigation;
+  const navigation = preference?.navigation && typeof preference.navigation === 'object' && !Array.isArray(preference.navigation)
+    ? boundedCopy({ ...(defaultNavigation || {}), ...preference.navigation }, 4096, 'Extension navigation') : defaultNavigation;
   return Object.freeze({
     name: current.name,
     displayName: safeText(spec.displayName, 160, current.name),
@@ -131,7 +169,7 @@ function projectPackage(pkg, registration, preference) {
     description: safeText(spec.description, 1000),
     ...(navigation ? { nav: navigation } : {}),
     shellCompat: safeText(spec.shellCompat, 128),
-    permissions: Array.isArray(spec.permissions) ? spec.permissions.slice(0, MAX_ITEMS).map((permission) => safeText(permission, 128)) : [],
+    permissions: permissionProjection(spec.permissions || []),
     kind: spec.kind,
     hostRef: spec.hostRef,
     ...(spec.hostApiVersion ? { hostApiVersion: safeText(spec.hostApiVersion, 64) } : {}),
@@ -148,7 +186,7 @@ function projectPackage(pkg, registration, preference) {
   });
 }
 function projectBinding(binding) {
-  const current = metadata(binding);
+  const current = metadata(binding, { apiVersion: 'console.opensphere.io/v1alpha1', kind: 'CLIDownload' });
   const spec = binding?.spec || {};
   if (!Array.isArray(spec.links) || spec.links.length > 32) throw fault('CLIDownload link inventory is invalid', 'AuthorityContractViolation');
   const links = spec.links.map((link) => {
@@ -176,7 +214,12 @@ function previousRelease(status) {
   const previous = {
     digest: String(status?.previousDigest || ''),
     manifestSha256: String(status?.previousManifestSha256 || ''),
-    artifactVersion: String(status?.previousVersion || ''),
+    version: String(status?.previousVersion || ''),
+    artifactVersion: String(status?.previousArtifactVersion || ''),
+    repository: String(status?.previousRepository || ''),
+    manifestPath: String(status?.previousManifestPath || ''),
+    signaturePath: String(status?.previousSignaturePath || ''),
+    staticContractSha256: String(status?.previousStaticContractSha256 || ''),
     compatibilityVersion: String(status?.previousCompatibilityVersion || ''),
     buildAuthority: String(status?.previousBuildAuthority || ''),
     requestedRef: String(status?.previousRequestedRef || ''),
@@ -186,18 +229,26 @@ function previousRelease(status) {
     revision: String(status?.previousRevision || ''),
     signatureIdentity: String(status?.previousSignatureIdentity || ''),
     evidenceRefs: Array.isArray(status?.previousEvidenceRefs) ? status.previousEvidenceRefs.map(String) : [],
-    registryCredentialsRequired: status?.previousRegistryCredentialsRequired === true,
+    registryCredentialsRequired: status?.previousRegistryCredentialsRequired,
   };
   if (!DIGEST.test(previous.digest) || !MANIFEST_DIGEST.test(previous.manifestSha256)
-      || !ARTIFACT_VERSION.test(previous.artifactVersion) || !COMPATIBILITY_VERSION.test(previous.compatibilityVersion)
+      || !COMPATIBILITY_VERSION.test(previous.version) || !ARTIFACT_VERSION.test(previous.artifactVersion)
+      || !IMAGE_REPOSITORY.test(previous.repository)
+      || !FILE_PATH.test(previous.manifestPath) || !previous.manifestPath.endsWith('.json')
+      || !FILE_PATH.test(previous.signaturePath) || !previous.signaturePath.endsWith('.sig')
+      || !MANIFEST_DIGEST.test(previous.staticContractSha256)
+      || !COMPATIBILITY_VERSION.test(previous.compatibilityVersion)
       || !['localhost', 'github-actions'].includes(previous.buildAuthority)
-      || !previous.requestedRef || previous.requestedRef.length > 512
-      || !['edge', 'candidate', 'stable', 'ga'].includes(previous.requestedChannel)
-      || !Number.isFinite(Date.parse(previous.resolvedAt))
-      || !previous.source || previous.source.length > 512 || !SOURCE_REVISION.test(previous.revision)
-      || !previous.signatureIdentity || previous.signatureIdentity.length > 256
-      || previous.evidenceRefs.length < 2 || previous.evidenceRefs.length > 32
-      || previous.evidenceRefs.some((entry) => !entry || entry.length > 1024)) {
+      || !previous.requestedRef || previous.requestedRef.length > 512 || /[\u0000-\u001f\u007f]/u.test(previous.requestedRef)
+      || !['', 'edge', 'candidate', 'stable', 'ga'].includes(previous.requestedChannel)
+      || previous.resolvedAt.length < 20 || previous.resolvedAt.length > 64 || !Number.isFinite(Date.parse(previous.resolvedAt))
+      || !previous.source || previous.source.length > 256 || /[\u0000-\u001f\u007f]/u.test(previous.source)
+      || !SOURCE_REVISION.test(previous.revision)
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(previous.signatureIdentity)
+      || previous.evidenceRefs.length < 1 || previous.evidenceRefs.length > 32
+      || previous.evidenceRefs.some((entry) => !entry || entry.length > 512 || /[\u0000-\u001f\u007f]/u.test(entry))
+      || new Set(previous.evidenceRefs).size !== previous.evidenceRefs.length
+      || typeof previous.registryCredentialsRequired !== 'boolean') {
     throw fault('verified previous Extension release evidence is unavailable', 'PreviousReleaseUnavailable', 409);
   }
   return Object.freeze(previous);
@@ -210,7 +261,6 @@ export function createKubernetesExtensionManagementAuthority({
   fetchImpl = globalThis.fetch,
   timeoutMs = 8000,
   maximumResponseBytes = 1024 * 1024,
-  clock = () => new Date(),
 } = {}) {
   if (typeof fetchImpl !== 'function' || typeof token !== 'string' || token.length < 20 || /\s/u.test(token)
       || !DNS_LABEL.test(namespace) || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000
@@ -253,33 +303,48 @@ export function createKubernetesExtensionManagementAuthority({
     const [packageList, registrationList] = await Promise.all([request('GET', packages), request('GET', registrations)]);
     const packageItems = boundedList(packageList);
     const registrationItems = boundedList(registrationList);
-    const registrationsByName = new Map(registrationItems.map((item) => [metadata(item).name, item]));
-    return Object.freeze({ packageItems, registrationItems, registrationsByName });
+    const packagesByName = new Map();
+    for (const item of packageItems) {
+      const current = packageIdentity(item, String(item?.metadata?.name || ''), namespace);
+      if (packagesByName.has(current.name)) throw fault('duplicate UIPluginPackage identity', 'AuthorityContractViolation');
+      packagesByName.set(current.name, item);
+    }
+    const registrationsByName = new Map();
+    for (const item of registrationItems) {
+      const current = registrationIdentity(item, String(item?.metadata?.name || ''), namespace);
+      if (registrationsByName.has(current.name)) throw fault('duplicate UIPluginRegistration identity', 'AuthorityContractViolation');
+      registrationsByName.set(current.name, item);
+    }
+    return Object.freeze({ packageItems, registrationItems, packagesByName, registrationsByName });
   }
   return Object.freeze({
     async catalog(preferences = new Map()) {
       const inventory = await inventories();
       return Object.freeze(inventory.packageItems
-        .map((pkg) => projectPackage(pkg, inventory.registrationsByName.get(pkg?.metadata?.name), preferences.get(pkg?.metadata?.name)))
+        .map((pkg) => projectPackage(pkg, inventory.registrationsByName.get(pkg?.metadata?.name), preferences.get(pkg?.metadata?.name), namespace))
         .sort((left, right) => left.name.localeCompare(right.name)));
     },
     async registrations() {
       const inventory = await inventories();
-      return Object.freeze(inventory.registrationItems.map(projectRegistration).sort((left, right) => left.name.localeCompare(right.name)));
+      return Object.freeze(inventory.registrationItems.map((item) => projectRegistration(item, namespace)).sort((left, right) => left.name.localeCompare(right.name)));
     },
     async bindings() {
-      return Object.freeze(boundedList(await request('GET', bindings)).map(projectBinding)
-        .filter((binding) => !NATIVE_BINDINGS.has(binding.name)).sort((left, right) => left.name.localeCompare(right.name)));
+      const projected = boundedList(await request('GET', bindings)).map(projectBinding);
+      if (new Set(projected.map((binding) => binding.name)).size !== projected.length) {
+        throw fault('duplicate CLIDownload identity', 'AuthorityContractViolation');
+      }
+      return Object.freeze(projected.filter((binding) => !NATIVE_BINDINGS.has(binding.name))
+        .sort((left, right) => left.name.localeCompare(right.name)));
     },
     async setDesiredState({ id, desiredState, actorRef, reason }) {
       if (!DNS_LABEL.test(String(id || '')) || !['Enabled', 'Disabled', 'Uninstalled'].includes(desiredState)
-          || typeof actorRef !== 'string' || actorRef.length < 1 || actorRef.length > 128
-          || typeof reason !== 'string' || reason.trim().length < 8 || reason.trim().length > 500) {
+          || !exactMutationText(actorRef, 1, 128)
+          || !exactMutationText(reason, 8, 500)) {
         throw fault('Extension desired-state request is invalid', 'ValidationFailed', 400);
       }
       const [pkg, registration] = await Promise.all([request('GET', `${packages}/${id}`), request('GET', `${registrations}/${id}`)]);
-      const packageMetadata = metadata(pkg);
-      const current = registrationIdentity(registration, id);
+      const packageMetadata = packageIdentity(pkg, id, namespace);
+      const current = registrationIdentity(registration, id, namespace);
       if (packageMetadata.name !== id) throw fault('UIPluginPackage identity changed', 'AuthorityContractViolation');
       if (packageMetadata.scope.startsWith('main-shell') && ['Disabled', 'Uninstalled'].includes(desiredState)) {
         throw fault('shell-pinned core Extension cannot be disabled or uninstalled', 'CoreExtensionImmutable', 409);
@@ -288,32 +353,40 @@ export function createKubernetesExtensionManagementAuthority({
         metadata: { resourceVersion: current.resourceVersion },
         spec: { desiredState, approval: { requestedBy: actorRef, reason: reason.trim() } },
       }, [200], 'unknown');
-      const observed = registrationIdentity(patched, id);
-      if (patched?.spec?.desiredState !== desiredState || observed.resourceVersion === current.resourceVersion) {
+      const observed = registrationIdentity(patched, id, namespace);
+      if (patched?.spec?.desiredState !== desiredState || observed.uid !== current.uid
+          || observed.resourceVersion === current.resourceVersion) {
         throw fault('Kubernetes returned mismatched desired-state evidence', 'AuthorityContractViolation', 503, 'present');
       }
       return Object.freeze({ id, desiredState, registrationResourceVersionBefore: current.resourceVersion, registrationResourceVersion: observed.resourceVersion });
     },
     async rollback({ id, actorRef, reason }) {
-      if (!DNS_LABEL.test(String(id || '')) || typeof actorRef !== 'string' || actorRef.length < 1 || actorRef.length > 128
-          || typeof reason !== 'string' || reason.trim().length < 8 || reason.trim().length > 500) {
+      if (!DNS_LABEL.test(String(id || '')) || !exactMutationText(actorRef, 1, 128)
+          || !exactMutationText(reason, 8, 500)) {
         throw fault('Extension rollback request is invalid', 'ValidationFailed', 400);
       }
       const [pkg, registration] = await Promise.all([request('GET', `${packages}/${id}`), request('GET', `${registrations}/${id}`)]);
-      const packageMetadata = metadata(pkg);
-      const current = registrationIdentity(registration, id);
+      const packageMetadata = packageIdentity(pkg, id, namespace);
+      const current = registrationIdentity(registration, id, namespace);
       if (packageMetadata.name !== id || !DIGEST.test(String(pkg?.spec?.image?.digest || ''))) throw fault('UIPluginPackage rollback target is invalid', 'AuthorityContractViolation');
       const previous = previousRelease(registration.status);
+      let currentStaticContractSha256;
+      try { currentStaticContractSha256 = extensionStaticContractSha256(pkg, { namespace }); }
+      catch { throw fault('current Extension static contract cannot be verified for rollback', 'PreviousReleaseUnavailable', 409); }
+      if (currentStaticContractSha256 !== previous.staticContractSha256) {
+        throw fault('previous Extension static contract differs from the current Package', 'PreviousReleaseUnavailable', 409);
+      }
       if (previous.digest === pkg.spec.image.digest) throw fault('previous Extension release is already current', 'StaleAuthorityRevision', 409);
       const patchedPackage = await request('PATCH', `${packages}/${id}`, {
         metadata: { resourceVersion: packageMetadata.resourceVersion },
         spec: {
-          version: previous.compatibilityVersion,
-          image: { digest: previous.digest },
-          manifest: { sha256: previous.manifestSha256 },
+          version: previous.version,
+          image: { repository: previous.repository, digest: previous.digest },
+          manifest: { path: previous.manifestPath, sha256: previous.manifestSha256, signaturePath: previous.signaturePath },
+          trust: { keyId: previous.signatureIdentity },
           resolution: {
             requestedRef: previous.requestedRef, requestedChannel: previous.requestedChannel,
-            resolvedDigest: previous.digest, resolvedAt: clock().toISOString(),
+            resolvedDigest: previous.digest, resolvedAt: previous.resolvedAt,
             artifactVersion: previous.artifactVersion, compatibilityVersion: previous.compatibilityVersion,
             buildAuthority: previous.buildAuthority, source: previous.source, revision: previous.revision,
             signatureIdentity: previous.signatureIdentity,
@@ -321,11 +394,26 @@ export function createKubernetesExtensionManagementAuthority({
           },
         },
       }, [200], 'unknown');
-      const appliedPackage = metadata(patchedPackage);
-      if (appliedPackage.name !== id || appliedPackage.resourceVersion === packageMetadata.resourceVersion
+      const appliedPackage = packageIdentity(patchedPackage, id, namespace);
+      const appliedResolution = patchedPackage?.spec?.resolution || {};
+      if (appliedPackage.name !== id || appliedPackage.uid !== packageMetadata.uid
+          || appliedPackage.resourceVersion === packageMetadata.resourceVersion
+          || patchedPackage?.spec?.version !== previous.version
+          || patchedPackage?.spec?.image?.repository !== previous.repository
           || patchedPackage?.spec?.image?.digest !== previous.digest
+          || patchedPackage?.spec?.manifest?.path !== previous.manifestPath
           || patchedPackage?.spec?.manifest?.sha256 !== previous.manifestSha256
-          || patchedPackage?.spec?.resolution?.resolvedDigest !== previous.digest) {
+          || patchedPackage?.spec?.manifest?.signaturePath !== previous.signaturePath
+          || patchedPackage?.spec?.trust?.keyId !== previous.signatureIdentity
+          || appliedResolution.requestedRef !== previous.requestedRef
+          || appliedResolution.requestedChannel !== previous.requestedChannel
+          || appliedResolution.resolvedDigest !== previous.digest || appliedResolution.resolvedAt !== previous.resolvedAt
+          || appliedResolution.artifactVersion !== previous.artifactVersion
+          || appliedResolution.compatibilityVersion !== previous.compatibilityVersion
+          || appliedResolution.buildAuthority !== previous.buildAuthority || appliedResolution.source !== previous.source
+          || appliedResolution.revision !== previous.revision || appliedResolution.signatureIdentity !== previous.signatureIdentity
+          || appliedResolution.registryCredentialsRequired !== previous.registryCredentialsRequired
+          || JSON.stringify(appliedResolution.evidenceRefs) !== JSON.stringify(previous.evidenceRefs)) {
         throw fault('Kubernetes returned mismatched rollback Package evidence', 'AuthorityContractViolation', 503, 'present');
       }
       let patchedRegistration;
@@ -338,8 +426,9 @@ export function createKubernetesExtensionManagementAuthority({
         if (!error.sideEffect || error.sideEffect === 'none') error.sideEffect = 'present';
         throw error;
       }
-      const observed = registrationIdentity(patchedRegistration, id);
-      if (patchedRegistration?.spec?.desiredState !== 'Enabled' || observed.resourceVersion === current.resourceVersion) {
+      const observed = registrationIdentity(patchedRegistration, id, namespace);
+      if (patchedRegistration?.spec?.desiredState !== 'Enabled' || observed.uid !== current.uid
+          || observed.resourceVersion === current.resourceVersion) {
         throw fault('Kubernetes returned mismatched rollback Registration evidence', 'AuthorityContractViolation', 503, 'present');
       }
       return Object.freeze({
@@ -353,23 +442,24 @@ export function createKubernetesExtensionManagementAuthority({
         throw fault('CLIDownload binding mutation is invalid', 'ValidationFailed', 400);
       }
       const current = await request('GET', `${bindings}/${name}`);
-      const before = metadata(current);
+      const before = metadata(current, { apiVersion: 'console.opensphere.io/v1alpha1', kind: 'CLIDownload' });
       if (before.name !== name || !Array.isArray(current?.spec?.links)) throw fault('CLIDownload binding target is invalid', 'AuthorityContractViolation');
       const patched = await request('PATCH', `${bindings}/${name}`, {
         metadata: { resourceVersion: before.resourceVersion }, spec: { enabled },
       }, [200], 'unknown');
-      const after = metadata(patched);
-      if (after.name !== name || after.resourceVersion === before.resourceVersion || patched?.spec?.enabled !== enabled) {
+      const after = metadata(patched, { apiVersion: 'console.opensphere.io/v1alpha1', kind: 'CLIDownload' });
+      if (after.name !== name || after.uid !== before.uid
+          || after.resourceVersion === before.resourceVersion || patched?.spec?.enabled !== enabled) {
         throw fault('Kubernetes returned mismatched CLIDownload evidence', 'AuthorityContractViolation', 503, 'present');
       }
       return Object.freeze({ name, enabled, resourceVersionBefore: before.resourceVersion, resourceVersion: after.resourceVersion });
     },
     async navigationInventory() {
       const inventory = await inventories();
-      const registered = new Set(inventory.registrationItems.map((item) => registrationIdentity(item, item?.metadata?.name).name));
+      const registered = new Set(inventory.registrationItems.map((item) => registrationIdentity(item, item?.metadata?.name, namespace).name));
       return Object.freeze(inventory.packageItems
         .filter((pkg) => pkg?.spec?.kind === 'subShell' && pkg?.spec?.hostRef === 'main' && registered.has(pkg?.metadata?.name))
-        .map((pkg) => metadata(pkg).name).sort());
+        .map((pkg) => packageIdentity(pkg, String(pkg?.metadata?.name || ''), namespace).name).sort());
     },
   });
 }

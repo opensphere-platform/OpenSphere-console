@@ -7,13 +7,17 @@ import {
 
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/u;
+const IMAGE_REPOSITORY = /^ghcr[.]io\/opensphere-platform\/[a-z0-9][a-z0-9._-]{0,127}$/u;
+const FILE_PATH = /^\/plugins\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 const MAX_REGISTRATIONS = 256;
 const TERMINAL_VERIFICATION = new Set([
   'PackageContractViolation', 'UnsupportedPermissionProfile', 'UnsafeRuntimeContract',
   'ManifestDigestMismatch', 'ManifestInvalid', 'UntrustedKey', 'ManifestSignatureInvalid',
   'ManifestContractMismatch', 'ApiNamespaceViolation', 'EntryDigestMismatch',
-  'NonClosedModuleArtifact', 'AssetContractInvalid', 'AssetDigestMismatch',
+  'NonClosedModuleArtifact', 'AssetContractInvalid', 'AssetDigestMismatch', 'ArtifactTooLarge',
   'RegistrationContractViolation', 'ResourceOwnershipMismatch', 'ReleaseRevisionCollision', 'TrustedKeysInvalid',
+  'AuthorityContractViolation',
 ]);
 
 function fault(message, code, retryable = false) {
@@ -52,6 +56,11 @@ async function boundedJson(response, maximumBytes) {
   catch { throw fault('Kubernetes response is invalid JSON', 'AuthorityContractViolation'); }
 }
 
+function validUid(value) {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 128
+    && !/[\u0000-\u001f\u007f]/u.test(value);
+}
+
 function exactRegistration(registration, namespace) {
   const metadata = registration?.metadata || {};
   const spec = registration?.spec || {};
@@ -59,7 +68,7 @@ function exactRegistration(registration, namespace) {
   if (registration?.apiVersion !== 'plugins.opensphere.io/v1alpha1' || registration?.kind !== 'UIPluginRegistration'
       || metadata.namespace !== namespace || !DNS_LABEL.test(name)
       || !RESOURCE_VERSION.test(String(metadata.resourceVersion || ''))
-      || typeof metadata.uid !== 'string' || metadata.uid.length < 1 || metadata.uid.length > 128
+      || !validUid(metadata.uid)
       || !Number.isSafeInteger(Number(metadata.generation)) || Number(metadata.generation) < 1
       || spec.packageRef?.name !== name
       || !['Installed', 'Enabled', 'Disabled', 'Uninstalled'].includes(spec.desiredState)) {
@@ -85,7 +94,7 @@ function ownedByPackage(resource, plan) {
 function exactRevisionResource(resource, item, plan, allowRevisionChange = false) {
   if (resource?.kind !== item.manifest.kind || resource?.metadata?.name !== item.manifest.metadata.name
       || resource?.metadata?.namespace !== plan.contract.namespace
-      || typeof resource?.metadata?.uid !== 'string' || resource.metadata.uid.length < 1 || resource.metadata.uid.length > 128
+      || !validUid(resource?.metadata?.uid)
       || !RESOURCE_VERSION.test(String(resource?.metadata?.resourceVersion || '')) || !ownedByPackage(resource, plan)) {
     throw fault('refusing to replace an unowned Extension resource', 'ResourceOwnershipMismatch');
   }
@@ -96,6 +105,27 @@ function exactRevisionResource(resource, item, plan, allowRevisionChange = false
       throw fault('immutable Extension revision identity collided', 'ReleaseRevisionCollision');
     }
   }
+}
+
+function includesDesired(actual, desired) {
+  if (Array.isArray(desired)) {
+    return Array.isArray(actual) && actual.length === desired.length
+      && desired.every((value, index) => includesDesired(actual[index], value));
+  }
+  if (desired && typeof desired === 'object') {
+    return actual && typeof actual === 'object' && !Array.isArray(actual)
+      && Object.entries(desired).every(([key, value]) => includesDesired(actual[key], value));
+  }
+  return Object.is(actual, desired);
+}
+
+function exactAppliedResource(resource, item, plan, { allowRevisionChange = false, previousResourceVersion = '' } = {}) {
+  exactRevisionResource(resource, item, plan, allowRevisionChange);
+  if (!includesDesired(resource, item.manifest)
+      || (previousResourceVersion && String(resource.metadata.resourceVersion) === previousResourceVersion)) {
+    throw fault('Kubernetes returned mismatched Extension workload evidence', 'AuthorityContractViolation');
+  }
+  return resource;
 }
 
 function rolloutReady(deployment, plan) {
@@ -127,6 +157,11 @@ export function projectPreviousVerifiedRelease(registration, plan) {
   const valid = /^sha256:[a-f0-9]{64}$/u.test(digest)
     && /^[a-f0-9]{64}$/u.test(manifestSha256)
     && /^[0-9]+[.][0-9]+[.][0-9]+$/u.test(String(status.currentVersion || ''))
+    && /^[0-9]{12}$/u.test(String(status.currentArtifactVersion || ''))
+    && IMAGE_REPOSITORY.test(String(status.currentRepository || ''))
+    && FILE_PATH.test(String(status.currentManifestPath || '')) && String(status.currentManifestPath).endsWith('.json')
+    && FILE_PATH.test(String(status.currentSignaturePath || '')) && String(status.currentSignaturePath).endsWith('.sig')
+    && HEX_DIGEST.test(String(status.currentStaticContractSha256 || ''))
     && /^[0-9]+[.][0-9]+[.][0-9]+$/u.test(String(status.currentCompatibilityVersion || ''))
     && ['localhost', 'github-actions'].includes(status.currentBuildAuthority)
     && typeof status.currentRequestedRef === 'string' && status.currentRequestedRef.length >= 1
@@ -152,6 +187,11 @@ export function projectPreviousVerifiedRelease(registration, plan) {
     previousDigest: digest,
     previousManifestSha256: manifestSha256,
     previousVersion: status.currentVersion,
+    previousArtifactVersion: status.currentArtifactVersion,
+    previousRepository: status.currentRepository,
+    previousManifestPath: status.currentManifestPath,
+    previousSignaturePath: status.currentSignaturePath,
+    previousStaticContractSha256: status.currentStaticContractSha256,
     previousCompatibilityVersion: status.currentCompatibilityVersion,
     previousBuildAuthority: status.currentBuildAuthority,
     previousRequestedRef: status.currentRequestedRef,
@@ -212,6 +252,12 @@ export function createKubernetesExtensionLifecycle({
     const result = await request('PATCH', `${registrations}/${current.name}/status`, {
       metadata: { resourceVersion: current.resourceVersion }, status,
     });
+    const observed = exactRegistration(result.value, namespace);
+    if (observed.name !== current.name || observed.uid !== current.uid
+        || observed.resourceVersion === current.resourceVersion || observed.generation !== current.generation
+        || !includesDesired(result.value.status, status)) {
+      throw fault('Kubernetes returned mismatched Registration status evidence', 'AuthorityContractViolation');
+    }
     return result.value;
   }
 
@@ -219,14 +265,18 @@ export function createKubernetesExtensionLifecycle({
     const name = item.manifest.metadata.name;
     const existing = await request('GET', `${item.basePath}/${name}`, undefined, [200, 404]);
     if (existing.status === 404) {
-      await request('POST', item.basePath, item.manifest, [200, 201]);
+      const created = await request('POST', item.basePath, item.manifest, [200, 201]);
+      exactAppliedResource(created.value, item, plan, { allowRevisionChange });
       return 'created';
     }
     exactRevisionResource(existing.value, item, plan, allowRevisionChange);
-    await request('PATCH', `${item.basePath}/${name}`, {
+    if (includesDesired(existing.value, item.manifest)) return 'unchanged';
+    const resourceVersion = String(existing.value.metadata.resourceVersion);
+    const patched = await request('PATCH', `${item.basePath}/${name}`, {
       ...item.manifest,
-      metadata: { ...item.manifest.metadata, resourceVersion: String(existing.value.metadata.resourceVersion) },
+      metadata: { ...item.manifest.metadata, resourceVersion },
     });
+    exactAppliedResource(patched.value, item, plan, { allowRevisionChange, previousResourceVersion: resourceVersion });
     return 'patched';
   }
 
@@ -235,12 +285,22 @@ export function createKubernetesExtensionLifecycle({
     const existing = await request('GET', `${item.basePath}/${name}`, undefined, [200, 404]);
     if (existing.status === 404) return false;
     exactRevisionResource(existing.value, item, plan, allowRevisionChange);
+    const uid = String(existing.value.metadata.uid);
     await request('DELETE', `${item.basePath}/${name}`, {
       apiVersion: 'v1', kind: 'DeleteOptions',
-      preconditions: existing.value?.metadata?.uid ? { uid: String(existing.value.metadata.uid) } : undefined,
+      preconditions: {
+        uid,
+        resourceVersion: String(existing.value.metadata.resourceVersion),
+      },
       propagationPolicy: 'Foreground',
     }, [200, 202, 204, 404]);
-    return true;
+    const remaining = await request('GET', `${item.basePath}/${name}`, undefined, [200, 404]);
+    if (remaining.status === 404) return true;
+    exactRevisionResource(remaining.value, item, plan, allowRevisionChange);
+    if (String(remaining.value.metadata.uid) !== uid) {
+      throw fault('Extension resource was replaced while deletion was observed', 'ResourceOwnershipMismatch');
+    }
+    throw fault('Extension resource deletion is not yet observed', 'DeletionPending', true);
   }
 
   async function loadTrustedKeys() {
@@ -272,7 +332,10 @@ export function createKubernetesExtensionLifecycle({
   return Object.freeze({
     async reconcileOnce() {
       const listed = await request('GET', registrations);
-      const items = Array.isArray(listed.value?.items) ? listed.value.items : [];
+      if (!listed.value || typeof listed.value !== 'object' || !Array.isArray(listed.value.items)) {
+        throw fault('UIPluginRegistration list contract is invalid', 'AuthorityContractViolation');
+      }
+      const items = listed.value.items;
       if (items.length > MAX_REGISTRATIONS) {
         throw fault('UIPluginRegistration list exceeds its bounded reconciliation set', 'AuthorityContractViolation');
       }
@@ -303,13 +366,26 @@ export function createKubernetesExtensionLifecycle({
             preconditions: { uid: current.uid, resourceVersion: current.resourceVersion },
             propagationPolicy: 'Foreground',
           }, [200, 202, 204, 404]);
+          const remaining = await request('GET', `${registrations}/${current.name}`, undefined, [200, 404]);
+          if (remaining.status !== 404) {
+            const observed = exactRegistration(remaining.value, namespace);
+            if (observed.uid !== current.uid) {
+              throw fault('Registration was replaced while deletion was observed', 'ResourceOwnershipMismatch');
+            }
+            throw fault('Registration deletion is not yet observed', 'DeletionPending', true);
+          }
           return Object.freeze({ state: 'Removed', extensionId: current.name, revision: plan.revision });
         } catch (error) { return markFailure(registration, error); }
       }
 
       try {
         for (const item of plan.resources) await upsert(item, plan);
-        const deployment = (await request('GET', `${plan.resources[1].basePath}/${plan.revisionResourceName}`)).value;
+        let deployment;
+        for (const item of plan.resources) {
+          const observed = (await request('GET', `${item.basePath}/${item.manifest.metadata.name}`)).value;
+          exactAppliedResource(observed, item, plan);
+          if (item.manifest.kind === 'Deployment') deployment = observed;
+        }
         if (!rolloutReady(deployment, plan)) {
           await patchStatus(registration, {
             observedGeneration: current.generation, phase: 'Installing', retryable: true,
@@ -338,6 +414,11 @@ export function createKubernetesExtensionLifecycle({
           currentDigest: plan.contract.imageDigest,
           currentManifestSha256: plan.contract.manifestSha256,
           currentVersion: plan.contract.version,
+          currentArtifactVersion: plan.contract.artifactVersion,
+          currentRepository: plan.contract.repository,
+          currentManifestPath: plan.contract.manifestPath,
+          currentSignaturePath: plan.contract.signaturePath,
+          currentStaticContractSha256: plan.staticContractSha256,
           currentCompatibilityVersion: plan.contract.compatibilityVersion,
           currentBuildAuthority: plan.contract.buildAuthority,
           currentRequestedRef: plan.contract.requestedRef,
