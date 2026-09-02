@@ -12,7 +12,7 @@
     { "id": "C_DST", "path": "apps/osdst", "artifact": "opensphere-osdst", "legacySources": ["backend/opensphere-osdst"] },
     { "id": "C_SCTL", "path": "apps/os-shell-control", "artifact": "opensphere-os-shell-control", "legacySources": ["backend/os-shell-control"] },
     { "id": "C_BAK", "path": "apps/recovery-owner", "artifact": "opensphere-console-recovery", "legacySources": ["backend/recovery"] },
-    { "id": "C_NOTIFY", "path": "apps/notification-dispatcher", "artifact": "opensphere-notification-dispatcher", "legacySources": ["backend/notification-dispatcher"] },
+    { "id": "C_NOTIFY", "path": "apps/notification-dispatcher", "artifact": "opensphere-notification-dispatcher", "legacySources": [] },
     { "id": "C_CLI", "path": "cmd/os-cli", "artifact": "os", "legacySources": [] }
   ]
 }

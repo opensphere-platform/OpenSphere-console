@@ -132,8 +132,8 @@ jobs:
             context: OpenSphere-console/backend/osaa-governed-adapter
             file: OpenSphere-console/backend/osaa-governed-adapter/Dockerfile
           - image: opensphere-console-notification-dispatcher
-            context: OpenSphere-console/backend/notification-dispatcher
-            file: OpenSphere-console/backend/notification-dispatcher/Dockerfile
+            context: OpenSphere-console/apps/notification-dispatcher
+            file: OpenSphere-console/apps/notification-dispatcher/Dockerfile
           - image: opensphere-console-recovery
             context: OpenSphere-console/backend/recovery
             file: OpenSphere-console/backend/recovery/Dockerfile
