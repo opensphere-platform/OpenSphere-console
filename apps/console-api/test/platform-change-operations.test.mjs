@@ -91,6 +91,32 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
       order.push('approval-read');
       return operationRecord;
     },
+    async listGiteaChanges() {
+      order.push('projection');
+      if (!operationRecord) return { observedAt: current.toISOString(), items: [] };
+      return {
+        observedAt: current.toISOString(),
+        items: [{
+          operationId, actorRef: operationRecord.actor_ref,
+          action: operationRecord.execution_plan.action,
+          target: operationRecord.execution_plan.target,
+          reason: operationRecord.reason,
+          repository: operationRecord.execution_plan.repository,
+          state: operationRecord.state,
+          sourceRevision: operationRecord.source_revision,
+          errorCode: null,
+          createdAt: operationRecord.created_at,
+          updatedAt: operationRecord.updated_at,
+          proposal: proposalBindings.length ? {
+            branch: `control/${operationId}`, pullNumber: 17, desiredRevision: 'a'.repeat(40),
+          } : null,
+          approvals: approvals.map(() => ({
+            approverId: approverSession.subjectId, createdAt: current.toISOString(),
+          })),
+          outbox: { attemptCount: 0, claimedAt: null, leaseExpiresAt: null, deliveredAt: null, createdAt: current.toISOString() },
+        }],
+      };
+    },
     async recordGiteaProposal(input) {
       order.push('proposal-binding');
       proposalBindings.push(input);
@@ -185,7 +211,7 @@ test('Gitea status is current-session permission gated and keeps owner readiness
   assert.deepEqual(order, []);
 
   const result = await operations.status({ session });
-  assert.deepEqual(order, ['preflight']);
+  assert.deepEqual(order, ['projection', 'preflight']);
   assert.equal(result.ready, true);
   assert.equal(result.managementReady, false);
   assert.equal(result.repositoryCount, 1);
@@ -252,6 +278,26 @@ test('Database failure after proposal creation reports a present side effect for
     return true;
   });
   assert.deepEqual(state.order, ['preflight', 'intent', 'gitea', 'proposal-binding']);
+});
+
+test('Gitea status projects durable proposal coordinates without claiming an apply owner', async () => {
+  const state = fixture();
+  await state.operations.propose({
+    session,
+    body: request(),
+    idempotencyKey: 'platform-change-proposal-status-0001',
+    correlationId: 'platform-change-proposal-status-correlation-0001',
+  });
+  state.order.length = 0;
+  const result = await state.operations.status({ session });
+  assert.deepEqual(state.order, ['projection', 'preflight']);
+  assert.equal(result.changes.length, 1);
+  assert.equal(result.changes[0].status, 'intent');
+  assert.equal(result.changes[0].execution.pull_number, 17);
+  assert.equal(result.changes[0].execution.desired_revision, 'a'.repeat(40));
+  assert.equal(result.changes[0].execution.reconciler, 'NotConfigured');
+  assert.equal(result.byStatus.intent, 1);
+  assert.equal(result.managementReady, false);
 });
 
 test('Rejected Supabase intent causes zero Gitea calls', async () => {

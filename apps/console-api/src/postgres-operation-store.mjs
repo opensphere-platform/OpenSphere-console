@@ -49,6 +49,12 @@ const GET_GITEA_OPERATION_FOR_APPROVAL_SQL = [
   ') AS operation_record',
 ].join(' ');
 
+const LIST_GITEA_CHANGES_SQL = [
+  'SELECT console_operation.list_gitea_changes(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint',
+  ') AS change_inventory',
+].join(' ');
+
 const RESOLVE_SESSION_SQL = [
   'SELECT console_identity.resolve_browser_session(',
   '$1::bytea, $2::bytea, $3::boolean',
@@ -1111,6 +1117,24 @@ export function createPostgresOperationStore({ query }) {
         const record = result?.rows?.[0]?.operation_record;
         if (!record) throw new Error('get_gitea_operation_for_approval returned no receipt');
         return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listGiteaChanges(input) {
+      try {
+        const result = await query(LIST_GITEA_CHANGES_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+        ]);
+        const inventory = result?.rows?.[0]?.change_inventory;
+        if (!inventory || !Array.isArray(inventory.items)) {
+          throw new Error('list_gitea_changes returned no inventory');
+        }
+        return inventory;
       } catch (error) {
         throw databaseError(error);
       }

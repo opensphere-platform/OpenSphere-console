@@ -80,8 +80,73 @@ function assertStatusAuthority(session) {
   }
 }
 
-function statusProjection(status, giteaClient) {
+function changeStatus(state) {
+  if (state === 'Planned') return 'intent';
+  if (state === 'Authorized') return 'authorized';
+  if (['Submitted', 'Reconciling'].includes(state)) return 'committed';
+  if (['Applied', 'Verified', 'RolledBack'].includes(state)) return 'applied';
+  if (state === 'Failed') return 'failed';
+  return 'unknown';
+}
+
+function changeProjection(item) {
+  const status = changeStatus(item.state);
+  const completed = ['applied', 'failed'].includes(status) ? item.updatedAt : null;
+  const proposal = item.proposal || null;
+  const outbox = item.outbox || null;
+  const reconcilerStatus = status === 'intent' ? 'AwaitingApproval'
+    : status === 'authorized' ? 'AwaitingMerge'
+      : status === 'committed' ? 'AwaitingConsumer' : status;
+  return Object.freeze({
+    request_id: item.operationId,
+    actor_id: item.actorRef,
+    actor_type: 'supabase-user',
+    action: item.action,
+    target: item.target,
+    reason: item.reason,
+    status,
+    git_repo: item.repository,
+    git_ref: proposal?.branch || null,
+    git_commit_sha: item.sourceRevision || null,
+    k8s_operation_id: null,
+    created_at: item.createdAt,
+    completed_at: completed,
+    approvalPolicy: 'cross-operator',
+    execution: Object.freeze({
+      branch: proposal?.branch || '',
+      pull_number: proposal?.pullNumber ?? null,
+      pull_url: null,
+      desired_revision: proposal?.desiredRevision || null,
+      merge_revision: item.sourceRevision || null,
+      reconciler: 'NotConfigured',
+      reconciler_status: reconcilerStatus,
+      drift_status: 'Unknown',
+      attempt_count: Number(outbox?.attemptCount || 0),
+      last_error: item.errorCode || null,
+      updated_at: item.updatedAt,
+    }),
+    outbox: outbox ? Object.freeze({
+      status: outbox.deliveredAt ? 'delivered' : outbox.claimedAt ? 'claimed' : 'pending',
+      attempts: Number(outbox.attemptCount || 0),
+      next_attempt_at: outbox.leaseExpiresAt || null,
+      last_error: item.errorCode || null,
+      updated_at: outbox.createdAt,
+    }) : null,
+    approvals: Object.freeze((item.approvals || []).map((approval) => Object.freeze({
+      approver_id: approval.approverId,
+      status: 'applied',
+      created_at: approval.createdAt,
+      completed_at: approval.createdAt,
+      error_code: null,
+    }))),
+  });
+}
+
+function statusProjection(status, inventory, giteaClient) {
   const repository = status.repositoryMetadata ? [status.repositoryMetadata] : [];
+  const changes = Object.freeze(inventory.items.map(changeProjection));
+  const byStatus = { intent: 0, authorized: 0, committed: 0, applied: 0, failed: 0, unknown: 0 };
+  for (const change of changes) byStatus[change.status] += 1;
   const policyObserved = ['protected', 'requiredApprovals', 'directPushEnabled', 'signedCommitsRequired', 'blockRejectedReviews']
     .every((field) => Object.hasOwn(status, field));
   return Object.freeze({
@@ -98,8 +163,8 @@ function statusProjection(status, giteaClient) {
     repositories: Object.freeze(repository),
     contracts: Object.freeze([]),
     receipts: Object.freeze([]),
-    changes: Object.freeze([]),
-    byStatus: Object.freeze({ intent: 0, authorized: 0, committed: 0, applied: 0, failed: 0, unknown: 0 }),
+    changes,
+    byStatus: Object.freeze(byStatus),
     reason: status.ready
       ? 'Gitea proposal and protected merge are ready; post-merge owner reconciliation is not configured'
       : String(status.reason || 'Gitea status is unavailable'),
@@ -133,7 +198,8 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
   if (!operationService?.accept || !operationService?.approve || !operationService?.assertApprovalAuthority) {
     throw new TypeError('operation service is required');
   }
-  if (!projectionStore?.getGiteaOperationForApproval || !projectionStore?.recordGiteaProposal
+  if (!projectionStore?.getGiteaOperationForApproval || !projectionStore?.listGiteaChanges
+      || !projectionStore?.recordGiteaProposal
       || !projectionStore?.recordGiteaMerge) {
     throw new TypeError('Gitea operation projection store is required');
   }
@@ -145,7 +211,13 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
   return Object.freeze({
     async status({ session }) {
       assertStatusAuthority(session);
-      return statusProjection(await giteaClient.supplyChainStatus(), giteaClient);
+      const inventory = await projectionStore.listGiteaChanges({
+        sessionId: session.sessionId,
+        actorRef: session.subjectId,
+        expectedPermissionRevision: Number(session.permissionRevision),
+        expectedRevokeEpoch: Number(session.revokeEpoch),
+      });
+      return statusProjection(await giteaClient.supplyChainStatus(), inventory, giteaClient);
     },
 
     async propose({ session, body, idempotencyKey, correlationId }) {

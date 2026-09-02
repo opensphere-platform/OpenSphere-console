@@ -41,18 +41,88 @@
     },
     "contracts": { "type": "array", "maxItems": 0 },
     "receipts": { "type": "array", "maxItems": 0 },
-    "changes": { "type": "array", "maxItems": 0 },
+    "changes": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["request_id", "actor_id", "actor_type", "action", "target", "reason", "status", "git_repo", "git_ref", "git_commit_sha", "k8s_operation_id", "created_at", "completed_at", "approvalPolicy", "execution", "outbox", "approvals"],
+        "properties": {
+          "request_id": { "type": "string", "format": "uuid" },
+          "actor_id": { "type": "string", "format": "uuid" },
+          "actor_type": { "const": "supabase-user" },
+          "action": { "enum": ["apply", "configure", "delete", "rollback"] },
+          "target": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "reason": { "type": "string", "minLength": 3, "maxLength": 500 },
+          "status": { "enum": ["intent", "authorized", "committed", "applied", "failed", "unknown"] },
+          "git_repo": { "const": "opensphere/platform-declarations" },
+          "git_ref": { "type": ["string", "null"], "maxLength": 128 },
+          "git_commit_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
+          "k8s_operation_id": { "type": "null" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "completed_at": { "type": ["string", "null"], "format": "date-time" },
+          "approvalPolicy": { "const": "cross-operator" },
+          "execution": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["branch", "pull_number", "pull_url", "desired_revision", "merge_revision", "reconciler", "reconciler_status", "drift_status", "attempt_count", "last_error", "updated_at"],
+            "properties": {
+              "branch": { "type": "string", "maxLength": 128 },
+              "pull_number": { "type": ["integer", "null"], "minimum": 1 },
+              "pull_url": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
+              "desired_revision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
+              "merge_revision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
+              "reconciler": { "const": "NotConfigured" },
+              "reconciler_status": { "enum": ["AwaitingApproval", "AwaitingMerge", "AwaitingConsumer", "applied", "failed", "unknown"] },
+              "drift_status": { "const": "Unknown" },
+              "attempt_count": { "type": "integer", "minimum": 0 },
+              "last_error": { "type": ["string", "null"], "maxLength": 128 },
+              "updated_at": { "type": "string", "format": "date-time" }
+            }
+          },
+          "outbox": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["status", "attempts", "next_attempt_at", "last_error", "updated_at"],
+            "properties": {
+              "status": { "enum": ["pending", "claimed", "delivered"] },
+              "attempts": { "type": "integer", "minimum": 0 },
+              "next_attempt_at": { "type": ["string", "null"], "format": "date-time" },
+              "last_error": { "type": ["string", "null"], "maxLength": 128 },
+              "updated_at": { "type": "string", "format": "date-time" }
+            }
+          },
+          "approvals": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["approver_id", "status", "created_at", "completed_at", "error_code"],
+              "properties": {
+                "approver_id": { "type": "string", "format": "uuid" },
+                "status": { "const": "applied" },
+                "created_at": { "type": "string", "format": "date-time" },
+                "completed_at": { "type": "string", "format": "date-time" },
+                "error_code": { "type": "null" }
+              }
+            }
+          }
+        }
+      }
+    },
     "byStatus": {
       "type": "object",
       "additionalProperties": false,
       "required": ["intent", "authorized", "committed", "applied", "failed", "unknown"],
       "properties": {
-        "intent": { "const": 0 },
-        "authorized": { "const": 0 },
-        "committed": { "const": 0 },
-        "applied": { "const": 0 },
-        "failed": { "const": 0 },
-        "unknown": { "const": 0 }
+        "intent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "authorized": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "committed": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "applied": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "failed": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "unknown": { "type": "integer", "minimum": 0, "maximum": 100 }
       }
     },
     "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
