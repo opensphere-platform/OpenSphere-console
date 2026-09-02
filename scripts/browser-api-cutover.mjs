@@ -93,7 +93,7 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
   assert.equal(contract.inventory.routePatternCount, inventory.routePatternCount, 'browser API route-pattern count drifted');
   assert.equal(contract.inventory.setDigest, inventory.setDigest, 'browser API route-pattern set digest drifted');
 
-  const nginxSource = await readFile(resolve(root, 'nginx', 'default.conf.template'), 'utf8');
+  const nginxSource = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   const targetSessionReady = contract.targetSessionCapabilities.every(({ status }) => status === 'implemented-and-verified');
   const authenticatedFamilies = contract.families.filter(({ sessionPolicy }) => !['public-read', 'public-static'].includes(sessionPolicy));
   const authenticatedFamilyStatuses = new Set(authenticatedFamilies.map(({ status }) => status));

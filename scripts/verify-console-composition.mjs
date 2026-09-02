@@ -7,10 +7,10 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => fs.readFileSync(path.join(repo, ...parts), 'utf8');
 
 export function verifyConsoleCompositionSource() {
-  const manifest = read('src', 'app', 'core', 'console-composition.manifest.ts');
-  const registry = read('src', 'app', 'core', 'system-plugin-registry.service.ts');
-  const routes = read('src', 'app', 'app.routes.ts');
-  const r2d2Route = read('src', 'app', 'system-plugins', 'r2d2', 'r2d2.route.ts');
+  const manifest = read('apps', 'console-web', 'src', 'app', 'core', 'console-composition.manifest.ts');
+  const registry = read('apps', 'console-web', 'src', 'app', 'core', 'system-plugin-registry.service.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
+  const r2d2Route = read('apps', 'console-web', 'src', 'app', 'system-plugins', 'r2d2', 'r2d2.route.ts');
 
   assert.match(manifest, /MANUAL_CORE_SURFACE/);
   assert.match(manifest, /kind:\s*'coreSurface'/);
@@ -29,7 +29,7 @@ export function verifyConsoleCompositionSource() {
   assert.match(r2d2Route, /recoverStaleLazyChunkOnce\(R2D2_SYSTEM_PLUGIN\.id, error\)/);
   assert.match(r2d2Route, /return SystemPluginUnavailable/);
 
-  const featureRoots = fs.readdirSync(path.join(repo, 'src', 'app', 'system-plugins'), { withFileTypes: true })
+  const featureRoots = fs.readdirSync(path.join(repo, 'apps', 'console-web', 'src', 'app', 'system-plugins'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();

@@ -102,11 +102,11 @@ Invoke-Checked git -C $repoRoot cat-file -e "${baseRevision}^{commit}" | Out-Nul
 $changedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $baseRevision $sourceRevision | Where-Object { $_ })
 if (-not $changedPaths.Count) { throw 'Console publication has no source delta.' }
 $consolePaths = @($changedPaths | Where-Object {
-  $_ -like 'src/*' -or $_ -like 'public/*' -or $_ -like 'nginx/*' -or
+  $_ -like 'apps/console-web/*' -or
   $_ -like 'packages/contracts/*' -or
   $_ -in @(
-    'Dockerfile', 'angular.json', 'package.json', 'package-lock.json',
-    'tsconfig.json', 'tsconfig.app.json', 'scripts/Publish-LocalEdgeConsole.ps1'
+    'angular.json', 'package.json', 'package-lock.json',
+    'tsconfig.json', 'scripts/Publish-LocalEdgeConsole.ps1'
   )
 })
 if (-not $consolePaths.Count) { throw 'Console publication delta does not contain a Console UI or publisher change.' }
@@ -168,7 +168,7 @@ try {
     '--label','opensphere.io/build-authority=localhost',
     '--label','opensphere.io/release-class=pre-ga',
     '--label','opensphere.io/ga-eligible=false',
-    '--file',(Join-Path $consoleCheckout 'Dockerfile'),
+    '--file',(Join-Path $consoleCheckout 'apps\console-web\Dockerfile'),
     $consoleCheckout
   )
   Invoke-Checked docker @arguments | Out-Null

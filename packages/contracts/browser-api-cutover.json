@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "schemaVersion": "1.0",
   "status": "target-migration",
-  "sourceRoot": "src/app",
+  "sourceRoot": "apps/console-web/src/app",
   "cutoverPolicy": "atomic-authenticated-browser-session-authority",
   "currentSessionAuthority": "legacy-browser-session-broker",
   "targetSessionAuthority": "console_identity.browser_session",

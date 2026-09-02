@@ -136,10 +136,10 @@ foreach ($baseRevision in @($consoleBaseRevision,$gatewayBaseRevision)) {
   Invoke-Checked git -C $repoRoot merge-base --is-ancestor $baseRevision $sourceRevision | Out-Null
 }
 $consoleChangedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $consoleBaseRevision $sourceRevision -- `
-  Dockerfile angular.json package.json package-lock.json packages/contracts nginx public scripts src)
+  apps/console-web angular.json package.json package-lock.json packages/contracts scripts)
 $gatewayChangedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $gatewayBaseRevision $sourceRevision -- `
   apps/osaa-gateway)
-if ('src/app/os/os-osaa-agent.ts' -notin $consoleChangedPaths -or -not $gatewayChangedPaths.Count) {
+if ('apps/console-web/src/app/os/os-osaa-agent.ts' -notin $consoleChangedPaths -or -not $gatewayChangedPaths.Count) {
   throw 'OSAA chat publication requires both the native Console agent and Gateway component changes.'
 }
 $changedPaths = @($consoleChangedPaths + $gatewayChangedPaths | Sort-Object -Unique)
@@ -188,7 +188,7 @@ try {
   $gatewayMetadata = Join-Path $metadataRoot 'osaa-gateway.json'
   Invoke-Checked docker buildx build --platform linux/amd64 --push --provenance=mode=max `
     --metadata-file $consoleMetadata --tag "${consoleRepository}:$localTag" @commonLabels `
-    --file (Join-Path $checkout 'Dockerfile') $checkout | Out-Null
+    --file (Join-Path $checkout 'apps\console-web\Dockerfile') $checkout | Out-Null
   Invoke-Checked docker buildx build --platform linux/amd64 --push --provenance=mode=max `
     --metadata-file $gatewayMetadata --tag "${gatewayRepository}:$localTag" @commonLabels `
     --file (Join-Path $checkout 'apps\osaa-gateway\Dockerfile') `

@@ -44,7 +44,7 @@ const storageEntrypoint = read('images', 'storage', 'opensphere-storage-entrypoi
 const storageDockerfile = read('images', 'storage', 'Dockerfile');
 const installer = read('install.ps1');
 const migrationTransaction = read('migration-transaction.ps1');
-const nginx = fs.readFileSync(path.join(here, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
+const nginx = fs.readFileSync(path.join(here, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
 
 assert.match(installer, /\[string\]\$Namespace = "opensphere-console-data"/);
 assert.match(installer, /\.Replace\("__OPENSPHERE_SUPABASE_NAMESPACE__", \$Namespace\)/);

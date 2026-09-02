@@ -12,8 +12,8 @@ const read = (...parts) => fs.readFileSync(path.join(repo, ...parts), 'utf8');
 test('Main Shell composition is closed and system plugins are isolated from Registry lifecycle', () => {
   assert.deepEqual(verifyConsoleCompositionSource(), { coreSurfaces: 1, systemPlugins: 2 });
 
-  const composition = read('src', 'app', 'core', 'console-composition.manifest.ts');
-  const admin = read('src', 'app', 'pages', 'admin-plugins.ts');
+  const composition = read('apps', 'console-web', 'src', 'app', 'core', 'console-composition.manifest.ts');
+  const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
   const verifier = read('scripts', 'verify-console-composition.mjs');
   assert.match(composition, /routes\.has\(surface\.route\)/);
   assert.match(composition, /routes\.has\(descriptor\.route\)/);
@@ -24,9 +24,9 @@ test('Main Shell composition is closed and system plugins are isolated from Regi
 });
 
 test('Manual remains core while R2D2 is a lazy Console-owned system plugin', () => {
-  const routes = read('src', 'app', 'app.routes.ts');
-  const r2d2 = read('src', 'app', 'system-plugins', 'r2d2', 'r2d2.route.ts');
-  const unavailable = read('src', 'app', 'system-plugins', 'system-plugin-unavailable.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
+  const r2d2 = read('apps', 'console-web', 'src', 'app', 'system-plugins', 'r2d2', 'r2d2.route.ts');
+  const unavailable = read('apps', 'console-web', 'src', 'app', 'system-plugins', 'system-plugin-unavailable.ts');
 
   assert.match(routes, /path:\s*'manual',\s*component:\s*ManualPage/);
   assert.match(routes, /R2D2_ADMIN_ROUTE/);
@@ -38,7 +38,7 @@ test('Manual remains core while R2D2 is a lazy Console-owned system plugin', () 
 });
 
 test('rolling Console revisions never cache a missing hashed asset as immutable', () => {
-  const nginx = read('nginx', 'default.conf.template');
+  const nginx = read('apps', 'console-web', 'nginx', 'default.conf.template');
 
   assert.match(nginx, /location ~\* "-\[A-Za-z0-9\]\{8,\}\\\.\(\?:js\|css\)\$" \{[\s\S]*?try_files \$uri @missing_hashed_asset;/);
   assert.match(nginx, /location @missing_hashed_asset \{[\s\S]*?Cache-Control "no-store, max-age=0" always;[\s\S]*?return 404;/);
@@ -46,7 +46,7 @@ test('rolling Console revisions never cache a missing hashed asset as immutable'
 });
 
 test('OSAA admin exposes one bounded repair approval and exact-route browser verification flow', () => {
-  const osaa = read('src', 'app', 'pages', 'admin-osaa.ts');
+  const osaa = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
 
   assert.match(osaa, /\/api\/osaa\/remediations\/\$\{encodeURIComponent\(request\.remediationRequestId\)\}\/approvals\/source/u);
   assert.match(osaa, /승인하고 실행/u);

@@ -174,7 +174,7 @@ test('migration makes the receipt backend-only and Setup CLI publishes it as rel
   assert.match(migration, /GRANT SELECT, INSERT, UPDATE ON TABLE console\.module_operation TO opensphere_console_backend/);
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   assert.match(server, /p\.startsWith\('\/api\/modules'\) \|\| p\.startsWith\('\/api\/module-operations'\)/);
   assert.match(server, /moduleLifecycleNeedsRecentAal2\(action\)/);
   assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/module-operation-api\.js \.\/module-operation-api\.js/);

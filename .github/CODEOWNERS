@@ -2,7 +2,7 @@
 # review from both the platform owner and the invited GitHub reviewer.
 /.github/workflows/ @opensphere-platform @choimars
 /AGENTS.md @opensphere-platform @choimars
-/Dockerfile @opensphere-platform @choimars
+/apps/console-web/ @opensphere-platform @choimars
 /packages/ @opensphere-platform @choimars
 /apps/component-boundaries.json @opensphere-platform @choimars
 /migrations/ @opensphere-platform @choimars

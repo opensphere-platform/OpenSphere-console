@@ -20,10 +20,10 @@ const forbidText = (content, token, label) => {
   if (content.includes(token)) fail(`${label} contains retired Manual UI token: ${token}`);
 };
 
-const contractPath = path.join(root, 'public', 'manual-contract.json');
+const contractPath = path.join(root, 'apps', 'console-web', 'public', 'manual-contract.json');
 const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
 if (contract.schema !== 'manual-ui.opensphere.io/v1' || contract.contract !== CONTRACT || contract.route !== '/manual') {
-  fail('public/manual-contract.json does not declare the canonical Console Help Center contract');
+  fail('apps/console-web/public/manual-contract.json does not declare the canonical Console Help Center contract');
 }
 
 const forbidden = [
@@ -33,18 +33,18 @@ const forbidden = [
 ];
 
 if (mode === '--source') {
-  const manual = read('src', 'app', 'pages', 'manual.ts');
-  const routes = read('src', 'app', 'app.routes.ts');
+  const manual = read('apps', 'console-web', 'src', 'app', 'pages', 'manual.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
   for (const token of [
     `data-manual-contract="${CONTRACT}"`,
     'manual-local-header',
     'manual-primary-grid',
     'manual-reader manual-shell-width',
-  ]) requireText(manual, token, 'src/app/pages/manual.ts');
-  requireText(routes, "path: 'manual', component: ManualPage", 'src/app/app.routes.ts');
+  ]) requireText(manual, token, 'apps/console-web/src/app/pages/manual.ts');
+  requireText(routes, "path: 'manual', component: ManualPage", 'apps/console-web/src/app/app.routes.ts');
   for (const token of forbidden) {
-    forbidText(manual, token, 'src/app/pages/manual.ts');
-    forbidText(routes, token, 'src/app/app.routes.ts');
+    forbidText(manual, token, 'apps/console-web/src/app/pages/manual.ts');
+    forbidText(routes, token, 'apps/console-web/src/app/app.routes.ts');
   }
   console.log(`[manual-ui-contract] source verified: ${CONTRACT}`);
   process.exit(0);

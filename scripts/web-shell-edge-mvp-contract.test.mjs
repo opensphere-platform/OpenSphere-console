@@ -7,15 +7,15 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const decision = read('docs/WEB-SHELL-EDGE-MVP.md');
-const descriptor = read('src/app/system-plugins/os-shell/os-shell.descriptor.ts');
-const registry = read('src/app/core/system-plugin-registry.service.ts');
-const composition = read('src/app/core/console-composition.manifest.ts');
+const descriptor = read('apps/console-web/src/app/system-plugins/os-shell/os-shell.descriptor.ts');
+const registry = read('apps/console-web/src/app/core/system-plugin-registry.service.ts');
+const composition = read('apps/console-web/src/app/core/console-composition.manifest.ts');
 const deployer = read('scripts/Deploy-LocalEdgeOsShell.ps1');
 const controlSources = [
   'apps/os-shell-control/server.js',
   'apps/os-shell-control/runtime-template.js',
-  'src/app/system-plugins/os-shell/os-shell-session.service.ts',
-  'src/app/system-plugins/os-shell/os-shell-attach.service.ts',
+  'apps/console-web/src/app/system-plugins/os-shell/os-shell-session.service.ts',
+  'apps/console-web/src/app/system-plugins/os-shell/os-shell-attach.service.ts',
 ].map(read).join('\n');
 
 test('edge MVP is a Console-owned system plugin with a closed component scope', () => {

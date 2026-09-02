@@ -46,7 +46,7 @@ test('release manifest is hydrated from the exact compiled CLI artifacts', async
 });
 
 test('the independent CLI artifact image compiles the manifest version', async () => {
-  const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
+  const rootDockerfile = await readFile(new URL('../../apps/console-web/Dockerfile', import.meta.url), 'utf8');
   const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const manifestGenerator = await readFile(new URL('./generate-manifest.mjs', import.meta.url), 'utf8');
   const runtimeDockerfile = await readFile(new URL('../../apps/os-shell-control/Dockerfile.runtime', import.meta.url), 'utf8');
@@ -89,7 +89,7 @@ test('CLI publication authority requires the independent GitHub code owner', asy
 });
 
 test('the macOS CLI is an optional build input that a release turns back into a requirement', async () => {
-  const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
+  const rootDockerfile = await readFile(new URL('../../apps/console-web/Dockerfile', import.meta.url), 'utf8');
   const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const workflow = await readFile(new URL('../../.github/workflows/publish-candidate-images.yml', import.meta.url), 'utf8');
   const publisher = await readFile(new URL('../../scripts/Publish-LocalEdge.ps1', import.meta.url), 'utf8');
@@ -132,7 +132,7 @@ test('the macOS CLI is an optional build input that a release turns back into a 
 });
 
 test('the shell proxies downloads to the independently ready CLI artifact service', async () => {
-  const nginx = await readFile(new URL('../../nginx/default.conf.template', import.meta.url), 'utf8');
+  const nginx = await readFile(new URL('../../apps/console-web/nginx/default.conf.template', import.meta.url), 'utf8');
   const shellManifest = await readFile(new URL('../../deploy/opensphere-console.yaml', import.meta.url), 'utf8');
   const cliManifest = await readFile(new URL('./deploy.yaml', import.meta.url), 'utf8');
   const deployer = await readFile(new URL('../../scripts/Deploy-LocalEdgeCliArtifacts.ps1', import.meta.url), 'utf8');

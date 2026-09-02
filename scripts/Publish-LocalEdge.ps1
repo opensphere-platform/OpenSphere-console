@@ -292,7 +292,7 @@ if ($UseExistingRegistryLogin) {
 }
 
 $allImages = @(
-  [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'Dockerfile') },
+  [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-web\Dockerfile') },
   # CLI artifacts are a Console-native auxiliary workload with an independent
   # build and rollout. They are intentionally not added to the 14-component
   # Platform Release lock merely to decouple an Angular UI build.

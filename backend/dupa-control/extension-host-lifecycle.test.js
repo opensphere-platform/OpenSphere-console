@@ -5,11 +5,11 @@ const path = require('node:path');
 
 test('Extension Host reports per-route loading and leaves unrelated guests inactive', () => {
   const extensionHost = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'src', 'app', 'core', 'extension-host.service.ts'),
+    path.join(__dirname, '..', '..', 'apps', 'console-web', 'src', 'app', 'core', 'extension-host.service.ts'),
     'utf8',
   );
   const pluginHost = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'src', 'app', 'pages', 'plugin-host.ts'),
+    path.join(__dirname, '..', '..', 'apps', 'console-web', 'src', 'app', 'pages', 'plugin-host.ts'),
     'utf8',
   );
 

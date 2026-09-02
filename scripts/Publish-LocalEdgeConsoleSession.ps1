@@ -25,16 +25,16 @@ $featurePaths = @(
   'backend/opensphere-console-backend/server.js',
   'package.json',
   'scripts/Publish-LocalEdgeConsoleSession.ps1',
-  'src/app/core/auth.service.ts',
-  'src/app/os/os-shell.ts',
-  'src/app/pages/my-info.ts'
+  'apps/console-web/src/app/core/auth.service.ts',
+  'apps/console-web/src/app/os/os-shell.ts',
+  'apps/console-web/src/app/pages/my-info.ts'
 )
 $consoleImageInputs = @(
   'package.json',
   'scripts/Publish-LocalEdgeConsoleSession.ps1',
-  'src/app/core/auth.service.ts',
-  'src/app/os/os-shell.ts',
-  'src/app/pages/my-info.ts'
+  'apps/console-web/src/app/core/auth.service.ts',
+  'apps/console-web/src/app/os/os-shell.ts',
+  'apps/console-web/src/app/pages/my-info.ts'
 )
 $backendImageInputs = @(
   'backend/opensphere-console-backend/Dockerfile',
@@ -158,8 +158,8 @@ $backendChanges = Get-ChangedPaths -BaseRevision $backendBase
 $observedBackendInputs = @($backendChanges | Where-Object { $_ -in $backendImageInputs })
 Assert-ExactPaths -Actual $observedBackendInputs -Expected $backendImageInputs -Purpose 'Backend image input delta'
 $observedConsoleInputs = @($consoleChanges | Where-Object {
-  $_ -like 'src/*' -or $_ -like 'scripts/*' -or $_ -like 'nginx/*' -or $_ -like 'public/*' -or
-  $_ -in @('Dockerfile', 'angular.json', 'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.app.json') -or
+  $_ -like 'apps/console-web/*' -or $_ -like 'scripts/*' -or
+  $_ -in @('angular.json', 'package.json', 'package-lock.json', 'tsconfig.json') -or
   $_ -like 'packages/contracts/*'
 })
 Assert-ExactPaths -Actual $observedConsoleInputs -Expected $consoleImageInputs -Purpose 'Console image input delta'

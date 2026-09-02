@@ -32,7 +32,7 @@ test('notification rules require a valid severity and at least one channel', () 
 });
 
 test('Console UI uses an audited side-panel action instead of browser prompt dialogs', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../../src/app/pages/admin-external-channels.ts'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../../apps/console-web/src/app/pages/admin-external-channels.ts'), 'utf8');
   const notificationPanels = source.slice(0, source.indexOf('<os-panel class="backup-target-editor"'));
   assert.match(source, /pendingAction/);
   assert.match(source, /테스트 수신 메일 주소/);
@@ -44,7 +44,7 @@ test('Console UI uses an audited side-panel action instead of browser prompt dia
 });
 
 test('Console Shell proxies notification administration to the Console Backend', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '../../nginx/default.conf.template'), 'utf8');
+  const nginx = fs.readFileSync(path.join(__dirname, '../../apps/console-web/nginx/default.conf.template'), 'utf8');
   assert.match(nginx, /location \/api\/notifications\//);
   assert.match(nginx, /opensphere-console-backend\.opensphere-console\.svc\.cluster\.local/);
 });

@@ -35,29 +35,29 @@
           "skipTests": true
         }
       },
-      "root": "",
-      "sourceRoot": "src",
+      "root": "apps/console-web",
+      "sourceRoot": "apps/console-web/src",
       "prefix": "app",
       "architect": {
         "build": {
           "builder": "@angular/build:application",
           "options": {
-            "browser": "src/main.ts",
+            "browser": "apps/console-web/src/main.ts",
             "polyfills": [
               "zone.js"
             ],
-            "tsConfig": "tsconfig.app.json",
+            "tsConfig": "apps/console-web/tsconfig.app.json",
             "inlineStyleLanguage": "scss",
             "assets": [
               {
                 "glob": "**/*",
-                "input": "public"
+                "input": "apps/console-web/public"
               }
             ],
             "styles": [
-              "src/styles.scss",
-              "src/ui-contract.scss",
-              "src/platform-control.scss"
+              "apps/console-web/src/styles.scss",
+              "apps/console-web/src/ui-contract.scss",
+              "apps/console-web/src/platform-control.scss"
             ]
           },
           "configurations": {

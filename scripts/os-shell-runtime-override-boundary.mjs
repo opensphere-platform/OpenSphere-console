@@ -20,18 +20,18 @@ export const backendOverridePaths = Object.freeze([
 ]);
 
 export const consoleOverridePaths = Object.freeze([
-  'nginx/default.conf.template',
-  'public/os-shell-frame/index.html',
+  'apps/console-web/nginx/default.conf.template',
+  'apps/console-web/public/os-shell-frame/index.html',
   'scripts/os-shell-frontend-contract.test.mjs',
-  'src/app/app.config.ts',
-  'src/app/core/system-plugin-registry.service.ts',
-  'src/app/pages/admin-plugins-state.spec.ts',
-  'src/app/pages/admin-plugins.ts',
-  'src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts',
-  'src/app/system-plugins/os-shell/os-shell-launcher.ts',
-  'src/app/system-plugins/os-shell/os-shell-page.scss',
-  'src/app/system-plugins/os-shell/os-shell-page.ts',
-  'src/app/system-plugins/os-shell/os-shell-terminal-surface.ts',
+  'apps/console-web/src/app/app.config.ts',
+  'apps/console-web/src/app/core/system-plugin-registry.service.ts',
+  'apps/console-web/src/app/pages/admin-plugins-state.spec.ts',
+  'apps/console-web/src/app/pages/admin-plugins.ts',
+  'apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts',
+  'apps/console-web/src/app/system-plugins/os-shell/os-shell-launcher.ts',
+  'apps/console-web/src/app/system-plugins/os-shell/os-shell-page.scss',
+  'apps/console-web/src/app/system-plugins/os-shell/os-shell-page.ts',
+  'apps/console-web/src/app/system-plugins/os-shell/os-shell-terminal-surface.ts',
 ]);
 
 export const controlOverridePaths = Object.freeze([
@@ -67,7 +67,6 @@ export const deploymentToolingPaths = Object.freeze([
 
 export function isRuntimeInputPath(path) {
   return path.startsWith('apps/os-shell-control/runtime/')
-    || path.startsWith('cmd/os-cli/cmd/os/')
     || runtimeInputPaths.includes(path);
 }
 

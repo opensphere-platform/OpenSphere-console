@@ -29,7 +29,7 @@
   "files": [],
   "references": [
     {
-      "path": "./tsconfig.app.json"
+      "path": "./apps/console-web/tsconfig.app.json"
     }
   ]
 }

@@ -8,4 +8,4 @@ Packages hold reusable Console-owned policy and machine contracts. They must not
 - `operation-receipt/` creates canonical digests and immutable operation receipts.
 - `testing/` contains cross-package acceptance fixtures for the Backbone foundation slice.
 
-These packages are the first implementation baseline. They do not imply that the legacy `src/` and `backend/` capabilities have completed migration.
+These packages are the first implementation baseline. They do not imply that the remaining legacy `backend/` capabilities have completed migration.

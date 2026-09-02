@@ -9,11 +9,11 @@ const root = path.resolve(__dirname, '..', '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const server = read('backend/opensphere-console-backend/server.js');
 const cli = read('cmd/os-cli/cmd/os/main.go');
-const myInfo = read('src/app/pages/my-info.ts');
+const myInfo = read('apps/console-web/src/app/pages/my-info.ts');
 const migration = read('backend/supabase/migrations/0006_cli_identity.sql');
 const cliIndex = read('cmd/os-cli/index.json');
 const cliDeployment = read('cmd/os-cli/deploy.yaml');
-const nginx = read('nginx/default.conf.template');
+const nginx = read('apps/console-web/nginx/default.conf.template');
 
 test('CLI and Supabase backend share the v2 signed challenge contract', () => {
   assert.match(server, /opensphere-cli-session-v2\\n/);

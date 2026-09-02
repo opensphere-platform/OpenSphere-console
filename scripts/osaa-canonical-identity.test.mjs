@@ -64,11 +64,11 @@ test('the installed-state reader cannot become a request, route, or deployment a
 
 test('current HTTP and deployment contracts expose OSAA only', () => {
   const activeFiles = [
-    'nginx/default.conf.template',
+    'apps/console-web/nginx/default.conf.template',
     'backend/opensphere-console-backend/deploy.yaml',
     'apps/osaa-gateway/deploy.yaml',
     'apps/osaa-gateway/server.js',
-    'src/app/os/os-osaa-agent.ts',
+    'apps/console-web/src/app/os/os-osaa-agent.ts',
   ];
   const current = activeFiles.map((file) => readFileSync(path.join(root, file), 'utf8')).join('\n');
   assert.match(current, /\/api\/osaa/);

@@ -202,10 +202,10 @@ test('migration isolates secrets and restore scope from browser identities', () 
 });
 
 test('External Channels UI and compatibility redirect expose backup and restore', () => {
-  const source = read('../../src/app/pages/admin-external-channels.ts');
+  const source = read('../../apps/console-web/src/app/pages/admin-external-channels.ts');
   const server = read('./server.js');
-  const routes = read('../../src/app/app.routes.ts');
-  const nginx = read('../../nginx/default.conf.template');
+  const routes = read('../../apps/console-web/src/app/app.routes.ts');
+  const nginx = read('../../apps/console-web/nginx/default.conf.template');
   assert.match(source, /백업 대상/);
   assert.match(source, /백업 및 복원/);
   assert.match(source, /AES-256-GCM/);
@@ -234,7 +234,7 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.doesNotMatch(source, /인증서 검증 안 함|verify\s*=\s*false/);
   assert.match(source, /s3ProfileLogo\(target\.vendor\)/);
   for (const logo of ['s3-compatible', 'amazon-s3', 'backblaze-b2', 'cloudflare-r2', 'minio', 'ceph-rgw']) {
-    assert.ok(fs.existsSync(path.join(__dirname, `../../public/brand/storage/${logo}.svg`)), `${logo} logo must be packaged locally`);
+    assert.ok(fs.existsSync(path.join(__dirname, `../../apps/console-web/public/brand/storage/${logo}.svg`)), `${logo} logo must be packaged locally`);
   }
   assert.doesNotMatch(source, /logo:\s*'https?:\/\//);
   assert.equal(source.match(/<clr-control-error>/g)?.length, 9);

@@ -209,7 +209,7 @@ GET https://logos.opl.io.kr/i/{shortname}
 폰트는 IBM Plex Sans, IBM Plex Sans KR, IBM Plex Mono로 통일한다. display는 weight 300, body는
 weight 400과 0.16px tracking을 기본으로 한다.
 
-Main Shell은 `src/ui-contract.scss`에서 위 역할을 `opensphere.ui/1.0` 계약으로 제공한다. 표의 각
+Main Shell은 `apps/console-web/src/ui-contract.scss`에서 위 역할을 `opensphere.ui/1.0` 계약으로 제공한다. 표의 각
 `--os-type-{role}`은 `font` shorthand로 사용할 수 있는 합성 토큰이며, Shadow DOM을 통과해 정밀하게
 상속할 수 있도록 다음 원자 토큰도 함께 제공해야 한다.
 
@@ -366,9 +366,9 @@ nav.addEventListener('osp-nav-select', (event) => select(event.detail.id));
 기본 정적 검사 예시:
 
 ```powershell
-rg -n 'style="' src/app
-rg -n '#[0-9a-fA-F]{3,8}' src/app
-rg -n 'os-(notif-panel|toast|modal|dropdown|table)' src/app
+rg -n 'style="' apps/console-web/src/app
+rg -n '#[0-9a-fA-F]{3,8}' apps/console-web/src/app
+rg -n 'os-(notif-panel|toast|modal|dropdown|table)' apps/console-web/src/app
 rg -n 'DESIGN-RULES\.md|DESIGN-TOKENS\.md|dupa-nav-contribution-contract\.md' .
 ```
 

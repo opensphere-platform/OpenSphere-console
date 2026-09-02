@@ -175,7 +175,7 @@ try {
     $consoleArgs = @(
       'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
       '--metadata-file', $consoleMetadata, '--tag', "$($repositories.console):$buildTag"
-    ) + $labels + @('--file', (Join-Path $consoleCheckout 'Dockerfile'), $consoleCheckout)
+    ) + $labels + @('--file', (Join-Path $consoleCheckout 'apps\console-web\Dockerfile'), $consoleCheckout)
     Invoke-Checked docker @consoleArgs | Out-Null
     $digests.console = [string](Get-Content -Raw $consoleMetadata | ConvertFrom-Json).'containerimage.digest'
   }

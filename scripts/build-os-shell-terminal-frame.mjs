@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const output = path.join(repo, 'public', 'os-shell-frame');
-const entry = path.join(repo, 'src', 'app', 'system-plugins', 'os-shell', 'frame', 'os-shell-terminal-frame.ts');
+const output = path.join(repo, 'apps', 'console-web', 'public', 'os-shell-frame');
+const entry = path.join(repo, 'apps', 'console-web', 'src', 'app', 'system-plugins', 'os-shell', 'frame', 'os-shell-terminal-frame.ts');
 const outfile = path.join(output, 'os-shell-terminal-frame.js');
 
 await mkdir(output, { recursive: true });

@@ -9,9 +9,9 @@ const root = path.join(__dirname, '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('Console foundation services keep role-oriented scope and CC compatibility routing', () => {
-  const routes = read('src', 'app', 'app.routes.ts');
-  const layout = read('src', 'app', 'pages', 'admin-layout.ts');
-  const page = read('src', 'app', 'pages', 'admin-foundation-services.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
+  const layout = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-layout.ts');
+  const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-foundation-services.ts');
 
   assert.match(routes, /path: 'foundation-services',[\s\S]*?loadComponent:[\s\S]*?AdminFoundationServices/);
   assert.match(routes, /path: 'bbss', redirectTo: 'foundation-services'/);
@@ -49,9 +49,9 @@ test('Console foundation services keep role-oriented scope and CC compatibility 
 });
 
 test('Beszel detail uses Carbon Charts and preserves gaps as missing values', () => {
-  const page = read('src', 'app', 'pages', 'admin-infrastructure-monitoring.ts');
+  const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-infrastructure-monitoring.ts');
   const adapter = read('backend', 'opensphere-console-backend', 'baseline-monitoring.js');
-  const styles = read('src', 'styles.scss');
+  const styles = read('apps', 'console-web', 'src', 'styles.scss');
   const packageJson = JSON.parse(read('package.json'));
 
   assert.match(page, /LineChartComponent/);

@@ -58,7 +58,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === self) {
   const repositoryRoot = path.resolve(path.dirname(self), '..');
   const result = await generateCarbonIconAssets({
     metadataPath: path.join(repositoryRoot, 'node_modules', '@carbon', 'icons', 'metadata.json'),
-    outputDirectory: path.join(repositoryRoot, 'public', 'assets', 'carbon-icons'),
+    outputDirectory: path.join(repositoryRoot, 'apps', 'console-web', 'public', 'assets', 'carbon-icons'),
   });
   process.stdout.write(`generated ${result.count} Carbon navigation icon assets\n`);
 }

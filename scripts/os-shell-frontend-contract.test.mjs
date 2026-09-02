@@ -8,8 +8,8 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative) => readFileSync(path.join(repo, relative), 'utf8');
 
 test('CBSS OS Shell is a default-off built-in docked system plugin with an isolated full-page fallback', () => {
-  const descriptor = read('src/app/system-plugins/os-shell/os-shell.descriptor.ts');
-  const routes = read('src/app/app.routes.ts');
+  const descriptor = read('apps/console-web/src/app/system-plugins/os-shell/os-shell.descriptor.ts');
+  const routes = read('apps/console-web/src/app/app.routes.ts');
   assert.match(descriptor, /owner:\s*'cbss-main-shell'/);
   assert.match(descriptor, /defaultEnabled:\s*false/);
   assert.match(descriptor, /grantedCapabilities:\s*\['session:attach'\]/);
@@ -18,8 +18,8 @@ test('CBSS OS Shell is a default-off built-in docked system plugin with an isola
 });
 
 test('terminal is opaque and owns neither WebSocket nor credentials', () => {
-  const surface = read('src/app/system-plugins/os-shell/os-shell-terminal-surface.ts');
-  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const surface = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-terminal-surface.ts');
+  const frame = read('apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   assert.match(surface, /sandbox="allow-scripts"/);
   assert.doesNotMatch(surface, /allow-same-origin/);
   assert.doesNotMatch(frame, /WebSocket|fetch\(|Authorization|Bearer|ticket|localStorage|sessionStorage/);
@@ -27,8 +27,8 @@ test('terminal is opaque and owns neither WebSocket nor credentials', () => {
 });
 
 test('attached OS Shell visibly signals input readiness with a focused blinking cursor', () => {
-  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
-  const nginx = read('nginx/default.conf.template');
+  const frame = read('apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const nginx = read('apps/console-web/nginx/default.conf.template');
   const locationStart = nginx.indexOf('location ^~ /os-shell-frame/ {');
   const locationEnd = nginx.indexOf('location = /shell {', locationStart);
   const frameLocation = nginx.slice(locationStart, locationEnd);
@@ -50,7 +50,7 @@ test('attached OS Shell visibly signals input readiness with a focused blinking 
 });
 
 test('terminal preserves upstream selection, copy and paste UX across the isolated frame', () => {
-  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const frame = read('apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   assert.match(frame, /rightClickSelectsWord:\s*true/);
   assert.match(frame, /attachCustomKeyEventHandler/);
   assert.match(frame, /key === 'c' && \(event[.]shiftKey \|\| terminal[.]hasSelection\(\)\)[\s\S]*return false/);
@@ -59,7 +59,7 @@ test('terminal preserves upstream selection, copy and paste UX across the isolat
 });
 
 test('long paste is UTF-8 chunked and paced instead of being silently discarded', () => {
-  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const frame = read('apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   assert.match(frame, /const MAX_PENDING_STDIN_BYTES = 256 \* 1024/);
   assert.match(frame, /const STDIN_DRAIN_INTERVAL_MS = 160/);
   assert.match(frame, /function splitInput\(data: string\)/);
@@ -70,10 +70,10 @@ test('long paste is UTF-8 chunked and paced instead of being silently discarded'
 });
 
 test('trusted terminal interaction extends the Main Shell browser session without counting output as activity', () => {
-  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
-  const protocol = read('src/app/system-plugins/os-shell/os-shell-protocol.ts');
-  const attach = read('src/app/system-plugins/os-shell/os-shell-attach.service.ts');
-  const auth = read('src/app/core/auth.service.ts');
+  const frame = read('apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const protocol = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-protocol.ts');
+  const attach = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-attach.service.ts');
+  const auth = read('apps/console-web/src/app/core/auth.service.ts');
   assert.match(frame, /const trustedActivity = \(event: Event\)/);
   assert.match(frame, /!event[.]isTrusted/);
   assert.match(frame, /type: 'activity', sequence: \+\+sequence/);
@@ -85,10 +85,10 @@ test('trusted terminal interaction extends the Main Shell browser session withou
 });
 
 test('default Console entry opens an OCI-style docked panel and preserves the isolated full-page fallback', () => {
-  const shell = read('src/app/os/os-shell.ts');
-  const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
-  const panel = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
-  const state = read('src/app/system-plugins/os-shell/os-shell-panel-state.service.ts');
+  const shell = read('apps/console-web/src/app/os/os-shell.ts');
+  const launcher = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  const panel = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-panel.ts');
+  const state = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-panel-state.service.ts');
   assert.match(shell, /<os-shell-panel \/>/);
   assert.match(launcher, /panel[.]toggle\(\)/);
   assert.match(launcher, /aria-expanded/);
@@ -102,7 +102,7 @@ test('default Console entry opens an OCI-style docked panel and preserves the is
 });
 
 test('Host sends the one-time ticket as first WSS application frame', () => {
-  const attach = read('src/app/system-plugins/os-shell/os-shell-attach.service.ts');
+  const attach = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-attach.service.ts');
   assert.match(attach, /new WebSocket\(webSocketUrl\(\), \[OS_SHELL_PTY_PROTOCOL\]\)/);
   assert.match(attach, /type:\s*'attach',[\s\S]*sessionId:\s*issued\.sessionId,[\s\S]*generation:\s*issued\.generation,[\s\S]*fencingEpoch:\s*issued\.fencingEpoch,[\s\S]*ticket:\s*attachTicket/);
   assert.match(attach, /attachTicket = ''/);
@@ -111,8 +111,8 @@ test('Host sends the one-time ticket as first WSS application frame', () => {
 });
 
 test('resize rejects a one-row terminal before the gateway boundary', () => {
-  const protocol = read('src/app/system-plugins/os-shell/os-shell-protocol.ts');
-  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const protocol = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-protocol.ts');
+  const frame = read('apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   assert.match(protocol, /export const MIN_ROWS = 2;/);
   assert.match(protocol, /Number\(frame\.rows\) >= MIN_ROWS/);
   assert.doesNotMatch(protocol, /export const MIN_ROWS = 1;/);
@@ -121,7 +121,7 @@ test('resize rejects a one-row terminal before the gateway boundary', () => {
 });
 
 test('Host input throttle is aligned to the gateway and runtime ceiling', () => {
-  const attach = read('src/app/system-plugins/os-shell/os-shell-attach.service.ts');
+  const attach = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-attach.service.ts');
   assert.match(attach, /const MAX_INPUT_MESSAGES_PER_SECOND = 60;/);
   assert.doesNotMatch(attach, /const MAX_INPUT_MESSAGES_PER_SECOND = 120;/);
 });
@@ -133,12 +133,12 @@ test('only xterm and fit addon enter the renderer dependency surface', () => {
   for (const name of Object.keys(pkg.dependencies).filter((name) => name.startsWith('@xterm/'))) {
     assert.ok(['@xterm/xterm', '@xterm/addon-fit'].includes(name), name);
   }
-  const frame = read('src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
+  const frame = read('apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts');
   assert.doesNotMatch(frame, /addon-attach|addon-web-links|addon-image|addon-webgl|registerLinkProvider|registerOscHandler/);
 });
 
 test('Nginx mediates API/WSS through dedicated admission and control upstreams', () => {
-  const nginx = read('nginx/default.conf.template');
+  const nginx = read('apps/console-web/nginx/default.conf.template');
   assert.match(nginx, /location ~ "?\^\/api\/os-shell\/sessions\//);
   assert.match(nginx, /location \/api\/os-shell\//);
   assert.match(nginx, /location = \/_os_shell_authn/);
@@ -171,15 +171,15 @@ test('Nginx mediates API/WSS through dedicated admission and control upstreams',
 });
 
 test('ordinary Extension Host rejects system-only attach before bundle fetch', () => {
-  const host = read('src/app/core/extension-host.service.ts');
+  const host = read('apps/console-web/src/app/core/extension-host.service.ts');
   const rejection = host.indexOf("perms.includes('session:attach')");
   const entryFetch = host.indexOf('this.fetchVerifiedArtifactText(', rejection);
   assert.ok(rejection > 0 && entryFetch > rejection);
 });
 
 test('Console refresh resumes only the current actor session and reconnect always mints a new one-time ticket', () => {
-  const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
-  const attach = read('src/app/system-plugins/os-shell/os-shell-attach.service.ts');
+  const page = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-page.ts');
+  const attach = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-attach.service.ts');
   assert.match(page, /const existing = await this[.]sessions[.]list\(\)/);
   assert.match(page, /existing[.]find\(\(item\) => !TERMINAL_STATES[.]has\(item[.]observedState\)\)/);
   assert.match(page, /this[.]session[.]set\(resumable\)/);
@@ -191,7 +191,7 @@ test('Console refresh resumes only the current actor session and reconnect alway
 });
 
 test('opening OS Shell immediately resumes or creates a session without a second start action', () => {
-  const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
+  const page = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-page.ts');
   assert.match(page, /if \(resumable\) \{[\s\S]*this[.]session[.]set\(resumable\);[\s\S]*return;/);
   assert.match(page, /await this[.]createSession\(\);/);
   assert.match(page, /else if \(readiness[.]ready\) resumeOrCreate = true;[\s\S]*if \(resumeOrCreate\) await this[.]resumeOrCreateSession\(\);/);
@@ -202,8 +202,8 @@ test('opening OS Shell immediately resumes or creates a session without a second
 });
 
 test('session create retains one client idempotency key across response loss and relies on DB quotas, not UI clicks', () => {
-  const service = read('src/app/system-plugins/os-shell/os-shell-session.service.ts');
-  const http = read('src/app/core/http.service.ts');
+  const service = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-session.service.ts');
+  const http = read('apps/console-web/src/app/core/http.service.ts');
   assert.match(service, /private pendingCreateKey[?]: string/);
   assert.match(service, /const idempotencyKey = this[.]pendingCreateKey \?\?= crypto[.]randomUUID\(\)/);
   assert.match(service, /'X-OS-Idempotency-Key': idempotencyKey/);
@@ -214,8 +214,8 @@ test('session create retains one client idempotency key across response loss and
 });
 
 test('the native Shell route and proxy remain disjoint from canonical PFSS routing', () => {
-  const routes = read('src/app/app.routes.ts');
-  const nginx = read('nginx/default.conf.template');
+  const routes = read('apps/console-web/src/app/app.routes.ts');
+  const nginx = read('apps/console-web/nginx/default.conf.template');
   assert.doesNotMatch(routes, /path:\s*'shell'|os-shell-page/);
   assert.match(routes, /segments\[0\][.]path !== 'pfss'/);
   assert.match(routes, /matcher:\s*pfssHostMatcher,\s*component:\s*PluginHost/);
@@ -232,13 +232,13 @@ test('active runtime authorization is revalidated on a two-second cadence within
 });
 
 test('OS Shell uses an immutable extension-free top-level realm with full-navigation entry and exit', () => {
-  const appConfig = read('src/app/app.config.ts');
-  const bootMode = read('src/app/core/boot-mode.ts');
-  const app = read('src/app/app.ts');
-  const host = read('src/app/core/extension-host.service.ts');
-  const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
-  const panel = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
-  const page = read('src/app/system-plugins/os-shell/os-shell-page.ts');
+  const appConfig = read('apps/console-web/src/app/app.config.ts');
+  const bootMode = read('apps/console-web/src/app/core/boot-mode.ts');
+  const app = read('apps/console-web/src/app/app.ts');
+  const host = read('apps/console-web/src/app/core/extension-host.service.ts');
+  const launcher = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  const panel = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-panel.ts');
+  const page = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-page.ts');
 
   assert.match(bootMode, /window[.]location[.]pathname === '\/shell'/);
   assert.match(appConfig, /OS_SHELL_STANDALONE_BOOT[\s\S]*withDisabledInitialNavigation\(\)/);
@@ -257,11 +257,11 @@ test('OS Shell uses an immutable extension-free top-level realm with full-naviga
 });
 
 test('opaque terminal frame remains isolated and explicitly satisfies parent COEP', () => {
-  const nginx = read('nginx/default.conf.template');
+  const nginx = read('apps/console-web/nginx/default.conf.template');
   const start = nginx.indexOf('location ^~ /os-shell-frame/ {');
   const end = nginx.indexOf('location = /shell {', start);
   const frameLocation = nginx.slice(start, end);
-  const surface = read('src/app/system-plugins/os-shell/os-shell-terminal-surface.ts');
+  const surface = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-terminal-surface.ts');
   assert.match(frameLocation, /Cross-Origin-Resource-Policy "cross-origin"/);
   assert.match(frameLocation, /Cross-Origin-Embedder-Policy "require-corp"/);
   assert.match(frameLocation, /frame-ancestors 'self'/);
@@ -270,7 +270,7 @@ test('opaque terminal frame remains isolated and explicitly satisfies parent COE
 });
 
 test('standalone Shell response severs opener/embed authority and cannot load guest execution surfaces', () => {
-  const nginx = read('nginx/default.conf.template');
+  const nginx = read('apps/console-web/nginx/default.conf.template');
   const start = nginx.indexOf('location = /shell {');
   const end = nginx.indexOf('# 해시드 자산', start);
   assert.ok(start > 0 && end > start);
@@ -288,11 +288,11 @@ test('standalone Shell response severs opener/embed authority and cannot load gu
   // A prior same-realm plugin may install MutationObserver/postMessage hooks
   // or open a popup, but real navigation destroys that realm; the response
   // additionally starts a new browsing-context group and rejects embedding.
-  const launcher = read('src/app/system-plugins/os-shell/os-shell-launcher.ts');
-  const panel = read('src/app/system-plugins/os-shell/os-shell-panel.ts');
+  const launcher = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-launcher.ts');
+  const panel = read('apps/console-web/src/app/system-plugins/os-shell/os-shell-panel.ts');
   assert.doesNotMatch(launcher, /window[.]open|target="_blank"/);
   assert.match(panel, /target="_blank" rel="noopener noreferrer"/);
-  const routes = read('src/app/app.routes.ts');
+  const routes = read('apps/console-web/src/app/app.routes.ts');
   assert.doesNotMatch(routes, /path:\s*'shell'|os-shell-page/);
   assert.match(nginx, /location = \/shell\/[\s\S]*absolute_redirect off;[\s\S]*return 308 \/shell;/);
 });

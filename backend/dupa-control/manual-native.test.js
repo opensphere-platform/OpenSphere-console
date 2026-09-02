@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('app.routes.ts imports ManualPage and defines an authenticated native /manual route', () => {
-  const routes = read('src', 'app', 'app.routes.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
 
   assert.match(routes, /import\s*\{\s*ManualPage\s*\}\s*from\s*'\.\/pages\/manual'/);
   assert.match(
@@ -23,14 +23,14 @@ test('app.routes.ts imports ManualPage and defines an authenticated native /manu
 });
 
 test('os-shell.ts exposes a native global header link to /manual', () => {
-  const shell = read('src', 'app', 'os', 'os-shell.ts');
+  const shell = read('apps', 'console-web', 'src', 'app', 'os', 'os-shell.ts');
 
   assert.match(shell, /os-header-manual/);
   assert.match(shell, /routerLink="\/manual"/);
 });
 
 test('search.service.ts routes Manual Registry hits to /manual?doc= and never /p/manual', () => {
-  const search = read('src', 'app', 'core', 'search.service.ts');
+  const search = read('apps', 'console-web', 'src', 'app', 'core', 'search.service.ts');
 
   assert.match(search, /ManualService/);
   assert.match(search, /\/manual\?doc=/);
@@ -38,8 +38,8 @@ test('search.service.ts routes Manual Registry hits to /manual?doc= and never /p
 });
 
 test('native manual.ts consumes ManualService and implements the Help Center landing and reader without innerHTML', () => {
-  const manualPage = read('src', 'app', 'pages', 'manual.ts');
-  const manualService = read('src', 'app', 'core', 'manual.service.ts');
+  const manualPage = read('apps', 'console-web', 'src', 'app', 'pages', 'manual.ts');
+  const manualService = read('apps', 'console-web', 'src', 'app', 'core', 'manual.service.ts');
 
   // The page depends on ManualService for its data — it never injects HttpService/ApiService or
   // calls fetch()/http.request() itself; /api/manual is only ever reached through the
@@ -105,10 +105,10 @@ test('native manual.ts consumes ManualService and implements the Help Center lan
 test('build, image, and Kubernetes admission gates reject the retired Manual UI', () => {
   const pkg = JSON.parse(read('package.json'));
   const verifier = read('scripts', 'verify-manual-ui.mjs');
-  const releaseDockerfile = read('Dockerfile');
+  const releaseDockerfile = read('apps', 'console-web', 'Dockerfile');
   const deployment = read('deploy', 'opensphere-console.yaml');
   const admission = read('deploy', 'manual-ui-admission-policy.yaml');
-  const contract = JSON.parse(read('public', 'manual-contract.json'));
+  const contract = JSON.parse(read('apps', 'console-web', 'public', 'manual-contract.json'));
 
   assert.equal(contract.contract, 'console-help-center-v2');
   assert.equal(contract.route, '/manual');
@@ -163,7 +163,7 @@ test('no Manual-specific UIPluginPackage/Registration, subShell image, or worklo
   const controller = read('backend', 'dupa-control', 'controller.js');
   const controllerDeploy = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
   const crds = read('backend', 'dupa-control', 'ui-plugin-crds.yaml');
-  const dockerfile = read('Dockerfile');
+  const dockerfile = read('apps', 'console-web', 'Dockerfile');
 
   // ui-plugin-crds.yaml only declares the generic CRD schema (UIPluginPackage/UIPluginRegistration
   // kinds, with a generic per-plugin `contributions.manual` capability flag) — it must not carry a

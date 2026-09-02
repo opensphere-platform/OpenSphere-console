@@ -125,9 +125,9 @@ test('HISS status is fail-closed on an unavailable or degraded Cluster Manager r
 
 test('Foundation management shell stays accessible while PFS services remain evidence-gated', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
-  const page = read('src', 'app', 'pages', 'admin-platform-readiness.ts');
-  const extensions = read('src', 'app', 'pages', 'admin-plugins.ts');
-  const client = read('src', 'app', 'core', 'plugin-control-client.service.ts');
+  const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-readiness.ts');
+  const extensions = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
+  const client = read('apps', 'console-web', 'src', 'app', 'core', 'plugin-control-client.service.ts');
   assert.match(controller, /PlatformSupportProfileRequired/);
   assert.match(controller, /id === FOUNDATION_ID && action === 'enable'/);
   assert.match(controller, /PlatformSupportProfileRequiredForPfsPlugin/);

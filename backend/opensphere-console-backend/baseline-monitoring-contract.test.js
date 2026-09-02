@@ -49,7 +49,7 @@ test('node correlation persists Kubernetes UID and Beszel machine fingerprint as
 });
 
 test('Console nginx routes baseline monitoring reads to the authenticated Backend boundary', () => {
-  const nginx = read('nginx/default.conf.template');
+  const nginx = read('apps/console-web/nginx/default.conf.template');
   assert.match(nginx, /location \/api\/monitoring\/baseline\/ \{/);
   assert.match(
     nginx,

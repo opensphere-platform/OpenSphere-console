@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const contractSource = await readFile(new URL('../src/ui-contract.scss', import.meta.url), 'utf8');
+const contractSource = await readFile(new URL('../apps/console-web/src/ui-contract.scss', import.meta.url), 'utf8');
 const angularConfig = JSON.parse(await readFile(new URL('../angular.json', import.meta.url), 'utf8'));
 const designKitFixture = JSON.parse(await readFile(
   new URL('../packages/contracts/fixtures/design-kit-type-token-consumer-v1.json', import.meta.url),
@@ -64,6 +64,6 @@ test('Main Shell supplies every semantic type variable in the pinned Design Kit 
 
 test('Angular loads the Main Shell UI contract as a global stylesheet', () => {
   const styles = angularConfig.projects['opensphere-console'].architect.build.options.styles;
-  assert.ok(styles.includes('src/ui-contract.scss'));
-  assert.ok(styles.indexOf('src/ui-contract.scss') > styles.indexOf('src/styles.scss'));
+  assert.ok(styles.includes('apps/console-web/src/ui-contract.scss'));
+  assert.ok(styles.indexOf('apps/console-web/src/ui-contract.scss') > styles.indexOf('apps/console-web/src/styles.scss'));
 });

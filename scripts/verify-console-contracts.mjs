@@ -236,8 +236,8 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
 
   const sessionResolverSource = await readFile(resolve(root, 'apps', 'console-api', 'src', 'session-resolver.mjs'), 'utf8');
   const httpHandlerSource = await readFile(resolve(root, 'apps', 'console-api', 'src', 'http-handler.mjs'), 'utf8');
-  const webHttpSource = await readFile(resolve(root, 'src', 'app', 'core', 'http.service.ts'), 'utf8');
-  const webAuthSource = await readFile(resolve(root, 'src', 'app', 'core', 'auth.service.ts'), 'utf8');
+  const webHttpSource = await readFile(resolve(root, 'apps', 'console-web', 'src', 'app', 'core', 'http.service.ts'), 'utf8');
+  const webAuthSource = await readFile(resolve(root, 'apps', 'console-web', 'src', 'app', 'core', 'auth.service.ts'), 'utf8');
   assert(/request\?*[.]headers\?*[.]\['x-os-csrf-token'\]/.test(sessionResolverSource), 'C_API does not consume the Console Web CSRF header');
   assert(webHttpSource.includes("headers.set('X-OS-CSRF-Token'"), 'Console Web shared HTTP client lost the canonical CSRF header');
   assert(webAuthSource.includes("headers.set('X-OS-CSRF-Token'"), 'Console Web identity client lost the canonical CSRF header');
@@ -441,7 +441,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(consoleApiDockerfile.includes('USER 1001'), 'C_API image must run as the declared non-root identity');
   const consoleApiDeployment = [];
   yaml.loadAll(await readFile(resolve(root, 'apps', 'console-api', 'deploy.yaml'), 'utf8'), (document) => consoleApiDeployment.push(document));
-  const consoleWebProxy = await readFile(resolve(root, 'nginx', 'default.conf.template'), 'utf8');
+  const consoleWebProxy = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   verifyConsoleApiDeployment({ documents: consoleApiDeployment, nginxSource: consoleWebProxy });
   const extensionControllerDeployment = [];
   yaml.loadAll(await readFile(resolve(root, 'apps', 'extension-controller', 'deploy.yaml'), 'utf8'), (document) => extensionControllerDeployment.push(document));
@@ -450,6 +450,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   const candidateWorkflow = await readFile(resolve(root, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
   const promotionWorkflow = await readFile(resolve(root, '.github', 'workflows', 'promote-release.yml'), 'utf8');
   assert(candidateWorkflow.includes('node scripts/verify-console-contracts.mjs --release-ready'), 'Candidate workflow has no target-migration publication gate');
+  assert(candidateWorkflow.includes('file: OpenSphere-console/apps/console-web/Dockerfile'), 'Candidate workflow does not build the C_WEB target Dockerfile');
   assert(candidateWorkflow.includes('- image: opensphere-console-api'), 'Candidate workflow does not publish the C_API target artifact');
   assert(candidateWorkflow.includes('file: OpenSphere-console/apps/console-api/Dockerfile'), 'Candidate workflow does not build the C_API target Dockerfile');
   assert(candidateWorkflow.includes('consoleApi'), 'Candidate BOM has no consoleApi component identity');
@@ -475,8 +476,8 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
 
   const packageJson = await readFile(resolve(root, 'package.json'), 'utf8');
   const sourceFiles = [
-    resolve(root, 'src', 'app', 'core', 'extension-host.service.ts'),
-    resolve(root, 'src', 'app', 'core', 'search.types.ts'),
+    resolve(root, 'apps', 'console-web', 'src', 'app', 'core', 'extension-host.service.ts'),
+    resolve(root, 'apps', 'console-web', 'src', 'app', 'core', 'search.types.ts'),
   ];
   assert(!packageJson.includes('file:../OpenSphere-SDK'), 'root package must not depend on sibling SDK source');
   for (const sourceFile of sourceFiles) {

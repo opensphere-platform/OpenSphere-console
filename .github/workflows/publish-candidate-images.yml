@@ -109,7 +109,7 @@ jobs:
         include:
           - image: opensphere-console
             context: OpenSphere-console
-            file: OpenSphere-console/Dockerfile
+            file: OpenSphere-console/apps/console-web/Dockerfile
           - image: opensphere-os-cli
             context: OpenSphere-console/cmd/os-cli
             file: OpenSphere-console/cmd/os-cli/Dockerfile

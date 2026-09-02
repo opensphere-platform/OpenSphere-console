@@ -28,9 +28,9 @@ const SOURCE_REPOSITORIES = Object.freeze({
     id: 'console', owner: 'opensphere-platform', repository: 'OpenSphere-console',
     canonicalUrl: 'https://github.com/opensphere-platform/OpenSphere-console.git',
     defaultBranch: 'main', visibility: 'public', kind: 'mainShell',
-    allowedReadPaths: Object.freeze(['apps/', 'backend/', 'cmd/', 'docs/', 'nginx/', 'packages/', 'scripts/', 'src/', 'angular.json', 'package.json']),
+    allowedReadPaths: Object.freeze(['apps/', 'backend/', 'cmd/', 'docs/', 'packages/', 'scripts/', 'angular.json', 'package.json']),
     engineering: Object.freeze({
-      allowedPaths: Object.freeze(['apps/osaa-gateway/', 'backend/', 'src/', 'nginx/', 'docs/']),
+      allowedPaths: Object.freeze(['apps/console-web/', 'apps/osaa-gateway/', 'backend/', 'docs/']),
       components: Object.freeze(['console', 'consoleBackend', 'osaaGateway']),
     }),
   }),

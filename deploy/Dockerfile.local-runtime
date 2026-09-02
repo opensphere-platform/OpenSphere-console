@@ -1,5 +1,5 @@
 # Local verification image: consumes an already verified `npm run build` output.
-# Release images still use the repository root Dockerfile and signed multi-arch pipeline.
+# Release images use apps/console-web/Dockerfile with the repository root context.
 #
 # This is an overlay of a complete Console image, not a new Nginx image. The
 # complete base owns native Console assets such as /api/cli/index.json and the
@@ -9,7 +9,7 @@ FROM ghcr.io/opensphere-platform/opensphere-console@sha256:3afd4b43fcddbcce51809
 ENV OS_PLUGIN_NAMESPACE=opensphere-console
 USER root
 COPY dist/opensphere-console/browser/ /usr/share/nginx/html/
-COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY apps/console-web/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 # Reject a local UI deployment that would make /manage/cli return HTTP 404.
 RUN test -s /usr/share/nginx/html/api/cli/index.json \

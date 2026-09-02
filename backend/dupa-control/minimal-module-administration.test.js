@@ -16,11 +16,11 @@ const extensionPackage = (kind = 'subShell', hostRef = 'main') => ({
 const extensionRegistration = (desiredState) => ({ spec: { desiredState } });
 
 test('atomic navigation projection survives inactive serving without activating guest code', () => {
-  const host = read('src', 'app', 'core', 'extension-host.service.ts');
-  const projectionStore = read('src', 'app', 'core', 'extension-projection.store.ts');
-  const navigation = read('src', 'app', 'core', 'console-navigation-snapshot.ts');
-  const page = read('src', 'app', 'pages', 'plugin-host.ts');
-  const shell = read('src', 'app', 'os', 'os-shell.ts');
+  const host = read('apps', 'console-web', 'src', 'app', 'core', 'extension-host.service.ts');
+  const projectionStore = read('apps', 'console-web', 'src', 'app', 'core', 'extension-projection.store.ts');
+  const navigation = read('apps', 'console-web', 'src', 'app', 'core', 'console-navigation-snapshot.ts');
+  const page = read('apps', 'console-web', 'src', 'app', 'pages', 'plugin-host.ts');
+  const shell = read('apps', 'console-web', 'src', 'app', 'os', 'os-shell.ts');
   assert.match(host, /readonly managementInventory = signal<ManagementInventoryItem\[\]>/);
   assert.match(projectionStore, /catalogSnapshot\(\)/);
   assert.match(projectionStore, /registrationsSnapshot\(\)/);
@@ -76,8 +76,8 @@ test('module uninstall removes every verified labelled binding and general profi
 test('Console and CLI share lifecycle API with scoped development-edge MFA policy and durable reason gates', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
   const backend = read('backend', 'opensphere-console-backend', 'server.js');
-  const client = read('src', 'app', 'core', 'plugin-control-client.service.ts');
-  const page = read('src', 'app', 'pages', 'admin-plugins.ts');
+  const client = read('apps', 'console-web', 'src', 'app', 'core', 'plugin-control-client.service.ts');
+  const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
   assert.doesNotMatch(controller, /CliInstallationRequired/);
   assert.match(controller, /reason\.length < 8/);
   assert.match(backend, /module lifecycle mutation/);
@@ -120,9 +120,9 @@ test('artifact updates preserve operator intent and reject implicit topology rep
 });
 
 test('Main Shell and extension APIs share the same MFA-aware command transport', () => {
-  const http = read('src', 'app', 'core', 'http.service.ts');
-  const auth = read('src', 'app', 'core', 'auth.service.ts');
-  const host = read('src', 'app', 'core', 'extension-host.service.ts');
+  const http = read('apps', 'console-web', 'src', 'app', 'core', 'http.service.ts');
+  const auth = read('apps', 'console-web', 'src', 'app', 'core', 'auth.service.ts');
+  const host = read('apps', 'console-web', 'src', 'app', 'core', 'extension-host.service.ts');
   assert.match(http, /requestWithStepUp/);
   assert.match(http, /const headers = new Headers/);
   assert.match(http, /X-OS-Idempotency-Key/);
@@ -134,7 +134,7 @@ test('Backend serving readiness and verified-session outage cache are dependency
   const backend = read('backend', 'opensphere-console-backend', 'server.js');
   const deploy = read('backend', 'opensphere-console-backend', 'deploy.yaml');
   const session = read('backend', 'opensphere-console-backend', 'browser-session.js');
-  const auth = read('src', 'app', 'core', 'auth.service.ts');
+  const auth = read('apps', 'console-web', 'src', 'app', 'core', 'auth.service.ts');
   assert.match(backend, /p === '\/serving-readyz'/);
   assert.match(deploy, /readinessProbe: \{ httpGet: \{ path: \/serving-readyz, port: 8080 \}/);
   assert.match(session, /authorityDegraded: true/);

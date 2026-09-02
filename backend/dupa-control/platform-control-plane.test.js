@@ -7,8 +7,8 @@ const root = path.join(__dirname, '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('Console management exposes Supabase, Gitea and HISS as distinct authorities', () => {
-  const routes = read('src', 'app', 'app.routes.ts');
-  const layout = read('src', 'app', 'pages', 'admin-layout.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
+  const layout = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-layout.ts');
   assert.match(routes, /path: 'platform-control'/);
   assert.match(routes, /path: 'data-identity'/);
   assert.match(routes, /path: 'state-changes'/);
@@ -23,9 +23,9 @@ test('Console management exposes Supabase, Gitea and HISS as distinct authoritie
 });
 
 test('Console management uses Clarity mixed tree navigation with direct overview, Extensions and R2D2 links', () => {
-  const routes = read('src', 'app', 'app.routes.ts');
-  const layout = read('src', 'app', 'pages', 'admin-layout.ts');
-  const overview = read('src', 'app', 'pages', 'admin-overview.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
+  const layout = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-layout.ts');
+  const overview = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-overview.ts');
   assert.match(routes, /path: '', component: AdminOverview, pathMatch: 'full'/);
   assert.doesNotMatch(routes, /path: '', redirectTo: 'catalog'/);
   assert.match(layout, /routerLink="\/manage"/);
@@ -57,16 +57,16 @@ test('Console management uses Clarity mixed tree navigation with direct overview
 });
 
 test('all Console management surfaces share task context, status and filtering conventions', () => {
-  const styles = read('src', 'styles.scss');
-  const catalog = read('src', 'app', 'pages', 'catalog.ts');
-  const apis = read('src', 'app', 'pages', 'apis.ts');
-  const admins = read('src', 'app', 'pages', 'console-admins.ts');
-  const roles = read('src', 'app', 'pages', 'admin-roles.ts');
-  const extensions = read('src', 'app', 'pages', 'admin-plugins.ts');
-  const osaa = read('src', 'app', 'pages', 'admin-osaa.ts');
-  const observability = read('src', 'app', 'pages', 'admin-observability.ts');
-  const notifications = read('src', 'app', 'pages', 'admin-notifications.ts');
-  const audit = read('src', 'app', 'pages', 'admin-audit.ts');
+  const styles = read('apps', 'console-web', 'src', 'styles.scss');
+  const catalog = read('apps', 'console-web', 'src', 'app', 'pages', 'catalog.ts');
+  const apis = read('apps', 'console-web', 'src', 'app', 'pages', 'apis.ts');
+  const admins = read('apps', 'console-web', 'src', 'app', 'pages', 'console-admins.ts');
+  const roles = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-roles.ts');
+  const extensions = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
+  const osaa = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
+  const observability = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-observability.ts');
+  const notifications = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-notifications.ts');
+  const audit = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-audit.ts');
   assert.match(styles, /\.manage-status-rail/);
   assert.match(styles, /\.manage-toolbar/);
   for (const source of [catalog, apis, admins, roles, extensions, osaa, observability, notifications, audit]) {
@@ -80,8 +80,8 @@ test('all Console management surfaces share task context, status and filtering c
 });
 
 test('Console administrator actions keep failures visible in the action dialog', () => {
-  const admins = read('src', 'app', 'pages', 'console-admins.ts');
-  const actionDialog = read('src', 'app', 'os', 'os-action-dialog.ts');
+  const admins = read('apps', 'console-web', 'src', 'app', 'pages', 'console-admins.ts');
+  const actionDialog = read('apps', 'console-web', 'src', 'app', 'os', 'os-action-dialog.ts');
   assert.match(admins, /\[error\]="actionError\(\)"/);
   assert.match(admins, /관리 작업 실패:/);
   assert.match(admins, /this\.reasonOpen\.set\(false\);[\s\S]{0,120}this\.pendingAction = null;[\s\S]{0,120}catch \(error\)/);
@@ -93,11 +93,11 @@ test('Console administrator actions keep failures visible in the action dialog',
 
 test('Platform Control presents support readiness, operations, evidence and journey as correlated task views', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
-  const routes = read('src', 'app', 'app.routes.ts');
-  const control = read('src', 'app', 'pages', 'admin-platform-control.ts');
-  const readiness = read('src', 'app', 'pages', 'admin-platform-readiness.ts');
-  const dataIdentity = read('src', 'app', 'pages', 'admin-data-identity.ts');
-  const changeControl = read('src', 'app', 'pages', 'admin-change-control.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
+  const control = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-control.ts');
+  const readiness = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-readiness.ts');
+  const dataIdentity = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-data-identity.ts');
+  const changeControl = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-change-control.ts');
   assert.match(routes, /path: 'platform-readiness', component: AdminPlatformControl, data: \{ controlTab: 'readiness' \}/);
   assert.match(control, />Operations</);
   assert.match(control, />Support Profile</);
@@ -144,7 +144,7 @@ test('DUPA active runtime depends on Supabase audit and never ships legacy data 
 
 test('OSAA runs in the Console namespace and HISS remains the telemetry owner', () => {
   const gateway = read('apps', 'osaa-gateway', 'server.js');
-  const nginx = read('nginx', 'default.conf.template');
+  const nginx = read('apps', 'console-web', 'nginx', 'default.conf.template');
   const plan = read('docs', 'PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md');
   assert.match(gateway, /const OSAA_NAMESPACE = process\.env\.OSAA_NAMESPACE \|\| 'opensphere-console'/);
   assert.doesNotMatch(gateway, /BACKBONE_NS/);

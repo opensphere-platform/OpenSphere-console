@@ -23,15 +23,15 @@ test('foundational Console contracts are internally complete and self-contained'
 });
 
 test('Console Web exposes only the implemented interactive CLI credential surface', async () => {
-  const profileSource = await readFile(new URL('../src/app/pages/my-info.ts', import.meta.url), 'utf8');
+  const profileSource = await readFile(new URL('../apps/console-web/src/app/pages/my-info.ts', import.meta.url), 'utf8');
   assert(profileSource.includes("'/api/identity/cli/devices'"));
   assert(profileSource.includes('/api/identity/cli/enrollments/'));
   assert(!profileSource.includes('/api/identity/cli/tokens'));
 });
 
 test('Console Web extension actions use the target authority contracts', async () => {
-  const clientSource = await readFile(new URL('../src/app/core/plugin-control-client.service.ts', import.meta.url), 'utf8');
-  const pageSource = await readFile(new URL('../src/app/pages/admin-plugins.ts', import.meta.url), 'utf8');
+  const clientSource = await readFile(new URL('../apps/console-web/src/app/core/plugin-control-client.service.ts', import.meta.url), 'utf8');
+  const pageSource = await readFile(new URL('../apps/console-web/src/app/pages/admin-plugins.ts', import.meta.url), 'utf8');
   assert(clientSource.includes('/api/admin/extensions/registry-connections/opensphere-ghcr'));
   assert(clientSource.includes('JSON.stringify({ username, credential, reason })'));
   assert(clientSource.includes("'X-OpenSphere-Confirmation': 'REMOVE opensphere-ghcr'"));
@@ -114,7 +114,7 @@ test('Console API authority verification rejects missing grants and direct table
 
 test('Console API deployment verification rejects credential ownership and premature browser cutover', async () => {
   const deploymentSource = await readFile(new URL('../apps/console-api/deploy.yaml', import.meta.url), 'utf8');
-  const nginxSource = await readFile(new URL('../nginx/default.conf.template', import.meta.url), 'utf8');
+  const nginxSource = await readFile(new URL('../apps/console-web/nginx/default.conf.template', import.meta.url), 'utf8');
   const documents = [];
   yaml.loadAll(deploymentSource, (document) => documents.push(document));
   assert.throws(

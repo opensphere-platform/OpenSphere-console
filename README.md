@@ -18,15 +18,15 @@ Archived `_DOCS_` material and bundled historical manuals are evidence only. The
 
 ```text
 apps/                 independently runnable Console-native applications
+  console-web/        Angular experience host, static assets, Nginx policy, image build
 cmd/                  native command-line programs
 packages/contracts/   OpenAPI, JSON Schema, owner/consumer contracts, shared types
 migrations/           reconstructed baseline and append-only version migrations
 deploy/               base manifests and environment overlays
-src/                   legacy Angular application during controlled migration
 backend/               legacy runtime implementations during controlled migration
 ```
 
-`src/` and `backend/` remain migration sources until each capability passes its new contract and acceptance gate. New cross-capability contracts belong in `packages/contracts`; new code must not import another repository's source tree.
+The Web application has completed its source-boundary migration to `apps/console-web`. `backend/` remains a migration source only for the C_API and C_EXT capabilities identified in `apps/component-boundaries.json`. New cross-capability contracts belong in `packages/contracts`; new code must not import another repository's source tree.
 
 The first `apps/console-api` slice implements opaque session/CSRF resolution, current permission and revoke checks, governed Registry action intake, C_REG-backed Extension inspection and install planning, independently approved Extension removal, and atomic operation/audit/outbox persistence. The retained `backend/registry` process separates installable `UIPluginPackage` candidates from activated Plugin runtime projections. The separate `apps/extension-controller` process re-resolves approved installs, applies one fenced Kubernetes Registration, and records `InstallReady` only from generation-current Package, Registration, workload, verification, serving, and revalidation evidence. Removal patches the exact Registration to `Uninstalled`, lets the existing reconciler remove its workload and Registration, and records `RegistrationAbsent` only after observing the same UID disappear. Console API independently closes a matching install, removal, or revocation as `Verified`. These processes run alongside the legacy Backend until remaining Owner actions, credential broker, route coverage, projection verification, and cutover gates are complete.
 

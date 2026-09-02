@@ -14,18 +14,18 @@ const root = path.resolve(__dirname, '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('os-osaa-agent.ts exists as a native shell component (not a routed page)', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.match(agent, /selector:\s*'os-osaa-agent'/);
   assert.match(agent, /export class OsOsaaAgent/);
 
-  const routes = read('src', 'app', 'app.routes.ts');
+  const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
   assert.doesNotMatch(routes, /os-osaa-agent/i);
   assert.doesNotMatch(routes, /OsOsaaAgent/);
 });
 
 test('os-shell.ts wires os-osaa-agent into the header next to Manual and notifications', () => {
-  const shell = read('src', 'app', 'os', 'os-shell.ts');
+  const shell = read('apps', 'console-web', 'src', 'app', 'os', 'os-shell.ts');
 
   assert.match(shell, /import\s*\{\s*OsOsaaAgent\s*\}\s*from\s*'\.\/os-osaa-agent'/);
   assert.match(shell, /imports:\s*\[[^\]]*OsOsaaAgent[^\]]*\]/);
@@ -41,8 +41,8 @@ test('os-shell.ts wires os-osaa-agent into the header next to Manual and notific
 });
 
 test('os-osaa-agent.ts calls only the same-origin /api/osaa/chat endpoint through the shared HttpService session policy', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
-  const http = read('src', 'app', 'core', 'http.service.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
+  const http = read('apps', 'console-web', 'src', 'app', 'core', 'http.service.ts');
 
   assert.match(agent, /import\s*\{\s*HttpRequestTimeoutError,\s*HttpService\s*\}\s*from\s*'\.\.\/core\/http\.service'/);
   assert.match(agent, /private http = inject\(HttpService\)/);
@@ -59,7 +59,7 @@ test('os-osaa-agent.ts calls only the same-origin /api/osaa/chat endpoint throug
 });
 
 test('os-osaa-agent.ts never stores or displays raw API key material', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.doesNotMatch(agent, /api[_-]?key/i);
   assert.doesNotMatch(agent, /type="password"/);
@@ -81,8 +81,8 @@ test('os-osaa-agent.ts never stores or displays raw API key material', () => {
 });
 
 test('os-osaa-agent.ts renders message/source/concept content as safe text (no innerHTML)', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
-  const renderer = read('src', 'app', 'os', 'osaa-message-content.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
+  const renderer = read('apps', 'console-web', 'src', 'app', 'os', 'osaa-message-content.ts');
 
   assert.doesNotMatch(agent, /\[innerHTML\]|\.innerHTML\s*=|bypassSecurityTrustHtml/);
   assert.doesNotMatch(renderer, /\[innerHTML\]|\.innerHTML\s*=|bypassSecurityTrustHtml/);
@@ -92,7 +92,7 @@ test('os-osaa-agent.ts renders message/source/concept content as safe text (no i
 });
 
 test('os-osaa-agent.ts surfaces Degraded/error state with retry-by-resend, new chat, and history controls', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.match(agent, /readonly error = signal\(''\)/);
   assert.match(agent, /@if \(error\(\)\) \{/);
@@ -103,7 +103,7 @@ test('os-osaa-agent.ts surfaces Degraded/error state with retry-by-resend, new c
 });
 
 test('os-osaa-agent.ts exposes accessible open/close controls and dock resize + full workspace toggle', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.match(agent, /aria-label="R2D2"/);
   assert.match(agent, /\(click\)="close\(\)" title="Close" aria-label="Close"/);
@@ -114,8 +114,8 @@ test('os-osaa-agent.ts exposes accessible open/close controls and dock resize + 
 });
 
 test('OSAA desktop dock reserves Main Shell workspace instead of overlaying it', () => {
-  const styles = read('src', 'styles.scss');
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const styles = read('apps', 'console-web', 'src', 'styles.scss');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   // The agent owns the fixed right panel, while the global shell stylesheet owns
   // the corresponding workspace reservation.  Testing both sides prevents a
@@ -128,7 +128,7 @@ test('OSAA desktop dock reserves Main Shell workspace instead of overlaying it',
 });
 
 test('os-osaa-agent.ts does not render or hydrate automatic suggested actions', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.doesNotMatch(agent, /Suggested Actions/);
   assert.doesNotMatch(agent, /OsaaSuggestedAction/);
@@ -139,7 +139,7 @@ test('os-osaa-agent.ts does not render or hydrate automatic suggested actions', 
 });
 
 test('os-osaa-agent is absent from Extension Host / DUPA plugin nav registration paths', () => {
-  const extensionHost = read('src', 'app', 'core', 'extension-host.service.ts');
+  const extensionHost = read('apps', 'console-web', 'src', 'app', 'core', 'extension-host.service.ts');
   const controller = read('backend', 'dupa-control', 'controller.js');
 
   assert.doesNotMatch(extensionHost, /os-osaa-agent/i);
@@ -147,9 +147,9 @@ test('os-osaa-agent is absent from Extension Host / DUPA plugin nav registration
 });
 
 test('OSAA admin uses the Supabase console-admins contract and the shared full-width side-panel workflow', () => {
-  const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
-  const panel = read('src', 'app', 'os', 'os-panel.ts');
-  const styles = read('src', 'styles.scss');
+  const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
+  const panel = read('apps', 'console-web', 'src', 'app', 'os', 'os-panel.ts');
+  const styles = read('apps', 'console-web', 'src', 'styles.scss');
 
   assert.doesNotMatch(admin, /opensphere-console-admins/);
   assert.match(admin, /R2D2 관리자 역할\(console-admins\)이 필요합니다/);
@@ -168,7 +168,7 @@ test('OSAA admin uses the Supabase console-admins contract and the shared full-w
 });
 
 test('OSAA API key visibility is explicit, accessible, and resets at every secret boundary', () => {
-  const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
+  const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
 
   assert.match(admin, /readonly llmSecretVisible = signal\(false\)/);
   assert.match(admin, /aria-label]="llmSecretVisible\(\) \? 'API key 숨기기' : 'API key 표시'"/);
@@ -184,7 +184,7 @@ test('OSAA API key visibility is explicit, accessible, and resets at every secre
 });
 
 test('OSAA Admin distinguishes reachable Gateway health from complete Agent readiness', () => {
-  const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
+  const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
 
   assert.match(admin, /<span>Runtime<\/span>/);
   assert.match(admin, /R2D2 runtime · v\{\{ h\.version \}\}/);
@@ -200,12 +200,12 @@ test('OSAA Admin distinguishes reachable Gateway health from complete Agent read
 });
 
 test('OSAA credential writes enter the Console Backend policy and audit boundary, never the read-only Gateway mutation path', () => {
-  const nginx = read('nginx', 'default.conf.template');
+  const nginx = read('apps', 'console-web', 'nginx', 'default.conf.template');
   const backend = read('backend', 'opensphere-console-backend', 'server.js');
   const backendDeploy = read('backend', 'opensphere-console-backend', 'deploy.yaml');
   const gateway = read('apps', 'osaa-gateway', 'server.js');
   const gatewayDeploy = read('apps', 'osaa-gateway', 'deploy.yaml');
-  const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
+  const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
 
   assert.match(nginx, /location \^~ \/api\/osaa\/admin\/llm-keys[\s\S]*opensphere-console-backend/);
   assert.match(backend, /verifyConsoleAdmin\(req\)[\s\S]*upsertOsaaKey\(actor, await readBody\(req\)\)/);
@@ -240,7 +240,7 @@ test('OSAA credential writes enter the Console Backend policy and audit boundary
 });
 
 test('OSAA chat delegates provider key selection to Gateway instead of hard-coding a stale key id', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.doesNotMatch(agent, /keyId:\s*['"]deepseek['"]/);
   assert.match(agent, /conversationId: this\.currentId\(\) \|\| undefined,[\s\S]*clientRequestId: crypto\.randomUUID\(\),[\s\S]*message: text,[\s\S]*context: this\.pageContext\(\),[\s\S]*source: 'console-osaa-agent'/);
@@ -251,8 +251,8 @@ test('OSAA chat delegates provider key selection to Gateway instead of hard-codi
 });
 
 test('OSAA provider usage is normalized, persisted to the Supabase ledger, and visible per response and key', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
-  const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
+  const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
   const gateway = read('apps', 'osaa-gateway', 'server.js');
   const migration = read('backend', 'supabase', 'migrations', '0012_oaa_llm_usage_ledger.sql');
 
@@ -284,7 +284,7 @@ test('OSAA provider usage is normalized, persisted to the Supabase ledger, and v
 });
 
 test('OSAA Admin correlates agent evidence and governs retention without a purge control', () => {
-  const admin = read('src', 'app', 'pages', 'admin-osaa.ts');
+  const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
   const gateway = read('apps', 'osaa-gateway', 'server.js');
   const migration = read('backend', 'supabase', 'migrations', '0019_oaa_evidence_correlation_retention.sql');
 
@@ -302,7 +302,7 @@ test('OSAA Admin correlates agent evidence and governs retention without a purge
 });
 
 test('OSAA composer follows the desktop chat interaction contract', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.match(agent, /placeholder="무엇이든 요청하세요"/);
   assert.match(agent, /class="osaa-compose-bar"/);
@@ -317,7 +317,7 @@ test('OSAA composer follows the desktop chat interaction contract', () => {
 });
 
 test('OSAA shows a concise enforced Dialogue State inspector without exposing shadow state', () => {
-  const agent = read('src', 'app', 'os', 'os-osaa-agent.ts');
+  const agent = read('apps', 'console-web', 'src', 'app', 'os', 'os-osaa-agent.ts');
 
   assert.match(agent, /interface OsaaDialogue/);
   assert.match(agent, /class="osaa-context-inspector"/);

@@ -15,7 +15,7 @@ const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'P
 const admissionHarness = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Test-OsShellRuntimeAdmission.ps1'), 'utf8');
 const backendServer = fs.readFileSync(path.join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
 const backendDeploy = fs.readFileSync(path.join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
-const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
+const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
 const runtimeDockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile.runtime'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));

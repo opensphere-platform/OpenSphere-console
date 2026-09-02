@@ -69,17 +69,17 @@ test('deployer activates a supplied Console override before prerequisite verific
 test('Console component paths stay separate from privileged deployment tooling', () => {
   const boundary = read('scripts/os-shell-runtime-override-boundary.mjs');
   for (const relative of [
-    'nginx/default.conf.template',
-    'public/os-shell-frame/index.html',
-    'src/app/app.config.ts',
-    'src/app/core/system-plugin-registry.service.ts',
-    'src/app/pages/admin-plugins-state.spec.ts',
-    'src/app/pages/admin-plugins.ts',
-    'src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts',
-    'src/app/system-plugins/os-shell/os-shell-launcher.ts',
-    'src/app/system-plugins/os-shell/os-shell-page.scss',
-    'src/app/system-plugins/os-shell/os-shell-page.ts',
-    'src/app/system-plugins/os-shell/os-shell-terminal-surface.ts',
+    'apps/console-web/nginx/default.conf.template',
+    'apps/console-web/public/os-shell-frame/index.html',
+    'apps/console-web/src/app/app.config.ts',
+    'apps/console-web/src/app/core/system-plugin-registry.service.ts',
+    'apps/console-web/src/app/pages/admin-plugins-state.spec.ts',
+    'apps/console-web/src/app/pages/admin-plugins.ts',
+    'apps/console-web/src/app/system-plugins/os-shell/frame/os-shell-terminal-frame.ts',
+    'apps/console-web/src/app/system-plugins/os-shell/os-shell-launcher.ts',
+    'apps/console-web/src/app/system-plugins/os-shell/os-shell-page.scss',
+    'apps/console-web/src/app/system-plugins/os-shell/os-shell-page.ts',
+    'apps/console-web/src/app/system-plugins/os-shell/os-shell-terminal-surface.ts',
   ]) assert.match(boundary, new RegExp(relative.replaceAll('.', '[.]').replaceAll('/', '\\/')));
   assert.match(boundary, /deploymentToolingPaths[\s\S]*scripts\/Publish-LocalEdgeOsShellConsole[.]ps1/);
   assert.match(boundary, /deploymentToolingPaths[\s\S]*scripts\/os-shell-console-publisher[.]test[.]mjs/);

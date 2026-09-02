@@ -44,13 +44,13 @@ test('OSAA reads and searches only bounded allowlisted text at one exact revisio
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'osaa-source-authority-test-'));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
   await fsp.mkdir(path.join(root, 'apps', 'osaa-gateway'), { recursive: true });
-  await fsp.mkdir(path.join(root, 'src', 'app'), { recursive: true });
+  await fsp.mkdir(path.join(root, 'apps', 'console-web', 'src', 'app'), { recursive: true });
   await fsp.writeFile(path.join(root, 'apps', 'osaa-gateway', 'server.js'), [
     "const authority = 'runtime';",
     "const diagnosis = 'HOST_NAVIGATION_LAZY_UI_SEPARATION';",
     'module.exports = { authority, diagnosis };',
   ].join('\n'));
-  await fsp.writeFile(path.join(root, 'src', 'app', 'index.ts'), "export const ready = true;\n");
+  await fsp.writeFile(path.join(root, 'apps', 'console-web', 'src', 'app', 'index.ts'), "export const ready = true;\n");
   await fsp.writeFile(path.join(root, 'secret.env'), 'PASSWORD=must-not-read\n');
 
   const source = createCanonicalSourceEvidence({ materializeRevision: async (repository, requestedRevision) => {

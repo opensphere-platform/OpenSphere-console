@@ -47,7 +47,7 @@ test('release Job admission applies only to the reserved executor service accoun
 });
 
 test('failed local-edge automation remains retryable by an authenticated administrator', () => {
-  const ui = fs.readFileSync(path.join(directory, '..', '..', 'src', 'app', 'pages', 'admin-change-control.ts'), 'utf8');
+  const ui = fs.readFileSync(path.join(directory, '..', '..', 'apps', 'console-web', 'src', 'app', 'pages', 'admin-change-control.ts'), 'utf8');
   assert.match(ui, /@else if \(canRetry\(change\)\)/);
   assert.match(ui, /isLocalEdgeAutomation\(change: ChangeRequest\): boolean \{ return change[.]actor_type === 'service' && change[.]target === 'opensphere-platform'; \}/);
   assert.match(ui, /change[.]status === 'failed' && \(this[.]isApprovalApplied\(change\) \|\| this[.]isLocalEdgeAutomation\(change\)\)/);
@@ -374,7 +374,7 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   const deploy = fs.readFileSync(path.join(directory, 'deploy.yaml'), 'utf8');
   const dockerfile = fs.readFileSync(path.join(directory, 'Dockerfile'), 'utf8');
   const migration = fs.readFileSync(path.join(directory, '..', 'supabase', 'migrations', '0033_platform_release_consumer.sql'), 'utf8');
-  const ui = fs.readFileSync(path.join(directory, '..', '..', 'src', 'app', 'pages', 'admin-platform-release.ts'), 'utf8');
+  const ui = fs.readFileSync(path.join(directory, '..', '..', 'apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-release.ts'), 'utf8');
   const deployer = fs.readFileSync(path.join(directory, '..', '..', 'scripts', 'Invoke-LocalEdgePlatformRelease.ps1'), 'utf8');
 
   assert.match(server, /validatePlatformReleaseDesiredState/);
