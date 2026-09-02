@@ -2,6 +2,8 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$ConsoleApiImage,
   [Parameter(Mandatory = $true)]
+  [string]$ExtensionControllerImage,
+  [Parameter(Mandatory = $true)]
   [string]$SupabasePostgresImage,
   [Parameter(Mandatory = $true)]
   [string]$SupabaseAuthImage,
@@ -24,13 +26,19 @@ $secretName = 'opensphere-console-api-runtime'
 $secretKey = 'database-url'
 $sessionEncryptionSecretKey = 'session-encryption-key'
 $supabaseServiceRoleSecretKey = 'supabase-service-role-key'
+$extensionRoleName = 'opensphere_console_extension_runtime'
+$extensionAuthorityRole = 'console_extension_controller'
+$extensionSecretName = 'opensphere-extension-controller-runtime'
+$databaseHost = "opensphere-supabase-postgres.$DataNamespace.svc.cluster.local"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $repositoryRoot 'migrations\manifest.json'
 $deploymentPath = Join-Path $repositoryRoot 'apps\console-api\deploy.yaml'
+$extensionDeploymentPath = Join-Path $repositoryRoot 'apps\extension-controller\deploy.yaml'
 $dataDeploymentPath = Join-Path $repositoryRoot 'backend\supabase\target\deploy.yaml'
 
 foreach ($imageInput in @(
   @{ Name = 'ConsoleApiImage'; Value = $ConsoleApiImage; Artifact = 'opensphere-console-api' },
+  @{ Name = 'ExtensionControllerImage'; Value = $ExtensionControllerImage; Artifact = 'opensphere-extension-controller' },
   @{ Name = 'SupabasePostgresImage'; Value = $SupabasePostgresImage; Artifact = 'opensphere-console-supabase-postgres' },
   @{ Name = 'SupabaseAuthImage'; Value = $SupabaseAuthImage; Artifact = 'opensphere-console-supabase-auth' },
   @{ Name = 'SupabaseRestImage'; Value = $SupabaseRestImage; Artifact = 'opensphere-console-supabase-rest' },
@@ -55,6 +63,7 @@ if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) { throw 'kubectl i
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'node is required' }
 if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Missing fresh migration manifest: $manifestPath" }
 if (-not (Test-Path -LiteralPath $deploymentPath)) { throw "Missing C_API deployment manifest: $deploymentPath" }
+if (-not (Test-Path -LiteralPath $extensionDeploymentPath)) { throw "Missing C_EXT deployment manifest: $extensionDeploymentPath" }
 if (-not (Test-Path -LiteralPath $dataDeploymentPath)) { throw "Missing target Supabase deployment manifest: $dataDeploymentPath" }
 
 $migrationManifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
@@ -174,6 +183,8 @@ $postgresPassword = [Text.Encoding]::UTF8.GetString($postgresPasswordBytes)
 if ($postgresPassword.Length -lt 32) { throw 'Supabase PostgreSQL password must contain at least 32 characters' }
 $secretJson = (Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'secret', $secretName, '--ignore-not-found', '-o', 'json') | Out-String).Trim()
 $secretPresent = [bool]$secretJson
+$extensionSecretJson = (Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'secret', $extensionSecretName, '--ignore-not-found', '-o', 'json') | Out-String).Trim()
+$extensionSecretPresent = [bool]$extensionSecretJson
 
 $dataResources = @(
   'serviceaccount/opensphere-supabase-postgres',
@@ -201,8 +212,8 @@ $existingDataResources = @($dataResources | Where-Object {
 if ($existingDataResources.Count -notin @(0, $dataResources.Count)) {
   throw 'Target Supabase resources are in a partial state; no implicit repair was attempted'
 }
-if ($existingDataResources.Count -eq 0 -and $secretPresent) {
-  throw 'C_API runtime Secret exists without a target data stack; no implicit repair was attempted'
+if ($existingDataResources.Count -eq 0 -and ($secretPresent -or $extensionSecretPresent)) {
+  throw 'Console runtime Secret exists without a target data stack; no implicit repair was attempted'
 }
 $dataStackStatus = if ($existingDataResources.Count -eq 0) { 'installed' } else { 'reconciled' }
 
@@ -301,6 +312,52 @@ FROM pg_roles child WHERE child.rolname='$roleName';
   }
 }
 
+function Get-ExtensionRuntimePasswordFromSecret([string]$Json) {
+  $secret = $Json | ConvertFrom-Json
+  $actualKeys = @($secret.data.PSObject.Properties.Name | Sort-Object)
+  if ($secret.type -ne 'Opaque' -or $actualKeys.Count -ne 1 -or $actualKeys[0] -ne $secretKey) {
+    throw 'Runtime Secret must match the exact C_EXT credential contract'
+  }
+  $databaseUrl = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$secret.data.$secretKey))
+  $uri = [Uri]$databaseUrl
+  $expectedHost = "opensphere-supabase-postgres.$DataNamespace.svc.cluster.local"
+  if ($uri.Scheme -notin @('postgres', 'postgresql') -or $uri.Host -ne $expectedHost -or
+      $uri.AbsolutePath -ne '/postgres' -or $uri.Query -or $uri.Fragment) {
+    throw 'C_EXT Runtime Secret database URL is outside the fixed Supabase authority'
+  }
+  $userinfo = $uri.UserInfo.Split(':', 2)
+  if ($userinfo.Count -ne 2 -or [Uri]::UnescapeDataString($userinfo[0]) -ne $extensionRoleName) {
+    throw 'Runtime Secret database role differs from the fixed C_EXT login'
+  }
+  return [Uri]::UnescapeDataString($userinfo[1])
+}
+
+function Test-ExtensionRuntimeLogin([string]$Password) {
+  $command = 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql -X -h 127.0.0.1 -U opensphere_console_extension_runtime -d postgres -tA -v ON_ERROR_STOP=1 -c "SELECT current_user||''|''||pg_has_role(current_user,''console_extension_controller'',''member'')::text;"'
+  $result = Invoke-Kubectl @('-n', $DataNamespace, 'exec', '-i', $postgresPod, '--', 'sh', '-ec', $command) ($Password + "`n")
+  $line = @($result | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+  if ($line.Count -ne 1 -or $line[0] -ne "$extensionRoleName|true") {
+    throw 'Runtime login does not match the limited console_extension_controller membership contract'
+  }
+}
+
+function Test-ExtensionRuntimeRoleContract {
+  $sql = @"
+SELECT child.rolname||'|'||child.rolcanlogin::text||'|'||child.rolinherit::text||'|'||
+       child.rolsuper::text||'|'||child.rolcreaterole::text||'|'||child.rolcreatedb::text||'|'||
+       child.rolreplication::text||'|'||child.rolbypassrls::text||'|'||child.rolconnlimit::text||'|'||
+       COALESCE((SELECT string_agg(parent.rolname, ',' ORDER BY parent.rolname COLLATE "C")
+                 FROM pg_auth_members membership
+                 JOIN pg_roles parent ON parent.oid=membership.roleid
+                 WHERE membership.member=child.oid), '')
+FROM pg_roles child WHERE child.rolname='$extensionRoleName';
+"@
+  $result = Invoke-OwnerSql $sql
+  if ($result.Count -ne 1 -or $result[0] -ne "$extensionRoleName|true|true|false|false|false|false|false|8|$extensionAuthorityRole") {
+    throw 'Runtime role attributes or memberships differ from the closed C_EXT contract'
+  }
+}
+
 $expectedLedger = "$($migrationManifest.migrationCount)|$($migrationManifest.latestGlobalId)|$($migrationManifest.setDigest)"
 $ledgerSql = @"
 SELECT count(*)::text || '|' ||
@@ -359,6 +416,17 @@ if ($existingDataResources.Count -eq $dataResources.Count) {
   if ($secretPresent) {
     Test-RuntimeRoleContract
     Test-RuntimeLogin (Get-RuntimePasswordFromSecret $secretJson)
+  }
+  $extensionPreflightRoleState = Invoke-OwnerSql "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$extensionRoleName') THEN 'present' ELSE 'absent' END;"
+  if ($extensionPreflightRoleState.Count -ne 1 -or $extensionPreflightRoleState[0] -notin @('present', 'absent')) {
+    throw 'Unable to establish preflight C_EXT runtime role state'
+  }
+  if (($extensionPreflightRoleState[0] -eq 'present') -ne $extensionSecretPresent) {
+    throw 'Extension Controller runtime role and Secret are in a split provisioning state; no target mutation was attempted'
+  }
+  if ($extensionSecretPresent) {
+    Test-ExtensionRuntimeRoleContract
+    Test-ExtensionRuntimeLogin (Get-ExtensionRuntimePasswordFromSecret $extensionSecretJson)
   }
 }
 
@@ -458,6 +526,10 @@ Invoke-Kubectl @('-n', $DataNamespace, 'rollout', 'status', 'deployment/opensphe
 $authorityState = Invoke-OwnerSql "SELECT rolname||'|'||rolcanlogin::text||'|'||rolsuper::text||'|'||rolcreaterole::text||'|'||rolcreatedb::text||'|'||rolreplication::text||'|'||rolbypassrls::text FROM pg_roles WHERE rolname='$authorityRole';"
 if ($authorityState.Count -ne 1 -or $authorityState[0] -ne "$authorityRole|false|false|false|false|false|false") {
   throw 'Fresh console_api authority role attributes differ from the closed baseline'
+}
+$extensionAuthorityState = Invoke-OwnerSql "SELECT rolname||'|'||rolcanlogin::text||'|'||rolsuper::text||'|'||rolcreaterole::text||'|'||rolcreatedb::text||'|'||rolreplication::text||'|'||rolbypassrls::text FROM pg_roles WHERE rolname='$extensionAuthorityRole';"
+if ($extensionAuthorityState.Count -ne 1 -or $extensionAuthorityState[0] -ne "$extensionAuthorityRole|false|false|false|false|false|false") {
+  throw 'Fresh console_extension_controller authority role attributes differ from the closed baseline'
 }
 
 $roleState = Invoke-OwnerSql "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$roleName') THEN 'present' ELSE 'absent' END;"
@@ -559,6 +631,88 @@ try {
 $runtimeStatus = 'provisioned'
 }
 
+$extensionRoleState = Invoke-OwnerSql "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$extensionRoleName') THEN 'present' ELSE 'absent' END;"
+if ($extensionRoleState.Count -ne 1 -or $extensionRoleState[0] -notin @('present', 'absent')) { throw 'Unable to establish C_EXT runtime role state' }
+$extensionSecretJson = (Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'secret', $extensionSecretName, '--ignore-not-found', '-o', 'json') | Out-String).Trim()
+$extensionSecretPresent = [bool]$extensionSecretJson
+if (($extensionRoleState[0] -eq 'present') -ne $extensionSecretPresent) {
+  throw 'Extension Controller runtime role and Secret are in a split provisioning state; no implicit repair or rotation was attempted'
+}
+$extensionRuntimeStatus = 'already-provisioned'
+if ($extensionSecretPresent) {
+  Test-ExtensionRuntimeRoleContract
+  Test-ExtensionRuntimeLogin (Get-ExtensionRuntimePasswordFromSecret $extensionSecretJson)
+} else {
+  $extensionPasswordBuffer = New-Object byte[] 48
+  [Security.Cryptography.RandomNumberGenerator]::Fill($extensionPasswordBuffer)
+  $extensionPasswordChars = New-Object char[] $extensionPasswordBuffer.Length
+  $extensionAlphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  for ($index = 0; $index -lt $extensionPasswordBuffer.Length; $index++) {
+    $extensionPasswordChars[$index] = $extensionAlphabet[$extensionPasswordBuffer[$index] % $extensionAlphabet.Length]
+  }
+  $extensionRuntimePassword = -join $extensionPasswordChars
+  $extensionEscapedPassword = $extensionRuntimePassword.Replace("'", "''")
+  $createExtensionRoleSql = @"
+BEGIN;
+DO `$role`$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$extensionRoleName') THEN
+    RAISE EXCEPTION 'C_EXT runtime role appeared during provisioning';
+  END IF;
+END
+`$role`$;
+CREATE ROLE $extensionRoleName LOGIN PASSWORD '$extensionEscapedPassword'
+  NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 8;
+GRANT $extensionAuthorityRole TO $extensionRoleName;
+ALTER ROLE $extensionRoleName SET search_path = pg_catalog;
+ALTER ROLE $extensionRoleName SET statement_timeout = '15s';
+ALTER ROLE $extensionRoleName SET lock_timeout = '3s';
+COMMIT;
+"@
+  Invoke-OwnerSql $createExtensionRoleSql | Out-Null
+
+  $encodedExtensionUser = [Uri]::EscapeDataString($extensionRoleName)
+  $encodedExtensionPassword = [Uri]::EscapeDataString($extensionRuntimePassword)
+  $extensionDatabaseUrl = "postgresql://${encodedExtensionUser}:${encodedExtensionPassword}@${databaseHost}:5432/postgres"
+  $extensionSecretManifest = @{
+    apiVersion = 'v1'
+    kind = 'Secret'
+    metadata = @{
+      name = $extensionSecretName
+      namespace = $RuntimeNamespace
+      labels = @{
+        'app.kubernetes.io/part-of' = 'opensphere-console'
+        'opensphere.io/secret-scope' = 'extension-controller-only'
+      }
+    }
+    type = 'Opaque'
+    stringData = @{ $secretKey = $extensionDatabaseUrl }
+  } | ConvertTo-Json -Depth 8 -Compress
+
+  $extensionSecretCreated = $false
+  try {
+    Invoke-Kubectl @('create', '-f', '-') $extensionSecretManifest | Out-Null
+    $extensionSecretCreated = $true
+    Test-ExtensionRuntimeRoleContract
+    Test-ExtensionRuntimeLogin $extensionRuntimePassword
+  } catch {
+    if ($extensionSecretCreated) {
+      Invoke-Kubectl @('-n', $RuntimeNamespace, 'delete', 'secret', $extensionSecretName, '--wait=true') | Out-Null
+    }
+    Invoke-OwnerSql "DROP ROLE IF EXISTS $extensionRoleName;" | Out-Null
+    throw
+  } finally {
+    $extensionRuntimePassword = $null
+    $extensionEscapedPassword = $null
+    $encodedExtensionPassword = $null
+    $extensionDatabaseUrl = $null
+    $extensionSecretManifest = $null
+    [Array]::Clear($extensionPasswordBuffer, 0, $extensionPasswordBuffer.Length)
+    [Array]::Clear($extensionPasswordChars, 0, $extensionPasswordChars.Length)
+  }
+  $extensionRuntimeStatus = 'provisioned'
+}
+
 $deploymentTemplate = Get-Content -Raw -LiteralPath $deploymentPath
 if ([regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_API_IMAGE__')).Count -ne 1 -or
     [regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_URL__')).Count -ne 1) {
@@ -571,6 +725,17 @@ Invoke-Kubectl @('-n', $RuntimeNamespace, 'rollout', 'status', 'deployment/opens
 $installedImage = ((Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'deployment/opensphere-console-api', '-o', 'jsonpath={.spec.template.spec.containers[0].image}')) -join '').Trim()
 if ($installedImage -ne $ConsoleApiImage) { throw 'Installed C_API image differs from the requested exact digest' }
 
+$extensionDeploymentTemplate = Get-Content -Raw -LiteralPath $extensionDeploymentPath
+if ([regex]::Matches($extensionDeploymentTemplate, [regex]::Escape('__OPENSPHERE_EXTENSION_CONTROLLER_IMAGE__')).Count -ne 1) {
+  throw 'C_EXT deployment image placeholder contract is invalid'
+}
+$renderedExtensionDeployment = $extensionDeploymentTemplate.Replace('__OPENSPHERE_EXTENSION_CONTROLLER_IMAGE__', $ExtensionControllerImage)
+if ($renderedExtensionDeployment -match '__OPENSPHERE_[A-Z0-9_]+__') { throw 'C_EXT deployment has unresolved placeholders' }
+Invoke-Kubectl @('apply', '-f', '-') $renderedExtensionDeployment | Out-Null
+Invoke-Kubectl @('-n', $RuntimeNamespace, 'rollout', 'status', 'deployment/opensphere-extension-controller', '--timeout=5m') | Out-Null
+$installedExtensionImage = ((Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'deployment/opensphere-extension-controller', '-o', 'jsonpath={.spec.template.spec.containers[0].image}')) -join '').Trim()
+if ($installedExtensionImage -ne $ExtensionControllerImage) { throw 'Installed C_EXT image differs from the requested exact digest' }
+
 Write-Output (@{
   status = 'passed'
   dataStack = $dataStackStatus
@@ -580,4 +745,11 @@ Write-Output (@{
   secret = "$RuntimeNamespace/$secretName"
   deployment = "$RuntimeNamespace/opensphere-console-api"
   image = $ConsoleApiImage
+  extensionController = @{
+    runtimeCredential = $extensionRuntimeStatus
+    role = $extensionRoleName
+    secret = "$RuntimeNamespace/$extensionSecretName"
+    deployment = "$RuntimeNamespace/opensphere-extension-controller"
+    image = $ExtensionControllerImage
+  }
 } | ConvertTo-Json -Compress)

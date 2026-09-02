@@ -5,10 +5,11 @@ import { readFile } from 'node:fs/promises';
 const source = await readFile(new URL('./Install-ConsoleApiRuntime.ps1', import.meta.url), 'utf8');
 const dataManifest = await readFile(new URL('../backend/supabase/target/deploy.yaml', import.meta.url), 'utf8');
 
-test('Console target installer accepts only the five exact release images', () => {
+test('Console target installer accepts only the six exact release images', () => {
   assert.match(source, /\[Parameter\(Mandatory = \$true\)\][\s\S]*\[string\]\$ConsoleApiImage/);
   for (const parameter of [
     'ConsoleApiImage',
+    'ExtensionControllerImage',
     'SupabasePostgresImage',
     'SupabaseAuthImage',
     'SupabaseRestImage',
@@ -17,6 +18,7 @@ test('Console target installer accepts only the five exact release images', () =
   ]) assert.match(source, new RegExp(`\\[string\\]\\$${parameter}`));
   for (const artifact of [
     'opensphere-console-api',
+    'opensphere-extension-controller',
     'opensphere-console-supabase-postgres',
     'opensphere-console-supabase-auth',
     'opensphere-console-supabase-rest',
@@ -82,6 +84,22 @@ test('C_API runtime login remains a one-role one-secret fresh-lineage boundary',
   assert.doesNotMatch(source, /kind\s*=\s*'?(?:Deployment|StatefulSet|Role|ClusterRole)'?/);
 });
 
+test('C_EXT runtime has one least-privilege database login, one Secret, and one exact deployment', () => {
+  assert.match(source, /\$extensionRoleName = 'opensphere_console_extension_runtime'/);
+  assert.match(source, /\$extensionAuthorityRole = 'console_extension_controller'/);
+  assert.match(source, /CREATE ROLE \$extensionRoleName LOGIN PASSWORD/);
+  assert.match(source, /GRANT \$extensionAuthorityRole TO \$extensionRoleName/);
+  assert.match(source, /CONNECTION LIMIT 8/);
+  assert.match(source, /\$extensionSecretName = 'opensphere-extension-controller-runtime'/);
+  assert.match(source, /'opensphere[.]io\/secret-scope' = 'extension-controller-only'/);
+  assert.match(source, /Runtime Secret must match the exact C_EXT credential contract/);
+  assert.match(source, /__OPENSPHERE_EXTENSION_CONTROLLER_IMAGE__/);
+  assert.match(source, /deployment\/opensphere-extension-controller/);
+  assert.match(source, /Installed C_EXT image differs from the requested exact digest/);
+  assert.match(source, /delete', 'secret', \$extensionSecretName, '--wait=true'/);
+  assert.match(source, /DROP ROLE IF EXISTS \$extensionRoleName/);
+});
+
 test('C_API runtime installer refuses implicit repair and keeps credentials off argv', () => {
   assert.match(source, /split provisioning state; no implicit repair or rotation was attempted/);
   assert.match(source, /IFS= read -r PGPASSWORD/);
@@ -123,7 +141,8 @@ test('single target installer closes data bootstrap before fresh C_API runtime',
   const dataReady = source.indexOf("'rollout', 'status', 'deployment/opensphere-supabase-storage'");
   const role = source.indexOf('Invoke-OwnerSql $createRoleSql');
   const deployment = source.indexOf("Invoke-Kubectl @('apply', '-f', '-') $renderedDeployment");
+  const extensionDeployment = source.indexOf("Invoke-Kubectl @('apply', '-f', '-') $renderedExtensionDeployment");
   assert.ok(preflight >= 0 && legacyLedger > preflight && dataApply > legacyLedger);
   assert.ok(serviceRoles > dataApply && auth > serviceRoles && storageMigration > auth);
-  assert.ok(migration > storageMigration && dataReady > migration && role > dataReady && deployment > role);
+  assert.ok(migration > storageMigration && dataReady > migration && role > dataReady && deployment > role && extensionDeployment > deployment);
 });
