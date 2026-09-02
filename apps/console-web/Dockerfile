@@ -19,6 +19,7 @@ RUN apk del --no-cache curl
 USER 101
 COPY --from=build /app/dist/opensphere-console/browser /usr/share/nginx/html
 COPY apps/console-web/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY apps/console-web/nginx/target-api-routes.conf /etc/nginx/target-api-routes.conf
 RUN set -eu; \
     grep -q '"contract": "console-help-center-v2"' /usr/share/nginx/html/manual-contract.json; \
     grep -Rqs 'console-help-center-v2' /usr/share/nginx/html/main-*.js; \

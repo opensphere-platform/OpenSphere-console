@@ -18,7 +18,7 @@ test('foundational Console contracts are internally complete and self-contained'
     browserApiPatterns: 116,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
-    authenticatedBrowserCutoverReady: false,
+    authenticatedBrowserCutoverReady: true,
     legacyApiDispositions: 277,
     legacyApiDispositionCounts: {
       adopted: 9,
@@ -95,6 +95,45 @@ test('official publication remains blocked until every target component boundary
   );
 });
 
+test('bootstrap-core release readiness proves the installable routing scope without claiming global feature readiness', async () => {
+  const result = await verifyContracts(process.cwd(), {
+    requireReleaseReady: true,
+    releaseProfile: 'bootstrap-core',
+  });
+  assert.equal(result.releaseReadinessProfile, 'bootstrap-core');
+  assert.equal(result.releaseBoundaryStatus, 'target-migration');
+  assert.equal(result.contractStatus, 'foundational-slice');
+  assert.equal(result.authenticatedBrowserCutoverReady, true);
+});
+
+test('bootstrap-core release readiness rejects a reduced Setup responsibility partition', async () => {
+  const boundary = JSON.parse(await readFile(new URL('../apps/component-boundaries.json', import.meta.url), 'utf8'));
+  const denominator = JSON.parse(await readFile(new URL('../packages/contracts/contract-denominator.json', import.meta.url), 'utf8'));
+  boundary.releaseProfiles['bootstrap-core'].artifactActivation.bootstrapCore.pop();
+  await assert.rejects(
+    verifyReleaseReadiness({
+      root: process.cwd(),
+      boundary,
+      denominator,
+      browserApiCutover: {
+        targetSessionReady: true,
+        authenticatedCutoverReady: true,
+        currentSessionAuthority: 'console_identity.browser_session',
+      },
+      legacyApiDisposition: { status: 'passed', decisions: 277 },
+      releaseProfile: 'bootstrap-core',
+    }),
+    /release component set differs from Setup responsibility/,
+  );
+});
+
+test('release readiness rejects unknown profiles instead of silently falling back to full', async () => {
+  await assert.rejects(
+    verifyContracts(process.cwd(), { requireReleaseReady: true, releaseProfile: 'core' }),
+    /Unknown Console release readiness profile/,
+  );
+});
+
 test('a release-ready label cannot bypass incomplete API and browser cutover evidence', async () => {
   const boundary = {
     status: 'release-ready',
@@ -115,6 +154,34 @@ test('Extension Controller deployment keeps its exact image, database secret, pr
   const documents = [];
   yaml.loadAll(await readFile(new URL('../apps/extension-controller/deploy.yaml', import.meta.url), 'utf8'), (document) => documents.push(document));
   assert.doesNotThrow(() => verifyExtensionControllerDeployment({ documents }));
+
+  const withSecretRead = structuredClone(documents);
+  withSecretRead.find((document) => document?.kind === 'Role'
+    && document.metadata?.name === 'opensphere-extension-controller').rules.push({
+    apiGroups: [''], resources: ['secrets'], verbs: ['get'],
+  });
+  assert.throws(() => verifyExtensionControllerDeployment({ documents: withSecretRead }),
+    /namespaced RBAC differs|Secret API authority/);
+
+  const withBroadCli = structuredClone(documents);
+  withBroadCli.find((document) => document?.kind === 'ClusterRole'
+    && document.metadata?.name === 'opensphere-extension-controller-cli-downloads').rules[0].verbs.push('watch');
+  assert.throws(() => verifyExtensionControllerDeployment({ documents: withBroadCli }),
+    /cluster RBAC must contain only CLIDownload/);
+
+  const withoutTrustBinding = structuredClone(documents);
+  delete withoutTrustBinding.find((document) => document?.kind === 'Role'
+    && document.metadata?.name === 'opensphere-extension-controller').rules
+    .find((rule) => rule.resources?.includes('configmaps')).resourceNames;
+  assert.throws(() => verifyExtensionControllerDeployment({ documents: withoutTrustBinding }),
+    /namespaced RBAC differs/);
+
+  const disabled = structuredClone(documents);
+  disabled.find((document) => document?.kind === 'Deployment'
+    && document.metadata?.name === 'opensphere-extension-controller').spec.template.spec.containers[0].env
+    .find((entry) => entry.name === 'CONSOLE_EXTENSION_LIFECYCLE_ENABLED').value = 'false';
+  assert.throws(() => verifyExtensionControllerDeployment({ documents: disabled }),
+    /target lifecycle must be enabled/);
 });
 
 test('Console API authority verification rejects missing grants and direct table mutation', async () => {
@@ -156,26 +223,29 @@ test('Console API authority verification rejects missing grants and direct table
   );
 });
 
-test('Console API deployment verification rejects credential ownership and premature browser cutover', async () => {
+test('Console API deployment verification rejects credential ownership and legacy target routing', async () => {
   const deploymentSource = await readFile(new URL('../apps/console-api/deploy.yaml', import.meta.url), 'utf8');
   const nginxSource = await readFile(new URL('../apps/console-web/nginx/default.conf.template', import.meta.url), 'utf8');
+  const targetRouteSource = await readFile(new URL('../apps/console-web/nginx/target-api-routes.conf', import.meta.url), 'utf8');
   const documents = [];
   yaml.loadAll(deploymentSource, (document) => documents.push(document));
   assert.throws(
     () => verifyConsoleApiDeployment({
       documents: [...documents, { apiVersion: 'v1', kind: 'Secret', metadata: { name: 'forbidden' } }],
       nginxSource,
+      targetRouteSource,
     }),
     /must consume, not create, its database Secret/,
   );
   assert.throws(
     () => verifyConsoleApiDeployment({
       documents,
-      nginxSource: nginxSource.replaceAll(
-        'opensphere-console-backend.opensphere-console.svc.cluster.local',
+      nginxSource,
+      targetRouteSource: targetRouteSource.replace(
         'opensphere-console-api.opensphere-console.svc.cluster.local',
+        'opensphere-console-backend.opensphere-console.svc.cluster.local',
       ),
     }),
-    /Authenticated Web routes must not cut over before the all-family routing gate is complete/,
+    /omits C_API|retained a legacy Backend/,
   );
 });

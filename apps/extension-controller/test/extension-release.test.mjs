@@ -150,6 +150,19 @@ test('pure GC planner selects only inactive, exactly-owned revision resources', 
     }
   }
   inventoryByPath.get(current.activeService.basePath).items.push(stored(current.activeService.manifest, '9'));
+  inventoryByPath.get(current.resources[0].basePath).items.push({
+    apiVersion: current.resources[0].manifest.apiVersion,
+    kind: current.resources[0].manifest.kind,
+    metadata: {
+      name: 'unrelated-workload',
+      namespace: current.contract.namespace,
+      uid: 'unrelated-workload-uid',
+      resourceVersion: '10',
+      labels: { 'app.kubernetes.io/managed-by': 'another-controller' },
+      annotations: {},
+      ownerReferences: [],
+    },
+  });
   const inventories = [...inventoryByPath.values()];
 
   const cleanup = planInactiveExtensionRevisionCleanup({ plan: current, inventories });
@@ -158,6 +171,8 @@ test('pure GC planner selects only inactive, exactly-owned revision resources', 
     .map((item) => item.basePath + '/' + item.manifest.metadata.name)
     .sort((left, right) => left.localeCompare(right)));
   assert.ok(cleanup.every((item) => item.revision === previous.revision));
+  assert.ok(cleanup.every((item) => item.apiVersion && item.imageDigest === previous.contract.imageDigest
+    && item.manifestSha256 === previous.contract.manifestSha256));
   assert.equal(planInactiveExtensionRevisionCleanup({
     plan: current,
     inventories,
@@ -177,6 +192,30 @@ test('pure GC planner rejects a forged managed label before returning any deleti
   assert.throws(() => planInactiveExtensionRevisionCleanup({
     plan,
     inventories,
+    retainRevision: null,
+  }), { code: 'ResourceOwnershipMismatch' });
+
+  const ownerDrift = plan.resources.map((item, index) => ({
+    basePath: item.basePath,
+    kind: item.manifest.kind,
+    items: [stored(item.manifest, String(index + 10))],
+  }));
+  ownerDrift[0].items[0].metadata.ownerReferences[0].controller = false;
+  assert.throws(() => planInactiveExtensionRevisionCleanup({
+    plan,
+    inventories: ownerDrift,
+    retainRevision: null,
+  }), { code: 'ResourceOwnershipMismatch' });
+
+  const coordinateDrift = plan.resources.map((item, index) => ({
+    basePath: item.basePath,
+    kind: item.manifest.kind,
+    items: [stored(item.manifest, String(index + 20))],
+  }));
+  coordinateDrift[0].items[0].metadata.annotations['opensphere.io/extension-image-digest'] = 'sha256:' + 'f'.repeat(64);
+  assert.throws(() => planInactiveExtensionRevisionCleanup({
+    plan,
+    inventories: coordinateDrift,
     retainRevision: null,
   }), { code: 'ResourceOwnershipMismatch' });
 

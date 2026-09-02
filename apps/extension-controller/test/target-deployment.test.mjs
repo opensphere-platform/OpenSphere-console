@@ -21,7 +21,7 @@ test('C_EXT target proxy and lifecycle are packaged without legacy runtime depen
   assert.match(manifest, /kind: Service[\s\S]*name: opensphere-extension-controller/u);
   assert.match(manifest, /app[.]kubernetes[.]io\/name: opensphere-console-api/u);
   assert.match(manifest, /NODE_EXTRA_CA_CERTS[\s\S]*serviceaccount\/ca[.]crt/u);
-  assert.match(manifest, /CONSOLE_EXTENSION_LIFECYCLE_ENABLED[\s\S]*value: 'false'/u);
+  assert.match(manifest, /CONSOLE_EXTENSION_LIFECYCLE_ENABLED[\s\S]*value: 'true'/u);
   assert.match(dockerfile, /COPY apps\/extension-controller\/src [.]\/src/u);
   assert.match(server, /createConsoleOwnerAdmission/u);
   assert.match(server, /createPluginProxy/u);

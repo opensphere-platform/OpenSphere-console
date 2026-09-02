@@ -2,6 +2,7 @@ import {
   buildExtensionWorkloadPlan,
   extensionReleaseContract,
   parseTrustedExtensionKeys,
+  planInactiveExtensionRevisionCleanup,
   verifyExtensionRelease,
 } from './extension-release.mjs';
 
@@ -303,6 +304,74 @@ export function createKubernetesExtensionLifecycle({
     throw fault('Extension resource deletion is not yet observed', 'DeletionPending', true);
   }
 
+  async function revisionInventories(plan) {
+    const byPath = new Map();
+    for (const item of plan.resources) {
+      if (byPath.has(item.basePath)) continue;
+      const result = await request('GET', item.basePath);
+      if (!result.value || typeof result.value !== 'object' || !Array.isArray(result.value.items)) {
+        throw fault('Extension revision inventory response is malformed', 'AuthorityContractViolation');
+      }
+      byPath.set(item.basePath, Object.freeze({
+        basePath: item.basePath,
+        kind: item.manifest.kind,
+        items: result.value.items,
+      }));
+    }
+    return [...byPath.values()];
+  }
+
+  function exactCleanupCandidate(resource, candidate, plan, { allowResourceVersionChange = false } = {}) {
+    const metadata = resource?.metadata || {};
+    const labels = metadata.labels || {};
+    const annotations = metadata.annotations || {};
+    const owners = Array.isArray(metadata.ownerReferences) ? metadata.ownerReferences : [];
+    const resourceVersion = String(metadata.resourceVersion || '');
+    const exactOwner = owners.some((owner) => owner?.apiVersion === 'plugins.opensphere.io/v1alpha1'
+      && owner?.kind === 'UIPluginPackage' && owner?.name === plan.contract.name
+      && owner?.uid === plan.contract.uid && owner?.controller === true
+      && owner?.blockOwnerDeletion === false);
+    if (resource?.apiVersion !== candidate.apiVersion || resource?.kind !== candidate.kind
+        || metadata.name !== candidate.name || metadata.namespace !== plan.contract.namespace
+        || metadata.uid !== candidate.uid || !RESOURCE_VERSION.test(resourceVersion)
+        || (!allowResourceVersionChange && resourceVersion !== candidate.resourceVersion)
+        || labels['app.kubernetes.io/managed-by'] !== extensionReleaseContract.managedBy
+        || labels[extensionReleaseContract.extensionLabel] !== plan.contract.name
+        || labels[extensionReleaseContract.revisionLabel] !== candidate.revision
+        || annotations[extensionReleaseContract.imageAnnotation] !== candidate.imageDigest
+        || annotations[extensionReleaseContract.manifestAnnotation] !== candidate.manifestSha256
+        || !exactOwner) {
+      throw fault('refusing to delete changed or unowned Extension revision', 'ResourceOwnershipMismatch');
+    }
+    return resource;
+  }
+
+  async function removeCleanupCandidate(candidate, plan) {
+    const existing = await request('GET', candidate.apiPath, undefined, [200, 404]);
+    if (existing.status === 404) return false;
+    exactCleanupCandidate(existing.value, candidate, plan);
+    await request('DELETE', candidate.apiPath, {
+      apiVersion: 'v1', kind: 'DeleteOptions',
+      preconditions: { uid: candidate.uid, resourceVersion: candidate.resourceVersion },
+      propagationPolicy: 'Foreground',
+    }, [200, 202, 204, 404]);
+    const remaining = await request('GET', candidate.apiPath, undefined, [200, 404]);
+    if (remaining.status === 404) return true;
+    exactCleanupCandidate(remaining.value, candidate, plan, { allowResourceVersionChange: true });
+    throw fault('Extension revision deletion is not yet observed', 'DeletionPending', true);
+  }
+
+  async function cleanupRevisionResources(plan, retainRevision) {
+    const candidates = planInactiveExtensionRevisionCleanup({
+      plan,
+      inventories: await revisionInventories(plan),
+      retainRevision,
+      maximumDeletes: 8,
+    });
+    for (const candidate of candidates) await removeCleanupCandidate(candidate, plan);
+    return candidates.length;
+  }
+
   async function loadTrustedKeys() {
     const result = await request('GET', `/api/v1/namespaces/${namespace}/configmaps/${trustedKeysConfigMap}`);
     const encoded = result.value?.data?.['trusted-keys.json'];
@@ -362,7 +431,7 @@ export function createKubernetesExtensionLifecycle({
       if (current.desiredState === 'Uninstalled') {
         try {
           await remove(plan.activeService, plan, { allowRevisionChange: true });
-          for (const item of [...plan.resources].reverse()) await remove(item, plan);
+          await cleanupRevisionResources(plan, null);
           await request('DELETE', `${registrations}/${current.name}`, {
             apiVersion: 'v1', kind: 'DeleteOptions',
             preconditions: { uid: current.uid, resourceVersion: current.resourceVersion },
@@ -408,6 +477,7 @@ export function createKubernetesExtensionLifecycle({
           await upsert(plan.activeService, plan, { allowRevisionChange: true });
         }
         const active = current.desiredState !== 'Disabled';
+        await cleanupRevisionResources(plan, plan.revision);
         await patchStatus(registration, {
           observedGeneration: current.generation,
           ...previousRelease,

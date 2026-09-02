@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { authorizeR2d2ProxyRequest, originalR2d2Request } = require('./r2d2-proxy-auth');
+const targetNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8');
 
 function request(headers = {}) {
   return { method: 'GET', url: '/api/internal/r2d2-proxy-authn', headers };
@@ -84,54 +85,50 @@ test('direct calls and unsupported methods fail closed', async () => {
   );
 });
 
-test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the Gateway', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
-  assert.match(nginx, /auth_request_set \$r2d2_authorization \$upstream_http_x_os_r2d2_authorization;/);
-  assert.match(nginx, /proxy_pass http:\/\/\$console_backend_upstream:8080\/api\/internal\/r2d2-proxy-authn;/);
-  assert.match(nginx, /proxy_set_header X-OS-Original-Method \$r2d2_original_method;/);
-  const gatewayLocation = nginx.slice(
-    nginx.indexOf('location /api/osaa/'),
-    nginx.indexOf('location = /_r2d2_authn'),
-  );
+test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the target Gateway', () => {
+  assert.match(targetNginx, /auth_request \/_osaa_authn;/);
+  assert.match(targetNginx, /auth_request_set \$owner_authorization \$upstream_http_x_os_owner_authorization;/);
+  assert.match(targetNginx, /proxy_pass http:\/\/\$console_api_upstream:8080\/api\/internal\/r2d2-proxy-authn;/);
+  assert.match(targetNginx, /proxy_set_header X-OS-Original-Method \$owner_original_method;/);
+  const gatewayLocation = targetNginx.match(/location \/api\/osaa\/ \{[\s\S]*?\r?\n    \}/)?.[0] ?? '';
   assert.ok(gatewayLocation.length > 0, 'R2D2 Gateway proxy location is missing');
   assert.match(gatewayLocation, /proxy_set_header Cookie "";/);
-  assert.match(gatewayLocation, /proxy_set_header Authorization \$r2d2_authorization;/);
+  assert.match(gatewayLocation, /proxy_set_header Authorization \$owner_authorization;/);
   assert.doesNotMatch(gatewayLocation, /proxy_set_header Authorization \$http_authorization;/);
 });
 
-test('nginx gives the authenticated R2D2 chat endpoint its bounded long-response window', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
-  const chatLocation = nginx.match(/location = \/api\/osaa\/chat \{[\s\S]*?\n    \}/)?.[0] || '';
-  assert.match(chatLocation, /auth_request \/_r2d2_authn;/);
+test('nginx gives the authenticated target OSAA family its bounded long-response window', () => {
+  const chatLocation = targetNginx.match(/location \/api\/osaa\/ \{[\s\S]*?\r?\n    \}/)?.[0] ?? '';
+  assert.match(chatLocation, /auth_request \/_osaa_authn;/);
   assert.match(chatLocation, /proxy_read_timeout 120s;/);
   assert.match(chatLocation, /proxy_set_header Cookie "";/);
-  assert.match(chatLocation, /proxy_set_header Authorization \$r2d2_authorization;/);
+  assert.match(chatLocation, /proxy_set_header Authorization \$owner_authorization;/);
 });
 
-test('nginx authenticates Manual browser requests before forwarding them to the OSAA Gateway', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+test('nginx authenticates Manual browser requests before forwarding them to the target OSAA Gateway', () => {
   const locations = [
-    nginx.match(/location = \/api\/manual \{[\s\S]*?\n    \}/)?.[0] || '',
-    nginx.match(/location \/api\/manual\/ \{[\s\S]*?\n    \}/)?.[0] || '',
+    targetNginx.match(/location = \/api\/manual \{[\s\S]*?\r?\n    \}/)?.[0] ?? '',
+    targetNginx.match(/location \/api\/manual\/ \{[\s\S]*?\r?\n    \}/)?.[0] ?? '',
   ];
 
   for (const location of locations) {
-    assert.match(location, /set \$r2d2_original_method \$request_method;/);
-    assert.match(location, /set \$r2d2_original_uri \$request_uri;/);
-    assert.match(location, /auth_request \/_r2d2_authn;/);
-    assert.match(location, /auth_request_set \$r2d2_authorization \$upstream_http_x_os_r2d2_authorization;/);
+    assert.match(location, /set \$owner_original_method \$request_method;/);
+    assert.match(location, /set \$owner_original_uri \$request_uri;/);
+    assert.match(location, /auth_request \/_osaa_authn;/);
+    assert.match(location, /auth_request_set \$owner_authorization \$upstream_http_x_os_owner_authorization;/);
     assert.match(location, /proxy_set_header Cookie "";/);
-    assert.match(location, /proxy_set_header Authorization \$r2d2_authorization;/);
+    assert.match(location, /proxy_set_header Authorization \$owner_authorization;/);
     assert.doesNotMatch(location, /proxy_set_header Authorization \$http_authorization;/);
   }
 });
 
-test('nginx keeps Engineering Remediation on Backend and preserves the scoped Repair Runner bearer', () => {
-  const nginx = fs.readFileSync(path.resolve(__dirname, '../../console-web/nginx/default.conf.template'), 'utf8');
-  const location = nginx.match(/location \^~ \/api\/osaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';
-  assert.match(location, /opensphere-console-backend/);
-  assert.match(location, /proxy_set_header Authorization \$http_authorization/);
-  assert.doesNotMatch(location, /opensphere-console-osaa-gateway/);
+test('nginx sends Engineering Remediation through target owner admission to the OSAA Gateway', () => {
+  const location = targetNginx.match(/location \/api\/osaa\/ \{[\s\S]*?\r?\n    \}/)?.[0] ?? '';
+  assert.match(location, /opensphere-console-osaa-gateway/);
+  assert.match(location, /auth_request \/_osaa_authn/);
+  assert.match(location, /proxy_set_header Authorization \$owner_authorization/);
+  assert.doesNotMatch(location, /opensphere-console-backend/);
+  assert.doesNotMatch(location, /proxy_set_header Authorization \$http_authorization/);
 });
 
 test('Console Backend runtime image contains the R2D2 authentication mediator', () => {

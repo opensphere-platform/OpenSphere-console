@@ -365,8 +365,8 @@ jobs:
             beszelAgent
             beszelBootstrap
           )
-          test "${#images[@]}" -eq 19
-          test "${#component_keys[@]}" -eq 19
+          test "${#images[@]}" -eq 18
+          test "${#component_keys[@]}" -eq 18
           declare -A digests
           components='{}'
           migration_manifest='migrations/manifest.json'

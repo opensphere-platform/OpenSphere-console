@@ -43,10 +43,13 @@ test('Console UI uses an audited side-panel action instead of browser prompt dia
   assert.doesNotMatch(source, /window\.prompt|window\.confirm/);
 });
 
-test('Console Shell proxies notification administration to the Console Backend', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '../../console-web/nginx/default.conf.template'), 'utf8');
+test('Console Shell admits notification administration only to the target dispatcher', () => {
+  const nginx = fs.readFileSync(path.join(__dirname, '../../console-web/nginx/target-api-routes.conf'), 'utf8');
   assert.match(nginx, /location \/api\/notifications\//);
-  assert.match(nginx, /opensphere-console-backend\.opensphere-console\.svc\.cluster\.local/);
+  assert.match(nginx, /auth_request \/_notification_authn/);
+  assert.match(nginx, /opensphere-notification-dispatcher\.opensphere-console\.svc\.cluster\.local/);
+  assert.match(nginx, /proxy_set_header Cookie ""/);
+  assert.doesNotMatch(nginx, /opensphere-console-backend/);
 });
 
 test('notification migration isolates ciphertext and dispatcher-only RPCs', () => {

@@ -111,7 +111,12 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
   assert.equal(contract.inventory.routePatternCount, inventory.routePatternCount, 'browser API route-pattern count drifted');
   assert.equal(contract.inventory.setDigest, inventory.setDigest, 'browser API route-pattern set digest drifted');
 
-  const nginxSource = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+  const nginxShellSource = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+  const targetRouteInclude = 'include /etc/nginx/target-api-routes.conf;';
+  const targetRouteSource = nginxShellSource.includes(targetRouteInclude)
+    ? await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8')
+    : '';
+  const nginxSource = [nginxShellSource, targetRouteSource].filter(Boolean).join('\n');
   const targetSessionReady = contract.targetSessionCapabilities.every(({ status }) => status === 'implemented-and-verified');
   const authenticatedFamilies = contract.families.filter(({ sessionPolicy }) => !['public-read', 'public-static'].includes(sessionPolicy));
   const routedAuthenticatedFamilies = authenticatedFamilies.filter(({ status }) => status === 'target-routed');
@@ -120,6 +125,12 @@ export async function verifyBrowserApiCutover({ root = repositoryRoot } = {}) {
   const authenticatedFamiliesTargetRouted = routedAuthenticatedFamilies.length === authenticatedFamilies.length;
   if (authenticatedFamiliesTargetRouted) {
     assert(targetSessionReady, 'authenticated browser families require the complete target session authority');
+    assert.equal(contract.currentSessionAuthority, contract.targetSessionAuthority,
+      'target-routed authenticated families must name the target session authority');
+    assert(nginxShellSource.includes(targetRouteInclude),
+      'target-routed authenticated families require the atomic target route include');
+    assert(!/opensphere-console-(?:backend|dupa-controller)/u.test(nginxSource),
+      'target-routed authenticated families retained a legacy Backend or DUPA dependency');
   }
   const authenticatedCutoverReady = targetSessionReady && authenticatedFamiliesTargetRouted;
   if (contract.status === 'release-ready') {

@@ -199,15 +199,18 @@ test('OSAA Admin distinguishes reachable Gateway health from complete Agent read
   assert.match(admin, /method: 'POST'/);
 });
 
-test('OSAA credential writes enter the Console Backend policy and audit boundary, never the read-only Gateway mutation path', () => {
-  const nginx = read('apps', 'console-web', 'nginx', 'default.conf.template');
+test('target OSAA credential writes stay owner-gated while legacy Backend retains the rollback policy boundary', () => {
+  const nginx = read('apps', 'console-web', 'nginx', 'target-api-routes.conf');
   const backend = read('apps', 'console-api', 'runtime', 'server.js');
   const backendDeploy = read('apps', 'console-api', 'runtime', 'deploy.yaml');
   const gateway = read('apps', 'osaa-gateway', 'server.js');
   const gatewayDeploy = read('apps', 'osaa-gateway', 'deploy.yaml');
   const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
 
-  assert.match(nginx, /location \^~ \/api\/osaa\/admin\/llm-keys[\s\S]*opensphere-console-backend/);
+  const osaaRoute = nginx.match(/location \/api\/osaa\/ \{[\s\S]*?\r?\n    \}/)?.[0] ?? '';
+  assert.match(osaaRoute, /auth_request \/_osaa_authn/);
+  assert.match(osaaRoute, /opensphere-console-osaa-gateway/);
+  assert.doesNotMatch(osaaRoute, /opensphere-console-backend/);
   assert.match(backend, /verifyConsoleAdmin\(req\)[\s\S]*upsertOsaaKey\(actor, await readBody\(req\)\)/);
   assert.match(backend, /logAudit\(actor, action, input\.id, 'attempt'[\s\S]*k8sRequest\('POST'/);
   assert.match(backend, /management reason must be at least 8 characters/);

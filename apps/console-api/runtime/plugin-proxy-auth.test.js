@@ -122,22 +122,18 @@ test('malformed target and method values are rejected', async () => {
   );
 });
 
-test('nginx keeps the opaque browser cookie out of plugin workloads', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
-  assert.match(nginx, /auth_request_set \$plugin_authorization \$upstream_http_x_os_plugin_authorization;/);
-  assert.match(nginx, /proxy_set_header Cookie "";/);
-  assert.match(nginx, /proxy_set_header Authorization \$plugin_authorization;/);
-  assert.match(nginx, /proxy_pass http:\/\/\$console_backend_upstream:8080\/api\/internal\/plugin-proxy-authz;/);
-  assert.match(nginx, /proxy_set_header X-OS-Original-Method \$plugin_original_method;/);
-  const pluginLocation = nginx.slice(
-    nginx.indexOf('location ~ ^/api/plugins/'),
-    nginx.indexOf('location = /_plugin_authz'),
-  );
+test('nginx keeps the opaque browser cookie out of target Extension Controller workloads', () => {
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8');
+  assert.match(nginx, /auth_request \/_extension_authn;/);
+  assert.match(nginx, /auth_request_set \$owner_authorization \$upstream_http_x_os_owner_authorization;/);
+  assert.match(nginx, /proxy_pass http:\/\/\$console_api_upstream:8080\/api\/internal\/plugin-proxy-authz;/);
+  assert.match(nginx, /proxy_set_header X-OS-Original-Method \$owner_original_method;/);
+  const pluginLocation = nginx.match(/location \/api\/plugins\/ \{[\s\S]*?\r?\n    \}/)?.[0] ?? '';
   assert.ok(pluginLocation.length > 0, 'plugin proxy location is missing');
-  assert.doesNotMatch(
-    pluginLocation,
-    /proxy_set_header Authorization \$http_authorization;/,
-  );
+  assert.match(pluginLocation, /opensphere-extension-controller/);
+  assert.match(pluginLocation, /proxy_set_header Cookie "";/);
+  assert.match(pluginLocation, /proxy_set_header Authorization \$owner_authorization;/);
+  assert.doesNotMatch(pluginLocation, /proxy_set_header Authorization \$http_authorization;/);
 });
 
 test('Console Backend runtime image contains the plugin authorization mediator', () => {

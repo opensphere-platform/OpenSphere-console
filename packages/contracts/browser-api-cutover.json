@@ -4,7 +4,7 @@
   "status": "target-migration",
   "sourceRoot": "apps/console-web/src/app",
   "cutoverPolicy": "atomic-authenticated-browser-session-authority",
-  "currentSessionAuthority": "legacy-browser-session-broker",
+  "currentSessionAuthority": "console_identity.browser_session",
   "targetSessionAuthority": "console_identity.browser_session",
   "inventory": {
     "routePatternCount": 116,
@@ -31,7 +31,7 @@
       "prefix": "/api/identity",
       "targetOwner": "C_API",
       "sessionPolicy": "browser-session",
-      "status": "target-implemented-and-verified",
+      "status": "target-routed",
       "evidence": [
         "apps/console-api/src/http-handler.mjs",
         "apps/console-api/src/identity-session-broker.mjs",
@@ -45,7 +45,7 @@
       "prefix": "/api/platform",
       "targetOwner": "C_API",
       "sessionPolicy": "browser-session",
-      "status": "target-implemented-and-verified",
+      "status": "target-routed",
       "evidence": [
         "apps/console-api/src/http-handler.mjs",
         "apps/console-api/src/platform-change-operations.mjs",
@@ -55,13 +55,25 @@
         "apps/console-web/src/app/pages/admin-change-control.ts"
       ]
     },
-    { "id": "admin", "prefix": "/api/admin", "targetOwner": "C_API", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    {
+      "id": "admin",
+      "prefix": "/api/admin",
+      "targetOwner": "C_API",
+      "sessionPolicy": "browser-session",
+      "status": "target-routed",
+      "evidence": [
+        "apps/console-api/src/http-handler.mjs",
+        "apps/extension-controller/src/extension-management-http.mjs",
+        "apps/extension-controller/test/extension-management-server-wiring.test.mjs",
+        "scripts/atomic-browser-cutover.test.mjs"
+      ]
+    },
     {
       "id": "monitoring",
       "prefix": "/api/monitoring",
       "targetOwner": "C_API",
       "sessionPolicy": "browser-session",
-      "status": "target-implemented-and-verified",
+      "status": "target-routed",
       "evidence": [
         "apps/console-api/src/baseline-monitoring-operations.mjs",
         "apps/console-api/src/http-handler.mjs",
@@ -70,14 +82,38 @@
         "deploy/baseline-monitoring/release-contract.json"
       ]
     },
-    { "id": "notifications", "prefix": "/api/notifications", "targetOwner": "C_NOTIFY", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
-    { "id": "external-channels", "prefix": "/api/external-channels", "targetOwner": "C_BAK", "sessionPolicy": "browser-session", "status": "legacy-session-authority" },
+    {
+      "id": "notifications",
+      "prefix": "/api/notifications",
+      "targetOwner": "C_NOTIFY",
+      "sessionPolicy": "browser-session",
+      "status": "target-routed",
+      "evidence": [
+        "apps/notification-dispatcher/owner-admission.js",
+        "apps/notification-dispatcher/owner-admission.test.js",
+        "apps/console-api/test/owner-admission-operations.test.mjs",
+        "scripts/atomic-browser-cutover.test.mjs"
+      ]
+    },
+    {
+      "id": "external-channels",
+      "prefix": "/api/external-channels",
+      "targetOwner": "C_BAK",
+      "sessionPolicy": "browser-session",
+      "status": "target-routed",
+      "evidence": [
+        "apps/recovery-owner/owner-admission.js",
+        "apps/recovery-owner/owner-admission.test.js",
+        "apps/console-api/test/owner-admission-operations.test.mjs",
+        "scripts/atomic-browser-cutover.test.mjs"
+      ]
+    },
     {
       "id": "catalog",
       "prefix": "/api/catalog",
       "targetOwner": "C_API",
       "sessionPolicy": "browser-session",
-      "status": "target-implemented-and-verified",
+      "status": "target-routed",
       "evidence": [
         "apps/console-api/src/catalog-operations.mjs",
         "apps/console-api/test/catalog-operations.test.mjs",
@@ -91,7 +127,7 @@
       "prefix": "/api/kubernetes",
       "targetOwner": "C_API",
       "sessionPolicy": "browser-session",
-      "status": "target-implemented-and-verified",
+      "status": "target-routed",
       "evidence": [
         "apps/console-api/src/catalog-operations.mjs",
         "apps/console-api/src/http-handler.mjs",
@@ -105,7 +141,7 @@
       "prefix": "/api/status",
       "targetOwner": "C_API",
       "sessionPolicy": "browser-session",
-      "status": "target-implemented-and-verified",
+      "status": "target-routed",
       "evidence": [
         "apps/console-api/src/http-handler.mjs",
         "apps/console-api/test/status-route.test.mjs",
@@ -113,10 +149,58 @@
         "packages/contracts/openapi/console-v1.yaml"
       ]
     },
-    { "id": "osaa", "prefix": "/api/osaa", "targetOwner": "C_AI", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
-    { "id": "manual", "prefix": "/api/manual", "targetOwner": "C_AI", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
-    { "id": "os-shell", "prefix": "/api/os-shell", "targetOwner": "C_SCTL", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
-    { "id": "plugins", "prefix": "/api/plugins", "targetOwner": "C_EXT", "sessionPolicy": "owner-admission", "status": "legacy-session-authority" },
+    {
+      "id": "osaa",
+      "prefix": "/api/osaa",
+      "targetOwner": "C_AI",
+      "sessionPolicy": "owner-admission",
+      "status": "target-routed",
+      "evidence": [
+        "apps/osaa-gateway/c-ai-owner-api.js",
+        "apps/osaa-gateway/c-ai-owner-api.test.js",
+        "apps/osaa-gateway/console-identity-client.test.js",
+        "scripts/atomic-browser-cutover.test.mjs"
+      ]
+    },
+    {
+      "id": "manual",
+      "prefix": "/api/manual",
+      "targetOwner": "C_AI",
+      "sessionPolicy": "owner-admission",
+      "status": "target-routed",
+      "evidence": [
+        "apps/osaa-gateway/console-identity-client.js",
+        "apps/osaa-gateway/console-identity-client.test.js",
+        "apps/osaa-gateway/server.js",
+        "scripts/atomic-browser-cutover.test.mjs"
+      ]
+    },
+    {
+      "id": "os-shell",
+      "prefix": "/api/os-shell",
+      "targetOwner": "C_SCTL",
+      "sessionPolicy": "owner-admission",
+      "status": "target-routed",
+      "evidence": [
+        "apps/os-shell-control/authority/console-owner-admission.js",
+        "apps/os-shell-control/authority/console-owner-admission.test.js",
+        "apps/os-shell-control/server.test.js",
+        "scripts/atomic-browser-cutover.test.mjs"
+      ]
+    },
+    {
+      "id": "plugins",
+      "prefix": "/api/plugins",
+      "targetOwner": "C_EXT",
+      "sessionPolicy": "owner-admission",
+      "status": "target-routed",
+      "evidence": [
+        "apps/extension-controller/src/owner-admission.mjs",
+        "apps/extension-controller/test/owner-admission.test.mjs",
+        "apps/extension-controller/test/plugin-proxy.test.mjs",
+        "scripts/atomic-browser-cutover.test.mjs"
+      ]
+    },
     { "id": "registry", "prefix": "/api/v1/registry", "targetOwner": "C_REG", "sessionPolicy": "public-read", "status": "target-routed" },
     { "id": "cli-artifact", "prefix": "/api/cli", "targetOwner": "C_CLI", "sessionPolicy": "public-static", "status": "target-routed" }
   ]

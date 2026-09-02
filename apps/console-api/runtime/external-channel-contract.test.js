@@ -205,7 +205,7 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   const source = read('../../console-web/src/app/pages/admin-external-channels.ts');
   const server = read('./server.js');
   const routes = read('../../console-web/src/app/app.routes.ts');
-  const nginx = read('../../console-web/nginx/default.conf.template');
+  const nginx = read('../../console-web/nginx/target-api-routes.conf');
   assert.match(source, /백업 대상/);
   assert.match(source, /백업 및 복원/);
   assert.match(source, /AES-256-GCM/);
@@ -249,5 +249,8 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.match(routes, /path: 'external-channels'/);
   assert.match(routes, /path: 'notification-channels', redirectTo: 'external-channels'/);
   assert.match(nginx, /location \/api\/external-channels\//);
-  assert.match(nginx, /proxy_pass http:\/\/\$console_backend_upstream:8080\$request_uri/);
+  assert.match(nginx, /auth_request \/_external_channel_authn/);
+  assert.match(nginx, /opensphere-external-channel-executor\.opensphere-console\.svc\.cluster\.local/);
+  assert.match(nginx, /proxy_set_header Cookie ""/);
+  assert.doesNotMatch(nginx, /console_backend_upstream/);
 });

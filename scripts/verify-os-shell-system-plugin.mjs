@@ -54,18 +54,20 @@ assert.doesNotMatch(frame, /new WebSocket|fetch\(|localStorage|sessionStorage|in
 assert.match(frame, /@xterm\/xterm/);
 assert.match(frame, /@xterm\/addon-fit/);
 
-const nginx = read('apps/console-web/nginx/default.conf.template');
+const nginxBase = read('apps/console-web/nginx/default.conf.template');
+const nginxTargetRoutes = read('apps/console-web/nginx/target-api-routes.conf');
+const nginx = `${nginxBase}\n${nginxTargetRoutes}`;
 assert.match(nginx, /\/api\/os-shell\/sessions\/.*\/attach/);
 assert.match(nginx, /location \/api\/os-shell\//);
 assert.match(nginx, /location = \/_os_shell_authn/);
 assert.match(nginx, /api\/internal\/os-shell-authn/);
 assert.match(nginx, /opensphere-shell-api\.opensphere-console\.svc\.cluster\.local/);
 assert.match(nginx, /opensphere-shell-gateway\.opensphere-console\.svc\.cluster\.local/);
-assert.match(nginx, /proxy_set_header X-OS-Shell-Admission \$os_shell_admission/);
+assert.match(nginx, /proxy_set_header X-OS-Owner-Admission \$owner_admission/);
 assert.doesNotMatch(nginx, /OS_SHELL_CONTROL_UPSTREAM_PENDING|os_shell_control_plane_pending/);
 assert.match(nginx, /location \^~ \/os-shell-frame\//);
 assert.match(nginx, /connect-src 'none'/);
-const standalone = nginx.slice(nginx.indexOf('location = /shell {'), nginx.indexOf('# 해시드 자산'));
+const standalone = nginxBase.slice(nginxBase.indexOf('location = /shell {'), nginxBase.indexOf('# 해시드 자산'));
 assert.match(standalone, /worker-src 'none'/);
 assert.match(standalone, /Cross-Origin-Opener-Policy "same-origin"/);
 assert.match(standalone, /Cross-Origin-Embedder-Policy "require-corp"/);

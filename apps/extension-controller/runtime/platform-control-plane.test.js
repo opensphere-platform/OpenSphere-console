@@ -151,7 +151,7 @@ test('DUPA active runtime depends on Supabase audit and never ships legacy data 
 
 test('OSAA runs in the Console namespace and HISS remains the telemetry owner', () => {
   const gateway = read('apps', 'osaa-gateway', 'server.js');
-  const nginx = read('apps', 'console-web', 'nginx', 'default.conf.template');
+  const nginx = read('apps', 'console-web', 'nginx', 'target-api-routes.conf');
   const plan = read('docs', 'PLAN-CONSOLE-PLATFORM-CONTROL-PLANE-V2-2026-07-22.md');
   assert.match(gateway, /const OSAA_NAMESPACE = process\.env\.OSAA_NAMESPACE \|\| 'opensphere-console'/);
   assert.doesNotMatch(gateway, /BACKBONE_NS/);

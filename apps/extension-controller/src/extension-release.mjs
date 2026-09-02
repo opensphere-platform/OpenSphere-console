@@ -306,7 +306,10 @@ export function planInactiveExtensionRevisionCleanup({
       || (retainRevision != null && !/^[a-f0-9]{20}$/u.test(String(retainRevision)))) {
     throw new TypeError('Extension revision cleanup planning input is invalid');
   }
-  const allowed = new Map(plan.resources.map((item) => [item.basePath, item.manifest.kind]));
+  const allowed = new Map(plan.resources.map((item) => [item.basePath, Object.freeze({
+    apiVersion: item.manifest.apiVersion,
+    kind: item.manifest.kind,
+  })]));
   if (inventories.length !== allowed.size) {
     throw fault('Extension revision inventory is incomplete', 'AuthorityContractViolation');
   }
@@ -318,7 +321,8 @@ export function planInactiveExtensionRevisionCleanup({
   for (const inventory of inventories) {
     const basePath = String(inventory?.basePath || '');
     const kind = String(inventory?.kind || '');
-    if (seenCollections.has(basePath) || allowed.get(basePath) !== kind || !Array.isArray(inventory?.items)) {
+    const expected = allowed.get(basePath);
+    if (seenCollections.has(basePath) || expected?.kind !== kind || !Array.isArray(inventory?.items)) {
       throw fault('Extension revision inventory is outside the target allowlist', 'AuthorityContractViolation');
     }
     seenCollections.add(basePath);
@@ -326,31 +330,55 @@ export function planInactiveExtensionRevisionCleanup({
       observed += 1;
       if (observed > 2048) throw fault('Extension revision inventory is too large', 'AuthorityContractViolation');
       const metadata = resource?.metadata || {};
-      const name = String(metadata.name || '');
-      const uid = String(metadata.uid || '');
-      const resourceVersion = String(metadata.resourceVersion || '');
-      const labels = metadata.labels || {};
-      const annotations = metadata.annotations || {};
-      const owners = Array.isArray(metadata.ownerReferences) ? metadata.ownerReferences : [];
-      const revision = String(labels[REVISION_LABEL] || '');
+      const name = metadata.name;
+      const uid = metadata.uid;
+      const resourceVersion = metadata.resourceVersion;
+      const labels = metadata.labels == null ? {} : metadata.labels;
+      const annotations = metadata.annotations == null ? {} : metadata.annotations;
+      const owners = metadata.ownerReferences == null ? [] : metadata.ownerReferences;
+      if (resource?.apiVersion !== expected.apiVersion || resource?.kind !== kind
+          || metadata.namespace !== plan.contract.namespace
+          || typeof name !== 'string' || name.length < 1 || name.length > 253
+          || /[\u0000-\u001f\u007f]/u.test(name)
+          || typeof uid !== 'string' || uid.length < 1 || uid.length > 128
+          || /[\u0000-\u001f\u007f]/u.test(uid)
+          || typeof resourceVersion !== 'string' || !/^[0-9A-Za-z._:-]{1,128}$/u.test(resourceVersion)
+          || !labels || typeof labels !== 'object' || Array.isArray(labels)
+          || !annotations || typeof annotations !== 'object' || Array.isArray(annotations)
+          || !Array.isArray(owners)) {
+        throw fault('Extension revision inventory contains malformed Kubernetes authority', 'AuthorityContractViolation');
+      }
+      const claimsTargetOwner = owners.some((owner) => owner?.apiVersion === 'plugins.opensphere.io/v1alpha1'
+        && owner?.kind === 'UIPluginPackage' && owner?.name === plan.contract.name);
       const stableService = kind === 'Service' && name === plan.contract.name;
+      const claimsTarget = stableService
+        || labels[EXTENSION_LABEL] === plan.contract.name
+        || claimsTargetOwner;
+      if (!claimsTarget) continue;
+      const revision = String(labels[REVISION_LABEL] || '');
       const expectedName = stableService ? plan.contract.name
         : kind === 'ServiceAccount'
-          ? revisionName(`uip-${plan.contract.name}`, revision.slice(0, 12))
+          ? revisionName('uip-' + plan.contract.name, revision.slice(0, 12))
           : revisionName(plan.contract.name, revision);
-      const coordinate = `${basePath}/${name}`;
+      const coordinate = basePath + '/' + name;
+      const exactOwner = owners.some((owner) => owner?.apiVersion === 'plugins.opensphere.io/v1alpha1'
+        && owner?.kind === 'UIPluginPackage' && owner?.name === plan.contract.name
+        && owner?.uid === plan.contract.uid && owner?.controller === true
+        && owner?.blockOwnerDeletion === false);
+      const imageDigest = String(annotations[IMAGE_ANNOTATION] || '');
+      const manifestSha256 = String(annotations[MANIFEST_ANNOTATION] || '');
+      const expectedRevision = DIGEST.test(imageDigest) && HEX_DIGEST.test(manifestSha256)
+        ? hash(Buffer.from(plan.contract.name + '\n' + imageDigest + '\n' + manifestSha256, 'utf8')).slice(0, 20)
+        : '';
       const owned = labels['app.kubernetes.io/managed-by'] === MANAGED_BY
         && labels[EXTENSION_LABEL] === plan.contract.name
-        && owners.some((owner) => owner.apiVersion === 'plugins.opensphere.io/v1alpha1'
-          && owner.kind === 'UIPluginPackage' && owner.name === plan.contract.name
-          && owner.uid === plan.contract.uid);
-      if (resource?.kind !== kind || metadata.namespace !== plan.contract.namespace
-          || !/^[a-f0-9]{20}$/u.test(revision) || name !== expectedName || !owned
-          || uid.length < 1 || uid.length > 128 || /[\u0000-\u001f\u007f]/u.test(uid)
-          || !/^[0-9A-Za-z._:-]{1,128}$/u.test(resourceVersion)
-          || !DIGEST.test(String(annotations[IMAGE_ANNOTATION] || ''))
-          || !HEX_DIGEST.test(String(annotations[MANIFEST_ANNOTATION] || ''))
-          || seenResources.has(coordinate)) {
+        && exactOwner;
+      const currentEvidenceMatches = revision !== plan.revision
+        || (imageDigest === plan.contract.imageDigest && manifestSha256 === plan.contract.manifestSha256);
+      if (!/^[a-f0-9]{20}$/u.test(revision) || revision !== expectedRevision
+          || name !== expectedName || !owned
+          || !DIGEST.test(imageDigest) || !HEX_DIGEST.test(manifestSha256)
+          || !currentEvidenceMatches || seenResources.has(coordinate)) {
         throw fault('Extension revision inventory contains an unowned or malformed resource', 'ResourceOwnershipMismatch');
       }
       seenResources.add(coordinate);
@@ -361,11 +389,14 @@ export function planInactiveExtensionRevisionCleanup({
         }
         candidates.push(Object.freeze({
           apiPath: coordinate,
+          apiVersion: expected.apiVersion,
           kind,
           name,
           uid,
           resourceVersion,
           revision,
+          imageDigest,
+          manifestSha256,
         }));
         if (candidates.length > maximumDeletes) {
           throw fault('Extension revision cleanup plan exceeds its deletion bound', 'AuthorityContractViolation');

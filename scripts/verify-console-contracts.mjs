@@ -7,20 +7,171 @@ import { verifyLegacyApiDisposition } from './legacy-api-disposition.mjs';
 
 const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
+const BOOTSTRAP_CORE_RELEASE_PROFILE = Object.freeze({
+  requiredComponentIds: Object.freeze(['C_WEB', 'C_API', 'C_EXT', 'C_REG', 'C_CLI']),
+  inactiveComponentIds: Object.freeze(['C_AI', 'C_DST', 'C_SCTL', 'C_BAK', 'C_NOTIFY']),
+  bootstrapCore: Object.freeze([
+    'console', 'consoleApi', 'extensionController', 'registry', 'gitea', 'giteaPostgres',
+    'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage',
+    'beszelHub', 'beszelAgent', 'beszelBootstrap',
+  ]),
+  availableModules: Object.freeze([
+    'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery',
+  ]),
+  bootstrapAuxiliaryArtifacts: Object.freeze(['cliArtifacts']),
+  availableAuxiliaryArtifacts: Object.freeze(['osShellControl', 'osShellRuntime']),
+  inactiveBrowserFamilies: Object.freeze([
+    ['notifications', 'C_NOTIFY'],
+    ['external-channels', 'C_BAK'],
+    ['osaa', 'C_AI'],
+    ['manual', 'C_AI'],
+    ['os-shell', 'C_SCTL'],
+  ]),
+  inactiveRouteLocations: Object.freeze([
+    'location /api/notifications/ {',
+    'location /api/external-channels/ {',
+    'location = /api/osaa/incidents/stream {',
+    'location /api/osaa/ {',
+    'location = /api/manual {',
+    'location /api/manual/ {',
+    'location ~ "^/api/os-shell/sessions/',
+    'location /api/os-shell/ {',
+  ]),
+});
 
-export async function verifyReleaseReadiness({ root, boundary, denominator, browserApiCutover }) {
-  assert(boundary.status === 'release-ready', 'Official publication is blocked while component boundaries remain target-migration');
-  assert(denominator.status === denominator.targetStatus, 'Official publication requires the complete API contract denominator');
-  assert(denominator.remaining?.legacyProductionApiLiterals === 0, 'Official publication requires disposition of every legacy production API literal');
-  assert(browserApiCutover.contractStatus === 'release-ready', 'Official publication requires a release-ready browser API cutover contract');
-  assert(browserApiCutover.authenticatedCutoverReady, 'Official publication requires atomic authenticated browser API cutover');
-  for (const component of boundary.components) {
-    assert(Array.isArray(component.legacySources) && component.legacySources.length === 0, `${component.id} still depends on legacy source paths`);
+function assertExactList(actual, expected, message) {
+  assert(JSON.stringify(actual) === JSON.stringify(expected), message);
+}
+
+async function verifyComponentDirectories({ root, boundary, componentIds }) {
+  const byId = new Map(boundary.components.map((component) => [component.id, component]));
+  for (const componentId of componentIds) {
+    const component = byId.get(componentId);
+    assert(component, `${componentId} is absent from the component boundary`);
+    assert(Array.isArray(component.legacySources) && component.legacySources.length === 0,
+      `${component.id} still depends on legacy source paths`);
     const targetPath = resolve(root, component.path);
     assert(targetPath.startsWith(resolve(root)), `${component.id} target path escapes the repository`);
     const target = await stat(targetPath).catch(() => null);
     assert(target?.isDirectory(), `${component.id} target path is absent: ${component.path}`);
   }
+}
+
+async function verifyBootstrapCoreReleaseReadiness({
+  root,
+  boundary,
+  denominator,
+  browserApiCutover,
+  legacyApiDisposition,
+}) {
+  const boundaryProfile = boundary.releaseProfiles?.['bootstrap-core'];
+  const denominatorProfile = denominator.releaseProfiles?.['bootstrap-core'];
+  assert(boundaryProfile?.status === 'release-ready',
+    'Bootstrap-core publication requires a release-ready bootstrap runtime boundary');
+  assert(boundaryProfile.scope === 'bootstrap-runtime',
+    'Bootstrap-core runtime boundary has an invalid scope');
+  assertExactList(boundaryProfile.requiredComponentIds, BOOTSTRAP_CORE_RELEASE_PROFILE.requiredComponentIds,
+    'Bootstrap-core required C4 component set differs from Setup responsibility');
+  assertExactList(boundaryProfile.inactiveComponentIds, BOOTSTRAP_CORE_RELEASE_PROFILE.inactiveComponentIds,
+    'Bootstrap-core inactive C4 component set differs from Setup responsibility');
+  assertExactList(
+    [...boundaryProfile.requiredComponentIds, ...boundaryProfile.inactiveComponentIds].sort(),
+    boundary.components.map(({ id }) => id).sort(),
+    'Bootstrap-core C4 partition does not cover the complete Console boundary',
+  );
+  assertExactList(boundaryProfile.artifactActivation?.bootstrapCore, BOOTSTRAP_CORE_RELEASE_PROFILE.bootstrapCore,
+    'Bootstrap-core release component set differs from Setup responsibility');
+  assertExactList(boundaryProfile.artifactActivation?.availableModules, BOOTSTRAP_CORE_RELEASE_PROFILE.availableModules,
+    'Bootstrap-core available module set differs from Setup responsibility');
+  assertExactList(boundaryProfile.artifactActivation?.bootstrapAuxiliaryArtifacts,
+    BOOTSTRAP_CORE_RELEASE_PROFILE.bootstrapAuxiliaryArtifacts,
+    'Bootstrap-core auxiliary artifact set differs from Setup responsibility');
+  assertExactList(boundaryProfile.artifactActivation?.availableAuxiliaryArtifacts,
+    BOOTSTRAP_CORE_RELEASE_PROFILE.availableAuxiliaryArtifacts,
+    'Bootstrap-core inactive auxiliary artifact set differs from Setup responsibility');
+
+  assert(denominatorProfile?.status === denominatorProfile?.targetStatus,
+    'Bootstrap-core publication requires its complete scoped API contract denominator');
+  assert(denominatorProfile.scope === 'bootstrap-contract-and-routing',
+    'Bootstrap-core API denominator has an invalid scope');
+  assert(denominatorProfile.remaining?.legacyProductionApiLiterals === 0,
+    'Bootstrap-core publication requires every legacy API literal to be dispositioned');
+  assert(legacyApiDisposition?.status === 'passed'
+    && legacyApiDisposition.decisions === denominator.remaining?.legacyProductionApiLiterals,
+  'Bootstrap-core publication requires the complete reviewed legacy API disposition ledger');
+  assertExactList(
+    denominatorProfile.inactiveBrowserFamilies,
+    BOOTSTRAP_CORE_RELEASE_PROFILE.inactiveBrowserFamilies.map(([family]) => family),
+    'Bootstrap-core inactive browser-family set differs from Setup responsibility',
+  );
+
+  assert(browserApiCutover.targetSessionReady && browserApiCutover.authenticatedCutoverReady,
+    'Bootstrap-core publication requires atomic target browser-session routing');
+  assert(browserApiCutover.currentSessionAuthority === 'console_identity.browser_session',
+    'Bootstrap-core publication retained a legacy browser-session authority');
+  const browserContract = await json(resolve(root, 'packages', 'contracts', 'browser-api-cutover.json'));
+  for (const [familyId, targetOwner] of BOOTSTRAP_CORE_RELEASE_PROFILE.inactiveBrowserFamilies) {
+    const family = browserContract.families.find(({ id }) => id === familyId);
+    assert(family?.status === 'target-routed' && family.targetOwner === targetOwner,
+      `Inactive browser family ${familyId} is not routed to its target owner`);
+  }
+
+  const targetRoutes = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8');
+  assert(targetRoutes.includes('location @optional_owner_unavailable')
+    && targetRoutes.includes('"code":"AuthorityUnavailable"')
+    && targetRoutes.includes('return 503'),
+  'Bootstrap-core routing has no stable AuthorityUnavailable response for inactive owners');
+  for (const location of BOOTSTRAP_CORE_RELEASE_PROFILE.inactiveRouteLocations) {
+    const start = targetRoutes.indexOf(location);
+    const end = start < 0 ? -1 : targetRoutes.indexOf(String.fromCharCode(10) + '    }', start);
+    const block = start < 0 || end < 0 ? '' : targetRoutes.slice(start, end);
+    assert(block.includes('error_page 502 504 = @optional_owner_unavailable;'),
+      `Inactive owner route lacks a stable 503 fallback: ${location}`);
+    assert(!block.includes('proxy_intercept_errors on;'),
+      `Inactive owner route masks the owner's typed response: ${location}`);
+  }
+  assert(targetRoutes.includes('"reasonCode":"TargetPlatformCapabilityInactive"')
+    && targetRoutes.includes('"code":"RouteRetired"'),
+  'Bootstrap-core Platform routing can fall through to a silent 404');
+
+  await verifyComponentDirectories({
+    root,
+    boundary,
+    componentIds: boundaryProfile.requiredComponentIds,
+  });
+}
+
+export async function verifyReleaseReadiness({
+  root,
+  boundary,
+  denominator,
+  browserApiCutover,
+  legacyApiDisposition,
+  releaseProfile = 'full',
+}) {
+  assert(['full', 'bootstrap-core'].includes(releaseProfile),
+    `Unknown Console release readiness profile: ${releaseProfile}`);
+  if (releaseProfile === 'bootstrap-core') {
+    await verifyBootstrapCoreReleaseReadiness({
+      root,
+      boundary,
+      denominator,
+      browserApiCutover,
+      legacyApiDisposition,
+    });
+    return;
+  }
+
+  assert(boundary.status === 'release-ready', 'Official publication is blocked while component boundaries remain target-migration');
+  assert(denominator.status === denominator.targetStatus, 'Official publication requires the complete API contract denominator');
+  assert(denominator.remaining?.legacyProductionApiLiterals === 0, 'Official publication requires disposition of every legacy production API literal');
+  assert(browserApiCutover.contractStatus === 'release-ready', 'Official publication requires a release-ready browser API cutover contract');
+  assert(browserApiCutover.authenticatedCutoverReady, 'Official publication requires atomic authenticated browser API cutover');
+  await verifyComponentDirectories({
+    root,
+    boundary,
+    componentIds: boundary.components.map(({ id }) => id),
+  });
 }
 const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_audit.list_events',
@@ -125,14 +276,7 @@ function documentByKind(documents, kind) {
   return documents.filter((document) => document?.kind === kind);
 }
 
-function between(source, start, end) {
-  const startIndex = source.indexOf(start);
-  const endIndex = source.indexOf(end, startIndex + start.length);
-  assert(startIndex >= 0 && endIndex > startIndex, `Console Web proxy boundary markers are missing: ${start}`);
-  return source.slice(startIndex, endIndex);
-}
-
-export function verifyConsoleApiDeployment({ documents, nginxSource }) {
+export function verifyConsoleApiDeployment({ documents, nginxSource, targetRouteSource = '' }) {
   assert(documentByKind(documents, 'Secret').length === 0, 'C_API manifest must consume, not create, its database Secret');
   assert(documentByKind(documents, 'Role').length === 0 && documentByKind(documents, 'ClusterRole').length === 0,
     'C_API must not acquire Kubernetes API authority');
@@ -185,12 +329,22 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   const ingress = JSON.stringify(ingressRules);
   const egress = JSON.stringify(networkPolicy.spec?.egress || []);
   const ingressApps = ingressRules.flatMap((rule) => rule.from || [])
-    .map((peer) => peer?.podSelector?.matchLabels?.app).filter(Boolean).sort();
+    .map((peer) => peer?.podSelector?.matchLabels?.app ?? peer?.podSelector?.matchLabels?.['app.kubernetes.io/name'])
+    .filter(Boolean).sort();
+  const expectedIngressApps = [
+    'opensphere-console',
+    'opensphere-console-osaa-gateway',
+    'opensphere-extension-controller',
+    'opensphere-notification-dispatcher',
+    'opensphere-external-channel-executor',
+    'opensphere-shell-api',
+    'opensphere-shell-gateway',
+  ].sort();
   assert(
-    JSON.stringify(ingressApps) === JSON.stringify(['opensphere-console', 'opensphere-console-osaa-gateway'])
+    JSON.stringify(ingressApps) === JSON.stringify(expectedIngressApps)
       && !ingress.includes('namespaceSelector')
       && ingressRules.every((rule) => JSON.stringify(rule.ports) === JSON.stringify([{ protocol: 'TCP', port: 8080 }])),
-    'C_API ingress must be limited to same-namespace Console Web and OSAA Gateway pods on TCP/8080',
+    'C_API ingress must be limited to same-namespace Console Web and exact target Owner callbacks on TCP/8080',
   );
   for (const destination of ['kube-system', 'opensphere-console-data', 'opensphere-supabase-postgres', 'opensphere-supabase-auth', 'opensphere-supabase-rest', 'opensphere-supabase-storage', 'opensphere-registry']) {
     assert(egress.includes(destination), `C_API NetworkPolicy omits required destination ${destination}`);
@@ -204,32 +358,78 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   );
   assert(!egress.includes('ipBlock'), 'C_API NetworkPolicy must not add an unbounded IP egress escape');
 
-  assert(
-    !nginxSource.includes('opensphere-console-api.opensphere-console.svc.cluster.local'),
-    'Authenticated Web routes must not cut over before the all-family routing gate is complete',
-  );
-  const legacyPlatform = between(nginxSource, '# Temporary migration exception: /api/platform routes', '# Minimal module lifecycle receipts');
-  const legacyAdmin = between(nginxSource, '# Reconstructed Extension routes remain direct-test-only', '# The target identity projection is direct-test-only');
-  const legacyIdentity = between(nginxSource, '# Temporary migration exception for all browser identity routes', '# ADR-006 Supabase same-origin endpoints');
-  for (const [name, boundary] of [['platform', legacyPlatform], ['admin', legacyAdmin], ['identity', legacyIdentity]]) {
-    assert(boundary.includes('opensphere-console-backend.opensphere-console.svc.cluster.local'), `Legacy ${name} exception lost its explicit upstream`);
-    assert(!boundary.includes('opensphere-console-api.opensphere-console.svc.cluster.local'), `Legacy ${name} exception leaked into C_API`);
-  }
+  const routedNginxSource = nginxSource + '\n' + targetRouteSource;
+  assert(nginxSource.includes('include /etc/nginx/target-api-routes.conf;'),
+    'Console Web must activate the target route table atomically');
+  assert(targetRouteSource.includes('opensphere-console-api.opensphere-console.svc.cluster.local'),
+    'Target route table omits C_API');
+  assert(!/opensphere-console-(?:backend|dupa-controller)/u.test(routedNginxSource),
+    'Target Console Web routing retained a legacy Backend or DUPA dependency');
+  assert(targetRouteSource.includes('TargetPlatformCapabilityInactive')
+    && targetRouteSource.includes('RouteRetired')
+    && targetRouteSource.includes('sideEffect'),
+    'Inactive or retired Platform routes must be explicit and fail closed');
 }
 
 export function verifyExtensionControllerDeployment({ documents }) {
-  const find = (kind, name) => documents.find((document) => document?.kind === kind && document.metadata?.name === name);
-  const serviceAccount = find('ServiceAccount', 'opensphere-extension-controller');
-  const role = find('Role', 'opensphere-extension-controller');
-  const roleBinding = find('RoleBinding', 'opensphere-extension-controller');
-  const deployment = find('Deployment', 'opensphere-extension-controller');
-  assert(serviceAccount && role && roleBinding && deployment, 'C_EXT deployment contract is incomplete');
+  const one = (kind, name) => {
+    const matches = documents.filter((document) => document?.kind === kind && document.metadata?.name === name);
+    assert(matches.length === 1, 'C_EXT requires exactly one ' + kind + '/' + name);
+    return matches[0];
+  };
+  const serviceAccount = one('ServiceAccount', 'opensphere-extension-controller');
+  const role = one('Role', 'opensphere-extension-controller');
+  const roleBinding = one('RoleBinding', 'opensphere-extension-controller');
+  const cliRole = one('ClusterRole', 'opensphere-extension-controller-cli-downloads');
+  const cliRoleBinding = one('ClusterRoleBinding', 'opensphere-extension-controller-cli-downloads');
+  const deployment = one('Deployment', 'opensphere-extension-controller');
+  for (const resource of [serviceAccount, role, roleBinding, deployment]) {
+    assert(resource.metadata?.namespace === 'opensphere-console', 'C_EXT ' + resource.kind + ' escaped its namespace');
+  }
+  assert(cliRole.metadata?.namespace == null && cliRoleBinding.metadata?.namespace == null,
+    'C_EXT CLIDownload authority must be explicitly cluster scoped');
   assert(serviceAccount.automountServiceAccountToken === true, 'C_EXT requires its scoped Kubernetes service-account token');
-  assert(roleBinding.roleRef?.kind === 'Role' && roleBinding.roleRef?.name === 'opensphere-extension-controller', 'C_EXT RoleBinding has the wrong role');
-  assert(roleBinding.subjects?.length === 1 && roleBinding.subjects[0]?.name === 'opensphere-extension-controller', 'C_EXT RoleBinding has an unexpected subject');
-  const permissions = Object.fromEntries((role.rules || []).map((rule) => [rule.resources?.join(','), [...(rule.verbs || [])].sort()]));
-  assert(JSON.stringify(permissions.uipluginpackages) === JSON.stringify(['get']), 'C_EXT Package RBAC exceeds its read contract');
-  assert(JSON.stringify(permissions.uipluginregistrations) === JSON.stringify(['create', 'get', 'list', 'patch']), 'C_EXT Registration RBAC differs from its read/apply contract');
+  assert(roleBinding.roleRef?.apiGroup === 'rbac.authorization.k8s.io'
+    && roleBinding.roleRef?.kind === 'Role'
+    && roleBinding.roleRef?.name === 'opensphere-extension-controller', 'C_EXT RoleBinding has the wrong role');
+  assert(roleBinding.subjects?.length === 1
+    && roleBinding.subjects[0]?.kind === 'ServiceAccount'
+    && roleBinding.subjects[0]?.name === 'opensphere-extension-controller'
+    && roleBinding.subjects[0]?.namespace === 'opensphere-console', 'C_EXT RoleBinding has an unexpected subject');
+  assert(cliRoleBinding.roleRef?.apiGroup === 'rbac.authorization.k8s.io'
+    && cliRoleBinding.roleRef?.kind === 'ClusterRole'
+    && cliRoleBinding.roleRef?.name === 'opensphere-extension-controller-cli-downloads',
+  'C_EXT CLIDownload ClusterRoleBinding has the wrong role');
+  assert(cliRoleBinding.subjects?.length === 1
+    && cliRoleBinding.subjects[0]?.kind === 'ServiceAccount'
+    && cliRoleBinding.subjects[0]?.name === 'opensphere-extension-controller'
+    && cliRoleBinding.subjects[0]?.namespace === 'opensphere-console',
+  'C_EXT CLIDownload ClusterRoleBinding has an unexpected subject');
+
+  const normalizeRules = (rules) => (rules || []).map((rule) => ({
+    apiGroups: [...(rule.apiGroups || [])].sort(),
+    resources: [...(rule.resources || [])].sort(),
+    resourceNames: [...(rule.resourceNames || [])].sort(),
+    verbs: [...(rule.verbs || [])].sort(),
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const namespacedRules = normalizeRules([
+    { apiGroups: ['plugins.opensphere.io'], resources: ['uipluginpackages'], verbs: ['get', 'list', 'patch'] },
+    { apiGroups: ['plugins.opensphere.io'], resources: ['uipluginregistrations'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
+    { apiGroups: ['plugins.opensphere.io'], resources: ['uipluginregistrations/status'], verbs: ['patch'] },
+    { apiGroups: [''], resources: ['configmaps'], resourceNames: ['opensphere-extension-trusted-keys'], verbs: ['get'] },
+    { apiGroups: [''], resources: ['serviceaccounts', 'services'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
+    { apiGroups: ['apps'], resources: ['deployments'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
+    { apiGroups: ['policy'], resources: ['poddisruptionbudgets'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
+  ]);
+  assert(JSON.stringify(normalizeRules(role.rules)) === JSON.stringify(namespacedRules),
+    'C_EXT namespaced RBAC differs from its exact lifecycle and management contract');
+  assert(JSON.stringify(normalizeRules(cliRole.rules)) === JSON.stringify(normalizeRules([
+    { apiGroups: ['console.opensphere.io'], resources: ['clidownloads'], verbs: ['get', 'list', 'patch'] },
+  ])), 'C_EXT cluster RBAC must contain only CLIDownload get/list/patch');
+  const serializedRules = JSON.stringify([role.rules, cliRole.rules]);
+  assert(!serializedRules.includes('"*"'), 'C_EXT RBAC must not contain wildcards');
+  assert(!serializedRules.includes('"secrets"'), 'C_EXT runtime must not receive Secret API authority');
+
   const pod = deployment.spec?.template?.spec;
   const container = pod?.containers?.find(({ name }) => name === 'controller');
   assert(pod?.serviceAccountName === 'opensphere-extension-controller' && pod?.automountServiceAccountToken === true, 'C_EXT pod lost its scoped Kubernetes identity');
@@ -237,15 +437,17 @@ export function verifyExtensionControllerDeployment({ documents }) {
   assert(container?.securityContext?.allowPrivilegeEscalation === false, 'C_EXT must disable privilege escalation');
   assert(container?.securityContext?.readOnlyRootFilesystem === true, 'C_EXT must use a read-only root filesystem');
   assert(JSON.stringify(container?.securityContext?.capabilities?.drop) === JSON.stringify(['ALL']), 'C_EXT must drop all Linux capabilities');
-  assert(container?.readinessProbe?.httpGet?.path === '/healthz', 'C_EXT readiness must verify PostgreSQL authority');
-  assert(container?.livenessProbe?.httpGet?.path === '/livez', 'C_EXT liveness must remain independent of PostgreSQL availability');
+  assert(container?.readinessProbe?.httpGet?.path === '/healthz', 'C_EXT readiness must verify PostgreSQL and lifecycle authority');
+  assert(container?.livenessProbe?.httpGet?.path === '/livez', 'C_EXT liveness must remain independent of external authority availability');
+  const lifecycleEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_EXTENSION_LIFECYCLE_ENABLED');
+  assert(lifecycleEnv?.value === 'true', 'C_EXT target lifecycle must be enabled for Setup core');
   const databaseEnv = container?.env?.find((entry) => entry.name === 'CONSOLE_EXTENSION_DATABASE_URL');
   assert(databaseEnv?.value === undefined, 'C_EXT database credential must not be a literal value');
   assert(databaseEnv?.valueFrom?.secretKeyRef?.name === 'opensphere-extension-controller-runtime', 'C_EXT database Secret name differs from the install contract');
   assert(databaseEnv?.valueFrom?.secretKeyRef?.key === 'database-url', 'C_EXT database Secret key differs from the install contract');
 }
 
-export async function verifyContracts(repoRoot = process.cwd(), { requireReleaseReady = false } = {}) {
+export async function verifyContracts(repoRoot = process.cwd(), { requireReleaseReady = false, releaseProfile = 'full' } = {}) {
   const root = resolve(repoRoot);
   const contractRoot = resolve(root, 'packages', 'contracts');
   const denominator = await json(resolve(contractRoot, 'contract-denominator.json'));
@@ -487,7 +689,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     'opensphere-console-beszel-bootstrap',
   ]), 'C_API boundary omits its governed Beszel runtime artifacts');
   if (requireReleaseReady) {
-    await verifyReleaseReadiness({ root, boundary, denominator, browserApiCutover });
+    await verifyReleaseReadiness({ root, boundary, denominator, browserApiCutover, legacyApiDisposition, releaseProfile });
   }
 
   const consoleApiStore = await readFile(resolve(root, 'apps', 'console-api', 'src', 'postgres-operation-store.mjs'), 'utf8');
@@ -502,7 +704,8 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   const consoleApiDeployment = [];
   yaml.loadAll(await readFile(resolve(root, 'apps', 'console-api', 'deploy.yaml'), 'utf8'), (document) => consoleApiDeployment.push(document));
   const consoleWebProxy = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
-  verifyConsoleApiDeployment({ documents: consoleApiDeployment, nginxSource: consoleWebProxy });
+  const consoleWebTargetRoutes = await readFile(resolve(root, 'apps', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8');
+  verifyConsoleApiDeployment({ documents: consoleApiDeployment, nginxSource: consoleWebProxy, targetRouteSource: consoleWebTargetRoutes });
   const extensionControllerDeployment = [];
   yaml.loadAll(await readFile(resolve(root, 'apps', 'extension-controller', 'deploy.yaml'), 'utf8'), (document) => extensionControllerDeployment.push(document));
   verifyExtensionControllerDeployment({ documents: extensionControllerDeployment });
@@ -589,10 +792,17 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     authenticatedBrowserCutoverReady: browserApiCutover.authenticatedCutoverReady,
     legacyApiDispositions: legacyApiDisposition.decisions,
     legacyApiDispositionCounts: legacyApiDisposition.byDisposition,
+    ...(requireReleaseReady ? { releaseReadinessProfile: releaseProfile } : {}),
   };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const result = await verifyContracts(process.cwd(), { requireReleaseReady: process.argv.includes('--release-ready') });
+  const requireReleaseReady = process.argv.includes('--release-ready');
+  const releaseProfileArguments = process.argv.filter((argument) => argument.startsWith('--release-profile='));
+  assert(releaseProfileArguments.length <= 1, 'Only one Console release readiness profile may be selected');
+  assert(requireReleaseReady || releaseProfileArguments.length === 0,
+    '--release-profile requires --release-ready');
+  const releaseProfile = releaseProfileArguments[0]?.slice('--release-profile='.length) || 'full';
+  const result = await verifyContracts(process.cwd(), { requireReleaseReady, releaseProfile });
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }

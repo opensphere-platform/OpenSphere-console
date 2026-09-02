@@ -100,6 +100,8 @@ test('candidate BOM and anchor-last tag arrays contain exactly the canonical fam
   const bomKeys = bashArray(bom, 'component_keys');
   assert.equal(bomImages.length, 18);
   assert.equal(bomKeys.length, 18);
+  assert.doesNotMatch(bom, /-eq 19/u);
+  assert.ok((bom.match(/-eq 18/gu) || []).length >= 2, 'candidate BOM shell count gates must use canonical 18');
   assert.deepEqual(sorted(bomImages), sorted(canonicalImages));
   assert.deepEqual(new Map(bomKeys.map((key, index) => [key, bomImages[index]])), new Map(canonical.map(([key, image]) => [key, image])));
   assert.match(bom, /\(\.components \| length\) == 18/u);
@@ -135,18 +137,23 @@ test('stable and GA stay held and describe only an 18-component canonical promot
   );
 });
 
-test('local edge defaults to the canonical 18 and blocks the legacy backend before publication', async () => {
+test('local edge moves its anchor only with canonical 18 and auxiliary three at one revision', async () => {
   const source = await read('scripts/Publish-LocalEdge.ps1');
-  assert.deepEqual(quotedPowerShellArray(source, '[string[]]$Components'), canonicalKeys);
+  assert.deepEqual(quotedPowerShellArray(source, '[string[]]$Components'), [...canonicalKeys, ...auxiliaryKeys]);
   assert.deepEqual(quotedPowerShellArray(source, '$canonicalComponentKeys'), canonicalKeys);
   assert.deepEqual(quotedPowerShellArray(source, '$auxiliaryComponentKeys'), auxiliaryKeys);
+  assert.match(source, /\$completeReleaseComponentKeys = @\(\$canonicalComponentKeys \+ \$auxiliaryComponentKeys\)/u);
   assert.deepEqual(quotedPowerShellArray(source, '$blockedLegacyComponentKeys'), ['backend']);
   assert.match(source, /if \(\$Components -contains 'backend'\) \{\s*throw /u);
   assert.ok(source.indexOf("if ($Components -contains 'backend')") < source.indexOf('New-Item -ItemType Directory'));
+  assert.ok(source.indexOf("if ($Components -contains 'cliArtifacts')") < source.indexOf('New-Item -ItemType Directory'));
   assert.match(source, /\$canonicalImages\.Count -ne 18/u);
   assert.match(source, /\$componentEvidence\.Count -ne 18/u);
+  assert.match(source, /\$auxiliaryArtifactEvidence\.Count -ne 3/u);
+  assert.match(source, /\$bom\['auxiliaryArtifacts'\] = \$auxiliaryArtifactEvidence/u);
   assert.match(source, /\$canonicalAnchorMayMove = \$integratedRequest -or \$AdvanceOsShellUxConsoleEdge/u);
-  assert.match(source, /if \(\$canonicalAnchorMayMove\) \{ \$contractArguments \+= '--release-ready' \}/u);
+  assert.match(source, /if \(\$integratedRequest\) \{[\s\S]*'--release-ready', '--release-profile=bootstrap-core'/u);
+  assert.match(source, /elseif \(\$AdvanceOsShellUxConsoleEdge\) \{\s*\$contractArguments \+= '--release-ready'/u);
   assert.match(source, /Invoke-Checked node @contractArguments/u);
   assert.ok(
     source.indexOf("Invoke-Checked node @contractArguments") < source.indexOf("Write-Host '[step 03/06] Confirm GHCR authentication mode'"),

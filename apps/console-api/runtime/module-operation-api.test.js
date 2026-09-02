@@ -167,17 +167,17 @@ test('legacy module receipts keep execution and verification state aligned with 
   assert.deepEqual(moduleOperationState('VerificationFailed'), { execution_state: 'complete', verification_state: 'failed' });
 });
 
-test('migration makes the receipt backend-only and Setup CLI publishes it as release material', () => {
+test('migration keeps legacy receipts backend-only while target browser routes retire the API', () => {
   const migration = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'supabase', 'migrations', '0035_module_operation_ledger.sql'), 'utf8');
   assert.match(migration, /CREATE TABLE IF NOT EXISTS console\.module_operation/);
   assert.match(migration, /REVOKE ALL ON TABLE console\.module_operation FROM PUBLIC, anon, authenticated, service_role/);
   assert.match(migration, /GRANT SELECT, INSERT, UPDATE ON TABLE console\.module_operation TO opensphere_console_backend/);
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+  const targetRoutes = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8');
   assert.match(server, /p\.startsWith\('\/api\/modules'\) \|\| p\.startsWith\('\/api\/module-operations'\)/);
   assert.match(server, /moduleLifecycleNeedsRecentAal2\(action\)/);
   assert.match(dockerfile, /COPY apps\/console-api\/runtime\/module-operation-api\.js \.\/module-operation-api\.js/);
-  assert.match(nginx, /location \/api\/modules[\s\S]+opensphere-console-backend/);
-  assert.match(nginx, /location \/api\/module-operations[\s\S]+opensphere-console-backend/);
+  assert.match(targetRoutes, /location ~ \^\/api\/\(\?:proxy\|modules\|module-operations\)\(\?:\/\|\$\)/);
+  assert.match(targetRoutes, /return 410 '\{"schemaVersion":"1\.0","code":"RouteRetired"/);
 });

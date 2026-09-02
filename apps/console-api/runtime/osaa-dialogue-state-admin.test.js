@@ -7,7 +7,7 @@ const { join } = require('node:path');
 
 const server = readFileSync(join(__dirname, 'server.js'), 'utf8');
 const deploy = readFileSync(join(__dirname, 'deploy.yaml'), 'utf8');
-const nginx = readFileSync(join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+const targetRoutes = readFileSync(join(__dirname, '..', '..', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8');
 
 test('Dialogue State admin control accepts only the closed four-stage mode set', () => {
   assert.match(server, /new Set\(\['off', 'shadow', 'read-enforce', 'mutation-enforce'\]\)/);
@@ -22,9 +22,11 @@ test('Dialogue State change is admin, recent-AAL2 and audit-intent gated', () =>
   assert.match(server, /phase: 'intent'/);
 });
 
-test('Backend can patch only the OSDST deployment and nginx keeps the write out of Gateway', () => {
+test('legacy Backend stays narrowly scoped while target nginx sends OSAA writes only to Gateway', () => {
   assert.match(deploy, /name: opensphere-console-backend-osaa-dialogue-state/);
   assert.match(deploy, /resourceNames: \["opensphere-osdst"\]/);
   assert.match(deploy, /verbs: \["get", "patch"\]/);
-  assert.match(nginx, /location = \/api\/osaa\/admin\/dialogue-state[\s\S]*opensphere-console-backend/);
+  const osaaRoute = targetRoutes.match(/location \/api\/osaa\/ \{[\s\S]*?\r?\n    \}/)?.[0] ?? '';
+  assert.match(osaaRoute, /opensphere-console-osaa-gateway/);
+  assert.doesNotMatch(osaaRoute, /opensphere-console-backend/);
 });

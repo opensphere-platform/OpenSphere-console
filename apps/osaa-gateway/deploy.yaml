@@ -342,4 +342,5 @@ spec:
   ingress:
     - from:
         - { podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } } }
+        - { podSelector: { matchLabels: { app: opensphere-console } } }
       ports: [{ protocol: TCP, port: 8080 }]

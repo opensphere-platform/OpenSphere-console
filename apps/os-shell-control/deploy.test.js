@@ -15,7 +15,10 @@ const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'P
 const admissionHarness = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Test-OsShellRuntimeAdmission.ps1'), 'utf8');
 const backendServer = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'server.js'), 'utf8');
 const backendDeploy = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'deploy.yaml'), 'utf8');
-const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+const canonicalConsoleNginx = [
+  fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8'),
+  fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8'),
+].join('\n');
 const controlDockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
 const runtimeDockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile.runtime'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
@@ -283,11 +286,12 @@ test('internal Console API uses the canonical data-driven Registry and plugin/PF
   assert.equal(deployment.spec.template.spec.containers[0].name, 'console-frontdoor');
   assert.equal(deployment.spec.template.spec.containers[0].image, '__OPENSPHERE_CONSOLE_IMAGE__');
   assert.match(canonicalConsoleNginx, /location = \/api\/v1\/registry/);
-  assert.match(canonicalConsoleNginx, /location \/api\/proxy\//);
-  assert.match(canonicalConsoleNginx, /location \/api\/identity/);
-  assert.match(canonicalConsoleNginx, /location ~ \^\/api\/plugins\/\(\[a-z0-9-\]\+\)\/\(\.\*\)\$/);
-  assert.match(canonicalConsoleNginx, /auth_request \/_plugin_authz/);
-  assert.match(canonicalConsoleNginx, /proxy_set_header Authorization \$plugin_authorization/);
+  assert.match(canonicalConsoleNginx, /location ~ \^\/api\/\(\?:proxy\|modules\|module-operations\)\(\?:\/\|\$\)/);
+  assert.match(canonicalConsoleNginx, /return 410 '\{"schemaVersion":"1\.0","code":"RouteRetired"/);
+  assert.match(canonicalConsoleNginx, /location ~ \^\/api\/\(\?:identity\(\?:\/\|\$\)\|platform/);
+  assert.match(canonicalConsoleNginx, /location \/api\/plugins\/ \{/);
+  assert.match(canonicalConsoleNginx, /auth_request \/_extension_authn/);
+  assert.match(canonicalConsoleNginx, /proxy_set_header Authorization \$owner_authorization/);
   assert.equal(source.includes('DUPA_CONTROL_URL'), false);
 });
 

@@ -188,8 +188,10 @@ test('browser admin requests resolve the HttpOnly session at the Console enforce
   assert.match(backend, /assertConsoleAdminActor\(session\.actor, \{ requireAal2 \}\)/);
   assert.match(backend, /authorization = `Bearer \$\{session\.accessToken\}`/);
   assert.match(backend, /p\.startsWith\('\/api\/admin\/'\) && p !== '\/api\/admin\/events'/);
-  assert.match(nginx, /location = \/api\/admin\/events \{[\s\S]*?\$dupa_controller_upstream/);
-  assert.match(nginx, /location \/api\/admin\/ \{[\s\S]*?\$console_backend_upstream/);
+  const targetRoutes = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8');
+  assert.match(targetRoutes, /location = \/api\/admin\/events \{[\s\S]*?return 410/);
+  assert.match(targetRoutes, /location ~ \^\/api\/\(\?:identity[\s\S]*?opensphere-console-api\.opensphere-console\.svc\.cluster\.local/);
+  assert.doesNotMatch(targetRoutes, /console_backend_upstream/);
   assert.match(httpService, /shouldReauthenticateAfterUnauthorized/);
   assert.doesNotMatch(httpService, /void this\.auth\.reAuthenticate\(\)/);
 });

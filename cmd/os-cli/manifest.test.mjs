@@ -128,7 +128,7 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   assert.doesNotMatch(publisher, /opensphere-cli-darwin/);
   assert.doesNotMatch(publisher, /backend\/os-cli changed/);
   assert.match(publisher, /Key = 'cliArtifacts'; Image = 'opensphere-os-cli'/);
-  assert.match(publisher, /id=cli_update_signing_key,src=\$resolvedCliKey/);
+  assert.match(publisher, /id=cli_update_signing_key,src=\$resolvedCliSigningKey/);
 });
 
 test('the shell proxies downloads to the independently ready CLI artifact service', async () => {

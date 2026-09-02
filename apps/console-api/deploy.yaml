@@ -184,6 +184,26 @@ spec:
               app: opensphere-console-osaa-gateway
       ports:
         - { protocol: TCP, port: 8080 }
+    # Target Owners revalidate exchanged bearer/session authority at
+    # GET /api/identity/me. Keep this callback allowlist exact.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opensphere-extension-controller
+        - podSelector:
+            matchLabels:
+              app: opensphere-notification-dispatcher
+        - podSelector:
+            matchLabels:
+              app: opensphere-external-channel-executor
+        - podSelector:
+            matchLabels:
+              app: opensphere-shell-api
+        - podSelector:
+            matchLabels:
+              app: opensphere-shell-gateway
+      ports:
+        - { protocol: TCP, port: 8080 }
   egress:
     - to:
         - namespaceSelector:

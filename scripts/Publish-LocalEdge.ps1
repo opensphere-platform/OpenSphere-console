@@ -11,7 +11,7 @@ param(
   [switch]$UseExistingRegistryLogin,
   [switch]$AdvanceOsShellUxConsoleEdge,
   [ValidateSet('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend')]
-  [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap')
+  [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -145,6 +145,19 @@ if ($dirty) {
 if ($Components -contains 'backend') {
   throw 'Backend component publication is blocked until its runtime installer consumes the fresh Console migration lineage.'
 }
+$resolvedCliSigningKey = ''
+if ($Components -contains 'cliArtifacts') {
+  if (-not $CliUpdateSigningKeyPath -or -not (Test-Path -LiteralPath $CliUpdateSigningKeyPath)) {
+    throw 'CLI local-edge publication requires a host-local Ed25519 private-key path.'
+  }
+  if (-not $CliUpdateSigningPublicKey) {
+    throw 'CLI local-edge publication requires the matching SPKI DER public key in base64.'
+  }
+  $resolvedCliSigningKey = (Resolve-Path -LiteralPath $CliUpdateSigningKeyPath).Path
+  if ($resolvedCliSigningKey.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'CLI local-edge signing key must be stored outside the source repository.'
+  }
+}
 
 # This is the governed release family, not Setup's smaller bootstrapCore subset.
 $canonicalComponentKeys = @(
@@ -153,12 +166,15 @@ $canonicalComponentKeys = @(
   'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage',
   'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap'
 )
+$auxiliaryComponentKeys = @('cliArtifacts', 'osShellControl', 'osShellRuntime')
+$completeReleaseComponentKeys = @($canonicalComponentKeys + $auxiliaryComponentKeys)
 $requestedForGate = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedForGate.Add($component) }
-$integratedRequest = $requestedForGate.Count -eq $canonicalComponentKeys.Count -and
-  @($canonicalComponentKeys | Where-Object { -not $requestedForGate.Contains($_) }).Count -eq 0
-# The explicit OS Shell UX exception can move the Console edge anchor for a
-# partial publication, so it inherits the same release-ready gate.
+$integratedRequest = $requestedForGate.Count -eq $completeReleaseComponentKeys.Count -and
+  @($completeReleaseComponentKeys | Where-Object { -not $requestedForGate.Contains($_) }).Count -eq 0
+# The Console edge anchor may move only after the full governed artifact set
+# exists at one immutable revision. The explicit OS Shell UX exception retains
+# the stricter full release-ready gate and cannot use the bootstrap profile.
 $canonicalAnchorMayMove = $integratedRequest -or $AdvanceOsShellUxConsoleEdge
 
 $epochText = (& git -C $repoRoot show -s --format=%ct $SourceRevision).Trim()
@@ -195,7 +211,11 @@ Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRe
 Push-Location $consoleCheckout
 try {
   $contractArguments = @('scripts/verify-console-contracts.mjs')
-  if ($canonicalAnchorMayMove) { $contractArguments += '--release-ready' }
+  if ($integratedRequest) {
+    $contractArguments += @('--release-ready', '--release-profile=bootstrap-core')
+  } elseif ($AdvanceOsShellUxConsoleEdge) {
+    $contractArguments += '--release-ready'
+  }
   Invoke-Checked node @contractArguments | Out-Null
 } finally {
   Pop-Location
@@ -353,7 +373,6 @@ $allImages = @(
   # Retained only to reject stale explicit callers before registry mutation.
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'); SetupContext = $setupCheckout }
 )
-$auxiliaryComponentKeys = @('cliArtifacts', 'osShellControl', 'osShellRuntime')
 $blockedLegacyComponentKeys = @('backend')
 $canonicalImages = @($allImages | Where-Object {
   $_.Key -notin $auxiliaryComponentKeys -and $_.Key -notin $blockedLegacyComponentKeys
@@ -365,10 +384,9 @@ $requestedComponents = [Collections.Generic.HashSet[string]]::new([StringCompare
 foreach ($component in $Components) { [void]$requestedComponents.Add($component) }
 $images = @($allImages | Where-Object { $requestedComponents.Contains($_.Key) })
 if (-not $images.Count) { throw 'At least one Console component must be selected.' }
-$integratedPublication = $images.Count -eq $canonicalImages.Count `
-  -and @($images | Where-Object { $_.Key -in $auxiliaryComponentKeys }).Count -eq 0 `
+$integratedPublication = $images.Count -eq $completeReleaseComponentKeys.Count `
   -and @($images | Where-Object { $_.Key -in $blockedLegacyComponentKeys }).Count -eq 0 `
-  -and @($canonicalImages | Where-Object { -not $requestedComponents.Contains($_.Key) }).Count -eq 0
+  -and @($completeReleaseComponentKeys | Where-Object { -not $requestedComponents.Contains($_) }).Count -eq 0
 if ($integratedPublication -ne $integratedRequest) {
   throw 'Canonical release gate and image matrix disagree about integrated publication scope.'
 }
@@ -454,20 +472,10 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
     )
   }
   if ($item.Key -eq 'cliArtifacts') {
-    if (-not $CliUpdateSigningKeyPath -or -not (Test-Path -LiteralPath $CliUpdateSigningKeyPath)) {
-      throw 'CLI local-edge publication requires a host-local Ed25519 private-key path.'
-    }
-    if (-not $CliUpdateSigningPublicKey) {
-      throw 'CLI local-edge publication requires the matching SPKI DER public key in base64.'
-    }
-    $resolvedCliKey = (Resolve-Path -LiteralPath $CliUpdateSigningKeyPath).Path
-    if ($resolvedCliKey.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
-      throw 'CLI local-edge signing key must be stored outside the source repository.'
-    }
     $arguments += @(
       '--build-arg', "CLI_UPDATE_TRUST_ID=$CliUpdateSigningKeyId",
       '--build-arg', "CLI_UPDATE_TRUST_PUBLIC=$CliUpdateSigningPublicKey",
-      '--secret', "id=cli_update_signing_key,src=$resolvedCliKey"
+      '--secret', "id=cli_update_signing_key,src=$resolvedCliSigningKey"
     )
   }
   if ($item.Key -eq 'osShellRuntime') {
@@ -502,16 +510,23 @@ foreach ($item in $images) {
 }
 
 $componentEvidence = [ordered]@{}
+$auxiliaryArtifactEvidence = [ordered]@{}
 foreach ($item in $images) {
   $repository = "$Registry/$($item.Image)"
-  $componentEvidence[$item.Key] = [ordered]@{
+  $evidence = [ordered]@{
     repository = $item.Image
     image = "${repository}@$($digests[$item.Key])"
     sourceRevision = $SourceRevision
   }
+  if ($item.Key -in $auxiliaryComponentKeys) {
+    $auxiliaryArtifactEvidence[$item.Key] = $evidence
+  } else {
+    $componentEvidence[$item.Key] = $evidence
+  }
 }
-if (-not $partialPublication -and $componentEvidence.Count -ne 18) {
-  throw "Complete local edge BOM must contain exactly 18 components; found $($componentEvidence.Count)."
+if (-not $partialPublication -and
+    ($componentEvidence.Count -ne 18 -or $auxiliaryArtifactEvidence.Count -ne 3)) {
+  throw "Complete local edge release must contain exactly 18 canonical components and 3 auxiliary artifacts; found $($componentEvidence.Count)+$($auxiliaryArtifactEvidence.Count)."
 }
 $releaseArtifacts = [ordered]@{
   supabaseMigrationManifest = [ordered]@{
@@ -554,6 +569,9 @@ $bom = [ordered]@{
   supportedPlatforms = @($Platform)
   components = $componentEvidence
 }
+if ($auxiliaryArtifactEvidence.Count -gt 0) {
+  $bom['auxiliaryArtifacts'] = $auxiliaryArtifactEvidence
+}
 $bomPath = Join-Path $workspace ($partialPublication ? 'opensphere-local-component-publication.json' : 'opensphere-local-release-bom.json')
 $bom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bomPath -Encoding utf8
 if ($partialPublication) {
@@ -562,8 +580,16 @@ if ($partialPublication) {
     foreach ($entry in $bom.GetEnumerator()) {
       $singleComponentBom[$entry.Key] = $entry.Value
     }
-    $singleComponentBom['components'] = [ordered]@{
-      $item.Key = $componentEvidence[$item.Key]
+    if ($item.Key -in $auxiliaryComponentKeys) {
+      $singleComponentBom['components'] = [ordered]@{}
+      $singleComponentBom['auxiliaryArtifacts'] = [ordered]@{
+        $item.Key = $auxiliaryArtifactEvidence[$item.Key]
+      }
+    } else {
+      $singleComponentBom['components'] = [ordered]@{
+        $item.Key = $componentEvidence[$item.Key]
+      }
+      [void]$singleComponentBom.Remove('auxiliaryArtifacts')
     }
     $singleComponentPath = Join-Path $workspace "opensphere-local-component-publication-$($item.Key).json"
     $singleComponentBom | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $singleComponentPath -Encoding utf8

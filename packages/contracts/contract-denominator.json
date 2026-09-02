@@ -164,6 +164,18 @@
     "cli-device-inventory-response.schema.json",
     "cli-device-revocation-request.schema.json"
   ],
+  "releaseProfiles": {
+    "bootstrap-core": {
+      "status": "complete",
+      "targetStatus": "complete",
+      "scope": "bootstrap-contract-and-routing",
+      "inactiveBrowserFamilies": ["notifications", "external-channels", "osaa", "manual", "os-shell"],
+      "remaining": {
+        "legacyProductionApiLiterals": 0,
+        "rule": "Every legacy literal is dispositioned; inactive owner families remain target-routed and fail closed with AuthorityUnavailable until activated."
+      }
+    }
+  },
   "remaining": {
     "legacyProductionApiLiterals": 277,
     "rule": "Every production endpoint must be adopted, reworked, or rejected before status becomes complete."

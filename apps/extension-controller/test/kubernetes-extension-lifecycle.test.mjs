@@ -108,6 +108,14 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
       return json(200, statusPatched(currentRegistration, body.status));
     }
 
+    if (method === 'GET' && plan.resources.some((item) => item.basePath === parsed.pathname)) {
+      const kind = plan.resources.find((item) => item.basePath === parsed.pathname).manifest.kind;
+      return json(200, {
+        items: [...resources.entries()]
+          .filter(([resourcePath, resource]) => resourcePath.startsWith(parsed.pathname + '/') && resource.kind === kind)
+          .map(([, resource]) => structuredClone(resource)),
+      });
+    }
     if (method === 'GET') {
       if (!resources.has(parsed.pathname)) return json(404, { reason: 'NotFound' });
       const value = structuredClone(resources.get(parsed.pathname));
@@ -526,6 +534,14 @@ test('Uninstalled workload deletion binds both UID and resourceVersion precondit
         deletes.push({ path, body });
         return json(200, {});
       }
+      if (method === 'GET' && plan.resources.some((item) => item.basePath === path)) {
+        const kind = plan.resources.find((item) => item.basePath === path).manifest.kind;
+        return json(200, {
+          items: [...storedByPath.entries()]
+            .filter(([resourcePath, resource]) => resourcePath.startsWith(path + '/') && resource.kind === kind)
+            .map(([, resource]) => structuredClone(resource)),
+        });
+      }
       if (method === 'GET' && storedByPath.has(path)) return json(200, storedByPath.get(path));
       if (method === 'DELETE' && storedByPath.has(path)) {
         deletes.push({ path, body });
@@ -670,4 +686,109 @@ test('permission verification evidence never reports approval for pre-approval f
     assert.equal(observedStatus.reason, scenario.reason);
     assert.equal(observedStatus.verification.permissions, scenario.permissionEvidence);
   }
+});
+
+
+test('inactive revision GC is UID/RV-bound and remains pending until absence is observed', async () => {
+  async function scenario({ observeDeletion }) {
+    const fixture = makeReleaseFixture();
+    const current = buildExtensionWorkloadPlan(fixture.pkg);
+    const oldPackage = structuredClone(fixture.pkg);
+    oldPackage.spec.image.digest = 'sha256:' + 'c'.repeat(64);
+    oldPackage.spec.resolution.resolvedDigest = oldPackage.spec.image.digest;
+    oldPackage.spec.manifest.sha256 = 'd'.repeat(64);
+    const previous = buildExtensionWorkloadPlan(oldPackage);
+    const sourceRegistration = registration();
+    const resources = new Map();
+    let sequence = 1;
+    const store = (item, ready = false) => {
+      const value = {
+        ...structuredClone(item.manifest),
+        metadata: {
+          ...structuredClone(item.manifest.metadata),
+          uid: item.manifest.metadata.name + '-uid',
+          resourceVersion: String(sequence++),
+          ...(ready ? { generation: 1 } : {}),
+        },
+        ...(ready ? {
+          status: {
+            observedGeneration: 1,
+            updatedReplicas: item.manifest.spec.replicas,
+            availableReplicas: item.manifest.spec.replicas,
+            unavailableReplicas: 0,
+          },
+        } : {}),
+      };
+      resources.set(item.basePath + '/' + item.manifest.metadata.name, value);
+    };
+    for (const item of current.resources) store(item, item.manifest.kind === 'Deployment');
+    for (const item of previous.resources) store(item, item.manifest.kind === 'Deployment');
+    store(current.activeService);
+    const deletes = [];
+    const artifacts = artifactFetch(fixture);
+    const lifecycle = createKubernetesExtensionLifecycle({
+      baseUrl: origin,
+      token: 'service-account-token-value',
+      fetchImpl: async (url, options = {}) => {
+        const parsed = new URL(url);
+        const path = parsed.pathname;
+        const method = options.method || 'GET';
+        const body = options.body ? JSON.parse(options.body) : null;
+        if (parsed.origin !== origin) return artifacts(url, options);
+        if (path === registrations && method === 'GET') return json(200, { items: [sourceRegistration] });
+        if (path === packages + '/workspace' && method === 'GET') return json(200, fixture.pkg);
+        if (path.endsWith('/configmaps/opensphere-extension-trusted-keys') && method === 'GET') {
+          return json(200, { data: { 'trusted-keys.json': JSON.stringify({ trustedKeys: fixture.trustedKeys }) } });
+        }
+        if (path === registrations + '/workspace/status' && method === 'PATCH') {
+          return json(200, statusPatched(sourceRegistration, body.status));
+        }
+        if (method === 'GET' && current.resources.some((item) => item.basePath === path)) {
+          const kind = current.resources.find((item) => item.basePath === path).manifest.kind;
+          return json(200, {
+            items: [...resources.entries()]
+              .filter(([resourcePath, resource]) => resourcePath.startsWith(path + '/') && resource.kind === kind)
+              .map(([, resource]) => structuredClone(resource)),
+          });
+        }
+        if (method === 'GET') {
+          return resources.has(path) ? json(200, structuredClone(resources.get(path))) : json(404, {});
+        }
+        if (method === 'DELETE') {
+          const before = resources.get(path);
+          deletes.push({ path, body, before: structuredClone(before) });
+          if (observeDeletion) resources.delete(path);
+          return json(202, {});
+        }
+        throw new Error('unexpected GC request ' + method + ' ' + path);
+      },
+    });
+    return {
+      result: await lifecycle.reconcileOnce(),
+      deletes,
+      current,
+      previous,
+    };
+  }
+
+  const completed = await scenario({ observeDeletion: true });
+  assert.equal(completed.result.state, 'Activated');
+  assert.equal(completed.deletes.length, completed.previous.resources.length);
+  const previousNames = new Set(completed.previous.resources.map((item) => item.manifest.metadata.name));
+  const currentNames = new Set(completed.current.resources.map((item) => item.manifest.metadata.name));
+  for (const deletion of completed.deletes) {
+    assert.ok(previousNames.has(deletion.before.metadata.name));
+    assert.equal(currentNames.has(deletion.before.metadata.name), false);
+    assert.deepEqual(deletion.body.preconditions, {
+      uid: deletion.before.metadata.uid,
+      resourceVersion: deletion.before.metadata.resourceVersion,
+    });
+    assert.equal(deletion.body.propagationPolicy, 'Foreground');
+  }
+
+  const pending = await scenario({ observeDeletion: false });
+  assert.deepEqual(pending.result, {
+    state: 'Pending', extensionId: 'workspace', reason: 'DeletionPending',
+  });
+  assert.equal(pending.deletes.length, 1);
 });

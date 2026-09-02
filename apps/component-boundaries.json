@@ -3,6 +3,20 @@
   "schemaVersion": "1.0",
   "status": "target-migration",
   "releaseFamily": "OpenSphere-Console",
+  "releaseProfiles": {
+    "bootstrap-core": {
+      "status": "release-ready",
+      "scope": "bootstrap-runtime",
+      "requiredComponentIds": ["C_WEB", "C_API", "C_EXT", "C_REG", "C_CLI"],
+      "inactiveComponentIds": ["C_AI", "C_DST", "C_SCTL", "C_BAK", "C_NOTIFY"],
+      "artifactActivation": {
+        "bootstrapCore": ["console", "consoleApi", "extensionController", "registry", "gitea", "giteaPostgres", "supabasePostgres", "supabaseAuth", "supabaseRest", "supabaseStorage", "beszelHub", "beszelAgent", "beszelBootstrap"],
+        "availableModules": ["osaaGateway", "osdst", "osaaGovernedAdapter", "notificationDispatcher", "recovery"],
+        "bootstrapAuxiliaryArtifacts": ["cliArtifacts"],
+        "availableAuxiliaryArtifacts": ["osShellControl", "osShellRuntime"]
+      }
+    }
+  },
   "components": [
     { "id": "C_WEB", "path": "apps/console-web", "artifact": "opensphere-console", "legacySources": [] },
     { "id": "C_API", "path": "apps/console-api", "artifact": "opensphere-console-api", "auxiliaryArtifacts": ["opensphere-console-beszel-hub", "opensphere-console-beszel-agent", "opensphere-console-beszel-bootstrap"], "legacySources": [] },
