@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:catalog-entities-response:v1",
+  "title": "Revision-bound Console developer catalog projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "data", "authority", "observedAt", "freshness", "correlationId", "evidenceRefs"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "filter", "returned", "coverage", "items"],
+      "properties": {
+        "revision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "filter": { "enum": ["all", "api"] },
+        "returned": { "type": "integer", "minimum": 0, "maximum": 200 },
+        "coverage": { "$ref": "#/$defs/coverage" },
+        "items": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/entity" }
+        }
+      }
+    },
+    "authority": { "const": "OpenSphereRegistry" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "freshness": { "const": "fresh" },
+    "correlationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "evidenceRefs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": { "type": "string", "pattern": "^registry-catalog:sha256:[a-f0-9]{64}$" }
+    }
+  },
+  "$defs": {
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected", "published", "rejected", "missing"],
+      "properties": {
+        "expected": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "published": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "rejected": { "type": "integer", "minimum": 0, "maximum": 2000 },
+        "missing": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "class", "code", "message"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "class": { "enum": ["coreService", "extension", "installableModule"] },
+              "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "message": { "type": "string", "minLength": 1, "maxLength": 500 }
+            }
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "namespace", "description", "uid"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "namespace": { "const": "opensphere-console" },
+        "description": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "entity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "metadata", "spec"],
+          "properties": {
+            "kind": { "const": "Component" },
+            "metadata": { "$ref": "#/$defs/metadata" },
+            "spec": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "owner", "lifecycle", "system", "capabilities"],
+              "properties": {
+                "type": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "owner": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "lifecycle": { "const": "production" },
+                "system": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "capabilities": {
+                  "type": "array",
+                  "maxItems": 128,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "metadata", "spec"],
+          "properties": {
+            "kind": { "const": "API" },
+            "metadata": { "$ref": "#/$defs/metadata" },
+            "spec": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "owner", "lifecycle", "system", "definition"],
+              "properties": {
+                "type": { "const": "http" },
+                "owner": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "lifecycle": { "const": "production" },
+                "system": { "type": "string", "minLength": 1, "maxLength": 128 },
+                "definition": { "type": "string", "minLength": 1, "maxLength": 512 }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

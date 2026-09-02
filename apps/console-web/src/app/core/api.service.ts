@@ -12,6 +12,31 @@ export interface CatalogEntity {
   relations?: { type: string; targetRef: string }[];
 }
 
+export interface CatalogCoverage {
+  expected: number;
+  published: number;
+  rejected: number;
+  missing: { id: string; class: string; code: string; message: string }[];
+}
+
+export interface CatalogProjection {
+  revision: string;
+  filter: 'all' | 'api';
+  returned: number;
+  coverage: CatalogCoverage;
+  items: CatalogEntity[];
+}
+
+interface CatalogEnvelope {
+  schemaVersion: '1.0';
+  data: CatalogProjection;
+  authority: 'OpenSphereRegistry';
+  observedAt: string;
+  freshness: 'fresh';
+  correlationId: string;
+  evidenceRefs: string[];
+}
+
 export interface RuntimeResource {
   cluster: string;
   type: string;
@@ -70,17 +95,26 @@ export interface PlatformStatus {
 export class ApiService {
   private http = inject(HttpService);
 
-  async catalogEntities(): Promise<CatalogEntity[]> {
-    const res = await this.http.request('/api/catalog/entities?limit=200');
+  async catalogProjection(apiOnly = false): Promise<CatalogProjection> {
+    const path = '/api/catalog/entities?' + (apiOnly ? 'filter=kind=api&' : '') + 'limit=200';
+    const res = await this.http.request(path);
     if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`);
-    return res.json();
+    const envelope = await res.json() as CatalogEnvelope;
+    if (envelope?.schemaVersion !== '1.0' || envelope.authority !== 'OpenSphereRegistry'
+      || envelope.freshness !== 'fresh' || !Array.isArray(envelope.data?.items)
+      || envelope.data.returned !== envelope.data.items.length) {
+      throw new Error('catalog: invalid authority projection');
+    }
+    return envelope.data;
+  }
+
+  async catalogEntities(): Promise<CatalogEntity[]> {
+    return (await this.catalogProjection()).items;
   }
 
   /** kind=API만 — RHDH 'APIs'(API Explorer) 메뉴의 셸판 데이터 */
   async apiEntities(): Promise<CatalogEntity[]> {
-    const res = await this.http.request('/api/catalog/entities?filter=kind=api&limit=200');
-    if (!res.ok) throw new Error(`apis: HTTP ${res.status}`);
-    return res.json();
+    return (await this.catalogProjection(true)).items;
   }
 
   /** 엔티티의 살아있는 K8s 리소스 — rhdh-self kubernetes backend 플러그인 소비

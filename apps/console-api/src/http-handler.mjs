@@ -74,6 +74,7 @@ function errorEnvelope(error, correlationId) {
     CsrfRejected: 'PermissionDenied',
     StaleAuthorityRevision: 'StaleRevision',
     StaleOperationVersion: 'StaleRevision',
+    AuthorityContractViolation: 'DependencyFailed',
     ReasonRequired: 'ValidationFailed',
     SelfApprovalDenied: 'PermissionDenied',
   }[internalCode] || internalCode;

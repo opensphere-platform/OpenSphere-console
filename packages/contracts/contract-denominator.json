@@ -8,6 +8,7 @@
   "requirements": [
     "CON-FR-001",
     "CON-FR-002",
+    "CON-FR-006",
     "CON-FR-007",
     "CON-FR-008",
     "CON-FR-009",
@@ -48,6 +49,7 @@
     "getMe",
     "getSupabaseStatus",
     "listAuditEvents",
+    "listCatalogEntities",
     "getPlatformChangeTemplate",
     "getPlatformReleaseStatus",
     "generatePlatformReleaseComponentTarget",
@@ -119,6 +121,7 @@
     "managed-identity-role-change-response.schema.json",
     "session-event-response.schema.json",
     "current-session-response.schema.json",
+    "catalog-entities-response.schema.json",
     "error-envelope.schema.json",
     "operation-receipt.schema.json",
     "operation-request.schema.json",

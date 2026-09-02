@@ -127,6 +127,40 @@ function catalogText(value, label, maximum = 256) {
   return value;
 }
 
+function catalogCount(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 2000) {
+    throw fault('Registry catalog ' + label + ' is invalid', 'AuthorityContractViolation', 502);
+  }
+  return value;
+}
+
+function validateCatalogCoverage(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray(value.missing)
+      || value.missing.length > 2000) {
+    throw fault('Registry catalog coverage is invalid', 'AuthorityContractViolation', 502);
+  }
+  const expected = catalogCount(value.expected, 'expected coverage');
+  const published = catalogCount(value.published, 'published coverage');
+  const rejected = catalogCount(value.rejected, 'rejected coverage');
+  if (published > expected || value.missing.length !== expected - published
+      || rejected > value.missing.length) {
+    throw fault('Registry catalog coverage counts are inconsistent', 'AuthorityContractViolation', 502);
+  }
+  const classes = new Set(['coreService', 'extension', 'installableModule']);
+  const missing = value.missing.map((gap) => {
+    if (!gap || typeof gap !== 'object' || Array.isArray(gap) || !classes.has(gap.class)) {
+      throw fault('Registry catalog coverage gap is invalid', 'AuthorityContractViolation', 502);
+    }
+    return Object.freeze({
+      id: catalogText(gap.id, 'coverage gap id'),
+      class: gap.class,
+      code: catalogText(gap.code, 'coverage gap code', 128),
+      message: catalogText(gap.message, 'coverage gap message', 500),
+    });
+  });
+  return Object.freeze({ expected, published, rejected, missing: Object.freeze(missing) });
+}
+
 function validateCatalogSnapshot(document) {
   if (!document || typeof document !== 'object' || Array.isArray(document)
     || document.schema !== CATALOG_SCHEMA || !CATALOG_REVISION.test(String(document.revision || ''))
@@ -134,6 +168,11 @@ function validateCatalogSnapshot(document) {
     || !Array.isArray(document.inventory.descriptors) || document.inventory.descriptors.length > 2000) {
     throw fault('Registry returned an invalid or stale catalog snapshot', 'AuthorityContractViolation', 502);
   }
+  const observedAt = String(document.observedAt || '');
+  if (observedAt.length > 64 || !Number.isFinite(Date.parse(observedAt))) {
+    throw fault('Registry catalog observation time is invalid', 'AuthorityContractViolation', 502);
+  }
+  const coverage = validateCatalogCoverage(document.inventory.coverage);
   const descriptors = document.inventory.descriptors.map((descriptor) => {
     if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)
       || !descriptor.owner || typeof descriptor.owner !== 'object' || Array.isArray(descriptor.owner)
@@ -158,6 +197,8 @@ function validateCatalogSnapshot(document) {
   return Object.freeze({
     schema: CATALOG_SCHEMA,
     revision: document.revision,
+    observedAt: new Date(observedAt).toISOString(),
+    coverage,
     descriptors: Object.freeze(descriptors),
   });
 }

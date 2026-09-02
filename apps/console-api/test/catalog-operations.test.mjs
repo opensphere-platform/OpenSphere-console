@@ -22,7 +22,12 @@ function fixture() {
     registryResolver: {
       async readCatalogSnapshot(input) {
         reads.push(input);
-        return { schema: 'opensphere.registry-catalog/v1', revision, descriptors };
+        return {
+          schema: 'opensphere.registry-catalog/v1', revision,
+          observedAt: '2026-09-02T00:00:00.000Z',
+          coverage: { expected: 3, published: 2, rejected: 1, missing: [{ id: 'foundation.missing', class: 'installableModule', code: 'DigestMissing', message: 'exact digest is missing' }] },
+          descriptors,
+        };
       },
     },
   });
@@ -32,14 +37,18 @@ function fixture() {
 test('Catalog projection maps Registry descriptors without Kubernetes authority', async () => {
   const { operations, reads } = fixture();
   const all = await operations.listEntities({ limit: '200', correlationId: 'catalog-correlation-0001' });
-  assert.deepEqual(all.map(({ kind, metadata }) => `${kind}:${metadata.name}`), [
+  assert.equal(all.authority, 'OpenSphereRegistry');
+  assert.equal(all.freshness, 'fresh');
+  assert.equal(all.data.revision, revision);
+  assert.equal(all.data.coverage.missing[0].code, 'DigestMissing');
+  assert.deepEqual(all.data.items.map(({ kind, metadata }) => `${kind}:${metadata.name}`), [
     'API:cbss.opensphere-console', 'Component:cbss.opensphere-console', 'Component:module.postgresql',
   ]);
-  assert.equal(all[0].spec.definition, '/api/health');
+  assert.equal(all.data.items[0].spec.definition, '/api/health');
   assert.deepEqual(reads, [{ correlationId: 'catalog-correlation-0001' }]);
 
-  const apis = await operations.listEntities({ filter: 'kind=api', limit: '1' });
-  assert.deepEqual(apis.map(({ kind }) => kind), ['API']);
+  const apis = await operations.listEntities({ filter: 'kind=api', limit: '1', correlationId: 'catalog-correlation-0002' });
+  assert.deepEqual(apis.data.items.map(({ kind }) => kind), ['API']);
   await assert.rejects(operations.listEntities({ filter: 'kind=component' }), { code: 'ValidationFailed', status: 400 });
   await assert.rejects(operations.listEntities({ limit: '201' }), { code: 'ValidationFailed', status: 400 });
 });
@@ -69,7 +78,10 @@ test('HTTP Catalog and Runtime Resources routes use the target session authority
     headers: { 'x-os-correlation-id': 'catalog-correlation-0002' },
   });
   assert.equal(catalog.status, 200);
-  assert.deepEqual((await catalog.json()).map(({ kind }) => kind), ['API']);
+  const catalogBody = await catalog.json();
+  assert.deepEqual(catalogBody.data.items.map(({ kind }) => kind), ['API']);
+  assert.equal(catalogBody.data.revision, revision);
+  assert.equal(catalogBody.authority, 'OpenSphereRegistry');
 
   const runtime = await fetch(base + '/api/kubernetes/services/cbss.opensphere-console', {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-os-correlation-id': 'runtime-correlation-0001' },

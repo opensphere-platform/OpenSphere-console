@@ -63,11 +63,26 @@ export function createCatalogOperations({ registryResolver }) {
       const snapshot = await registryResolver.readCatalogSnapshot({ correlationId });
       const apis = snapshot.descriptors.filter((descriptor) => descriptor.owner.lifecycleApi)
         .map((descriptor) => apiEntity(descriptor, snapshot.revision));
-      const entities = selected === 'api'
+      const entities = (selected === 'api'
         ? apis
-        : [...snapshot.descriptors.map((descriptor) => componentEntity(descriptor, snapshot.revision)), ...apis];
-      return entities.sort((left, right) => left.metadata.name.localeCompare(right.metadata.name)
-        || left.kind.localeCompare(right.kind)).slice(0, bounded);
+        : [...snapshot.descriptors.map((descriptor) => componentEntity(descriptor, snapshot.revision)), ...apis])
+        .sort((left, right) => left.metadata.name.localeCompare(right.metadata.name)
+          || left.kind.localeCompare(right.kind)).slice(0, bounded);
+      return Object.freeze({
+        schemaVersion: '1.0',
+        data: Object.freeze({
+          revision: snapshot.revision,
+          filter: selected,
+          returned: entities.length,
+          coverage: snapshot.coverage,
+          items: Object.freeze(entities),
+        }),
+        authority: 'OpenSphereRegistry',
+        observedAt: snapshot.observedAt,
+        freshness: 'fresh',
+        correlationId,
+        evidenceRefs: Object.freeze(['registry-catalog:' + snapshot.revision]),
+      });
     },
 
     async runtimeResources({ entityName, body }) {

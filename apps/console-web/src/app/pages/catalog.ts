@@ -1,7 +1,7 @@
 import { Component, OnInit, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
-import { ApiService, CatalogEntity, RuntimeResource } from '../core/api.service';
+import { ApiService, CatalogCoverage, CatalogEntity, RuntimeResource } from '../core/api.service';
 import { OsDatagrid, OsColumn } from '../os/os-datagrid';
 import { OsPanel } from '../os/os-panel';
 import { BackendUnavailable } from '../os/backend-unavailable';
@@ -21,7 +21,7 @@ import { OsPageHeader } from '../os/os-page-header';
       <div><span>Components</span><strong>{{ countKind('Component') }}</strong><small>runtime evidence 대상</small></div>
       <div><span>Owners</span><strong>{{ uniqueSpec('owner') }}</strong><small>명시된 소유자</small></div>
       <div><span>Lifecycle</span><strong>{{ uniqueSpec('lifecycle') }}</strong><small>선언된 단계</small></div>
-      <div><span>Source</span><strong>Console-native</strong><small>Developer asset projection</small></div>
+      <div><span>Registry coverage</span><strong>{{ coverage()?.published ?? 0 }}/{{ coverage()?.expected ?? 0 }}</strong><small>{{ shortRevision() }} · fresh</small></div>
     </section>
 
     <div class="manage-toolbar">
@@ -197,6 +197,8 @@ export class Catalog implements OnInit {
   ];
 
   readonly rows = signal<CatalogEntity[]>([]);
+  readonly coverage = signal<CatalogCoverage | null>(null);
+  readonly catalogRevision = signal('');
   readonly query = signal('');
   readonly selected = signal<CatalogEntity | null>(null);
   readonly error = signal<string>('');
@@ -223,8 +225,14 @@ export class Catalog implements OnInit {
   async refresh(): Promise<void> {
     this.loading.set(true); this.error.set(''); this.forbidden.set(false);
     try {
-      this.rows.set(await this.api.catalogEntities());
+      const projection = await this.api.catalogProjection();
+      this.rows.set(projection.items);
+      this.coverage.set(projection.coverage);
+      this.catalogRevision.set(projection.revision);
     } catch (e) {
+      this.rows.set([]);
+      this.coverage.set(null);
+      this.catalogRevision.set('');
       const message = String(e);
       if (/HTTP (401|403)\b/.test(message)) this.forbidden.set(true);
       else this.error.set(message);
@@ -234,6 +242,7 @@ export class Catalog implements OnInit {
   }
 
   countKind(kind: string): number { return this.rows().filter((entity) => entity.kind === kind).length; }
+  shortRevision(): string { return this.catalogRevision() ? this.catalogRevision().slice(0, 15) : 'unavailable'; }
   uniqueSpec(key: string): number { return new Set(this.rows().map((entity) => this.specOf(entity, key)).filter((value) => value !== '—')).size; }
   inputValue(event: Event): string { return (event.target as HTMLInputElement).value; }
 

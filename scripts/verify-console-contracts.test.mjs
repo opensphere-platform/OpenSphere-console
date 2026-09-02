@@ -9,9 +9,9 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 61,
+    operations: 62,
     actionPolicies: 6,
-    schemas: 69,
+    schemas: 71,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 54,

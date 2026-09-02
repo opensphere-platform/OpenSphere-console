@@ -102,7 +102,9 @@ test('C_REG client reads a bounded, current descriptor projection for Console ca
   const requests = [];
   const document = {
     schema: 'opensphere.registry-catalog/v1', revision: catalogRevision, stale: false,
+    observedAt: '2026-09-02T00:00:00Z',
     inventory: {
+      coverage: { expected: 1, published: 1, rejected: 0, missing: [], byClass: {} },
       descriptors: [{
         id: 'cbss.opensphere-console', class: 'coreService', displayName: 'OpenSphere Console', domain: 'console',
         owner: { id: 'cbss.console', lifecycleApi: '/api/health' }, capabilities: ['main-shell', 'administration'],
@@ -119,6 +121,8 @@ test('C_REG client reads a bounded, current descriptor projection for Console ca
   const snapshot = await resolver.readCatalogSnapshot({ correlationId: 'catalog-read-0001' });
   assert.deepEqual(snapshot, {
     schema: 'opensphere.registry-catalog/v1', revision: catalogRevision,
+    observedAt: '2026-09-02T00:00:00.000Z',
+    coverage: { expected: 1, published: 1, rejected: 0, missing: [] },
     descriptors: [{
       id: 'cbss.opensphere-console', class: 'coreService', displayName: 'OpenSphere Console', domain: 'console',
       owner: { id: 'cbss.console', lifecycleApi: '/api/health' }, capabilities: ['main-shell', 'administration'],
@@ -134,6 +138,11 @@ test('C_REG catalog reader rejects stale, malformed, and oversized projections',
     { schema: 'opensphere.registry-catalog/v1', revision: catalogRevision, stale: true, inventory: { descriptors: [] } },
     { schema: 'wrong', revision: catalogRevision, stale: false, inventory: { descriptors: [] } },
     { schema: 'opensphere.registry-catalog/v1', revision: catalogRevision, stale: false, inventory: { descriptors: [{ id: 'x' }] } },
+    {
+      schema: 'opensphere.registry-catalog/v1', revision: catalogRevision, stale: false,
+      observedAt: '2026-09-02T00:00:00Z',
+      inventory: { coverage: { expected: 1, published: 0, rejected: 2, missing: [{ id: 'missing', class: 'coreService', code: 'Missing', message: 'missing' }] }, descriptors: [] },
+    },
   ]) {
     const resolver = createRegistryResolver({
       baseUrl: 'http://registry.test', fetchImpl: async () => new Response(JSON.stringify(document)),

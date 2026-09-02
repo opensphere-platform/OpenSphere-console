@@ -12,6 +12,7 @@ tags:
   - name: Identity
   - name: DataIdentity
   - name: Audit
+  - name: Catalog
   - name: Operations
   - name: Extensions
 paths:
@@ -1127,6 +1128,38 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
+  /api/catalog/entities:
+    get:
+      operationId: listCatalogEntities
+      tags: [Catalog]
+      x-opensphere-requirement: CON-FR-006
+      x-opensphere-authority: OpenSphereRegistry
+      responses:
+        "200":
+          description: Current revision-bound Developer Catalog projection
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/catalog-entities-response.schema.json"
+        "400":
+          $ref: "#/components/responses/PolicyRejected"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "502":
+          $ref: "#/components/responses/DependencyFailed"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
+        "504":
+          $ref: "#/components/responses/DependencyTimeout"
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema: { type: string, enum: [kind=api] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
   /api/platform/change-templates/{templateId}:
     parameters:
       - name: templateId
@@ -1737,6 +1770,16 @@ components:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     AuthorityUnavailable:
       description: The named source authority is unavailable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    DependencyFailed:
+      description: A named upstream authority returned an invalid or rejected response
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    DependencyTimeout:
+      description: A named upstream authority did not answer within its bounded timeout
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
