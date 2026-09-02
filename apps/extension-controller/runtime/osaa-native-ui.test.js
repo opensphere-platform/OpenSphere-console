@@ -10,7 +10,7 @@ const path = require('node:path');
 // API key material, renders answer/source/concept text safely (no innerHTML), and never offers a
 // direct UI path to execute Kubernetes mutations (suggested actions are proposals only).
 
-const root = path.resolve(__dirname, '..', '..');
+const root = path.resolve(__dirname, '..', '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('os-osaa-agent.ts exists as a native shell component (not a routed page)', () => {
@@ -140,7 +140,7 @@ test('os-osaa-agent.ts does not render or hydrate automatic suggested actions', 
 
 test('os-osaa-agent is absent from Extension Host / DUPA plugin nav registration paths', () => {
   const extensionHost = read('apps', 'console-web', 'src', 'app', 'core', 'extension-host.service.ts');
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
 
   assert.doesNotMatch(extensionHost, /os-osaa-agent/i);
   assert.doesNotMatch(controller, /os-osaa-agent/i);

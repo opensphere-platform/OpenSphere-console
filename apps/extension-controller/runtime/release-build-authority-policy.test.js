@@ -6,6 +6,9 @@ const test = require('node:test');
 const policy = JSON.parse(fs.readFileSync(path.join(
   __dirname,
   '..',
+  '..',
+  '..',
+  'backend',
   'release',
   'policies',
   'build-authority-policy.json',
@@ -78,12 +81,12 @@ test('policy records all admission metadata required by the controller', () => {
 });
 
 test('local edge tag promotion preserves the exact single-platform manifest digest', () => {
-  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
   assert.match(publisher, /imagetools create --prefer-index=false --tag \$target/);
 });
 
 test('local edge retries reuse verified immutable source tags before any build can overwrite them', () => {
-  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
   const readLocal = publisher.indexOf('$existingLocalDigest = Get-RemoteDigest -Reference $localReference');
   const validateLocal = publisher.indexOf('Assert-LocalEdgeImageMetadata -Repository $repository -Digest $existingLocalDigest');
   const rejectLineage = publisher.indexOf('Immutable tag lineage mismatch:');
@@ -97,7 +100,7 @@ test('local edge retries reuse verified immutable source tags before any build c
 });
 
 test('local edge promotion has one fail-closed OCI metadata preflight before any channel movement', () => {
-  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
   const preflight = publisher.indexOf('Assert-LocalEdgeImageMetadata -Repository $repository');
   const immutable = publisher.indexOf('Write-Host "[step 05/06] Publish immutable date tag');
   assert.ok(preflight > 0 && immutable > preflight);
@@ -113,6 +116,7 @@ test('local edge promotion has one fail-closed OCI metadata preflight before any
 test('published notification dispatcher uses an exact base-image digest', () => {
   const dockerfile = fs.readFileSync(path.join(
     __dirname,
+    '..',
     '..',
     '..',
     'apps',

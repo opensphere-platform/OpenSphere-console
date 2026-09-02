@@ -157,7 +157,7 @@ backend/cli-download 디렉터리 삭제됨, clidownload-os.yaml 부재(테스�
 
 - Backbone 3기둥 Ready·PVC Bound이나, storage class RWO(local-path 계열)로 **노드 소실 HA 없음**, 오프노드 백업 반출·restore 훈련 미재검증(요청서 자인). — 전체 Console 운영 승인 시 별도 증거 필요.
 - Angular initial bundle 4.22MB(3MB budget 초과), `admin-plugins` style 4KB+597B 초과 — 성능 부채(빌드 실패 아님).
-- **F-7(증거 불일치)**: 감사요청서 §4는 "Node test 53/53 fail 0"을 제시하나, 현재 트리에서 `node --test backend/dupa-control/`를 실행하면 `osaa-gateway-tier.test.js`가 **실패**한다(누락 파일 `src/app/os/os-osaa-agent.ts` 참조). CLI 관련 스위트(`main-shell-base` 7/7, `security` 12/12)는 전부 통과하므로 **CLI 통합 자체는 무결**하나, "fail 0" 증거 라인은 전체 디렉터리 기준으로는 현재 성립하지 않는다(무관 OSAA 기능의 미완결).
+- **F-7(증거 불일치)**: 감사요청서 §4는 "Node test 53/53 fail 0"을 제시하나, 현재 트리에서 `node --test apps/extension-controller/runtime/`를 실행하면 `osaa-gateway-tier.test.js`가 **실패**한다(누락 파일 `src/app/os/os-osaa-agent.ts` 참조). CLI 관련 스위트(`main-shell-base` 7/7, `security` 12/12)는 전부 통과하므로 **CLI 통합 자체는 무결**하나, "fail 0" 증거 라인은 전체 디렉터리 기준으로는 현재 성립하지 않는다(무관 OSAA 기능의 미완결).
 
 ---
 
@@ -213,6 +213,6 @@ kubectl get clidownloads -A                               # No resources found
 
 # 테스트
 docker run --rm -v "$PWD:/src" -w /src golang@sha256:523c3e… go test ./...   # ok (os-cli)
-node --test backend/dupa-control/main-shell-base.test.js   # 7/7
-node --test backend/dupa-control/security.test.js          # 12/12
+node --test apps/extension-controller/runtime/main-shell-base.test.js   # 7/7
+node --test apps/extension-controller/runtime/security.test.js          # 12/12
 ```

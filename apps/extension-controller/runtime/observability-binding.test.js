@@ -31,7 +31,7 @@ test('Console controller has no ServiceMonitor writer or direct Prometheus targe
 });
 
 test('active Console sources do not retain CBS telemetry installers or namespace dependencies', () => {
-  const platformRoot = path.resolve(__dirname, '..', '..');
+  const platformRoot = path.resolve(__dirname, '..', '..', '..');
   const activeRoots = ['deploy', 'backend', 'apps/console-web', '.github'];
   const legacy = /opensphere-backbone|opensphere-cbs|BACKBONE_NS|backbone-rustfs|backbone-postgres|kind:\s*ServiceMonitor/i;
   const ignoredSegments = new Set(['archive', 'manual-seeds', 'node_modules', 'dist', '.git']);

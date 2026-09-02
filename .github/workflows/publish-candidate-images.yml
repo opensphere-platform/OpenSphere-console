@@ -32,7 +32,7 @@ jobs:
         working-directory: OpenSphere-console
         run: npm ci --no-audit --no-fund --legacy-peer-deps
       - name: Install controller test dependencies
-        working-directory: OpenSphere-console/backend/dupa-control
+        working-directory: OpenSphere-console/apps/extension-controller/runtime
         run: npm ci --no-audit --no-fund
       - name: Install OS Shell Control test dependencies
         working-directory: OpenSphere-console/apps/os-shell-control
@@ -126,8 +126,8 @@ jobs:
             context: OpenSphere-console
             file: OpenSphere-console/apps/os-shell-control/Dockerfile.runtime
           - image: opensphere-console-dupa-controller
-            context: OpenSphere-console/backend/dupa-control
-            file: OpenSphere-console/backend/dupa-control/Dockerfile
+            context: OpenSphere-console/apps/extension-controller/runtime
+            file: OpenSphere-console/apps/extension-controller/runtime/Dockerfile
           - image: opensphere-registry
             context: OpenSphere-console/backend/registry
             file: OpenSphere-console/backend/registry/deploy/Dockerfile

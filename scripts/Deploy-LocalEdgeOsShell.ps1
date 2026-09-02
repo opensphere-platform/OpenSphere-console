@@ -1153,7 +1153,7 @@ $deploymentToolingAllowlist = @(
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
   'scripts/backend-bridge-publisher.test.mjs',
-  'backend/dupa-control/release-channel-workflow.test.js',
+  'apps/extension-controller/runtime/release-channel-workflow.test.js',
   'apps/os-shell-control/deploy.yaml',
   'apps/os-shell-control/deploy.test.js',
   'apps/console-api/runtime/platform-release.test.js'

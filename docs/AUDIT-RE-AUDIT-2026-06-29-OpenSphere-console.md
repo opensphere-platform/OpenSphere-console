@@ -20,9 +20,9 @@
 
 현재 controller는 `/api/admin/*`에 인증을 적용하지만, `/api/admin/events`만 예외 처리한다.
 
-- `backend/dupa-control/controller.js:398`  
+- `apps/extension-controller/runtime/controller.js:398`  
   `if (p.startsWith('/api/admin/') && p !== '/api/admin/events')`
-- `backend/dupa-control/controller.js:445`  
+- `apps/extension-controller/runtime/controller.js:445`  
   `if (p === '/api/admin/events' && req.method === 'POST')`
 - `nginx/default.conf.template:44`  
   `/api/admin/` 전체가 외부 console origin에서 controller로 프록시된다.
@@ -55,16 +55,16 @@ curl -i -X POST http://localhost:18090/api/admin/events \
 
 답변서는 `/api/plugins/{id}`가 "registry plugin명 + CLIDownload 바인딩 서비스 id"로 제한된다고 설명한다. 그러나 현재 allowlist는 reconcile 초기에 모든 `UIPluginPackage` 이름으로 만들어진다.
 
-- `backend/dupa-control/controller.js:275`  
+- `apps/extension-controller/runtime/controller.js:275`  
   `const allow = new Set(Object.keys(pkgByName));`
-- `backend/dupa-control/controller.js:316-331`  
+- `apps/extension-controller/runtime/controller.js:316-331`  
   실제 검증 성공 후 `published.push(...)`가 수행된다.
-- `backend/dupa-control/controller.js:389-391`  
+- `apps/extension-controller/runtime/controller.js:389-391`  
   nginx `auth_request`는 `proxyAllow.has(id)`만 본다.
 
 즉 Failed/Disabled/미검증 package 이름도 proxy allowlist에 들어갈 수 있다. Disabled 처리도 workload를 삭제하지 않고 registry에서만 제외한다.
 
-- `backend/dupa-control/controller.js:303-306`
+- `apps/extension-controller/runtime/controller.js:303-306`
 
 영향:
 
@@ -98,8 +98,8 @@ curl -i -X POST http://localhost:18090/api/admin/events \
 
 dupa controller는 stdout JSONL과 ConfigMap hydrate를 추가했다. 재시작 생존성과 로컬 재감사에는 의미가 있다. 그러나 ConfigMap은 최근 500건 ring buffer를 overwrite하며, tamper-resistant append-only store는 아니다.
 
-- `backend/dupa-control/controller.js:93-112`
-- `backend/dupa-control/controller.js:108`  
+- `apps/extension-controller/runtime/controller.js:93-112`
+- `apps/extension-controller/runtime/controller.js:108`  
   `audit.slice().reverse()`를 다시 써서 ConfigMap 전체를 갱신한다.
 
 판정: **PoC 기준 부분 승인**, 제품 승격 기준 Closed 아님.
@@ -113,7 +113,7 @@ dupa controller는 stdout JSONL과 ConfigMap hydrate를 추가했다. 재시작 
 
 `alg`, `iss`, `azp/aud`, `exp`, `nbf`, signature 검증이 추가된 것은 유효한 개선이다. 다만 `exp`와 `nbf`는 존재할 때만 검사한다.
 
-- `backend/dupa-control/controller.js:62-63`
+- `apps/extension-controller/runtime/controller.js:62-63`
 - `backend/console-backend/server.js:117-118`
 
 Kanidm id_token은 정상적으로 `exp`를 포함하므로 즉시 exploit 가능성은 낮다. 그래도 최상위 Shell의 token verifier는 `exp` 부재를 거부하는 편이 맞다.

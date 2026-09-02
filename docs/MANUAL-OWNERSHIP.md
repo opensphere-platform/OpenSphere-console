@@ -14,7 +14,7 @@ OpenSphere Manual의 유일한 제품 소유자는 Main Shell인 `OpenSphere-con
 | 릴리스 seed 생성 | `apps/osaa-gateway/scripts/build-manual-seed.js` |
 | 검색·문서 API 소비 계약 | `apps/console-web/src/app/core/manual.service.ts` |
 | 내구 저장·검색 실행 | Console-owned OSAA Gateway와 Supabase `osaa` Manual Registry |
-| 회귀 방지 | `backend/dupa-control/manual-native.test.js` |
+| 회귀 방지 | `apps/extension-controller/runtime/manual-native.test.js` |
 
 OSAA Gateway가 별도 workload로 실행되는 것은 보안·서버 실행 격리를 위한 구현 경계다. Manual의 제품 소유권을 OSAA, Data & Identity authority 또는 별도 Extension으로 이전하지 않는다.
 

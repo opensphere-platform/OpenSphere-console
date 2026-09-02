@@ -112,7 +112,7 @@ if ($legacyGateway.Count -ne 1 -or $legacyAdapter.Count -ne 1) {
 
 $profile = @(
   [ordered]@{ Key='console'; BaseRevision=[string]$installedLock.components.console.sourceRevision; Image='opensphere-console'; Context='OpenSphere-console'; File='OpenSphere-console\apps\console-web\Dockerfile'; Sdk=$false },
-  [ordered]@{ Key='dupaController'; BaseRevision=[string]$installedLock.components.dupaController.sourceRevision; Image='opensphere-console-dupa-controller'; Context='OpenSphere-console\backend\dupa-control'; File='OpenSphere-console\backend\dupa-control\Dockerfile'; Sdk=$false },
+  [ordered]@{ Key='dupaController'; BaseRevision=[string]$installedLock.components.dupaController.sourceRevision; Image='opensphere-console-dupa-controller'; Context='OpenSphere-console\apps\extension-controller\runtime'; File='OpenSphere-console\apps\extension-controller\runtime\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='osaaGateway'; BaseRevision=[string]$legacyGateway[0].Value.sourceRevision; Image='opensphere-console-osaa-gateway'; Context='OpenSphere-console\apps\osaa-gateway'; File='OpenSphere-console\apps\osaa-gateway\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='osaaGovernedAdapter'; BaseRevision=[string]$legacyAdapter[0].Value.sourceRevision; Image='opensphere-osaa-governed-adapter'; Context='OpenSphere-console\backend\osaa-governed-adapter'; File='OpenSphere-console\backend\osaa-governed-adapter\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='recovery'; BaseRevision=[string]$installedLock.components.recovery.sourceRevision; Image='opensphere-console-recovery'; Context='OpenSphere-console\apps\recovery-owner'; File='OpenSphere-console\apps\recovery-owner\Dockerfile'; Sdk=$false },

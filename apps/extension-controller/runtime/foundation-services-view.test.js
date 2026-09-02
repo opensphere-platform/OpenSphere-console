@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.join(__dirname, '..', '..');
+const root = path.join(__dirname, '..', '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('Console foundation services keep role-oriented scope and CC compatibility routing', () => {

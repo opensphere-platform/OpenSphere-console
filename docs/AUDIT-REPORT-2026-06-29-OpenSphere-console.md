@@ -45,7 +45,7 @@
   - `headers()`가 `X-OpenSphere-User`를 클라이언트에서 생성
 - `nginx/default.conf.template`
   - `/api/admin/` location이 해당 헤더를 그대로 전달
-- `backend/dupa-control/controller.js`
+- `apps/extension-controller/runtime/controller.js`
   - `const actor = req.headers['x-opensphere-user'] || 'anonymous'`
   - `/api/admin/plugins/registrations/{id}/{action}`가 bearer token 검증 없이 상태 변경
 
@@ -136,7 +136,7 @@ nginx는 regex로 `{id}`를 추출한 뒤 `{id}.opensphere-system.svc.cluster.lo
 
 - `src/app/core/perspective.service.ts`
   - `decide(groups, roles)`가 client-side로 workspace 허용을 판단
-- `backend/dupa-control/controller.js`
+- `apps/extension-controller/runtime/controller.js`
   - admin action에 bearer token 검증 부재
 
 영향:
@@ -155,7 +155,7 @@ DUPA controller와 console-backend 모두 audit을 process memory 배열로 보�
 
 관련 코드:
 
-- `backend/dupa-control/controller.js`
+- `apps/extension-controller/runtime/controller.js`
   - `const audit = []`
 - `backend/console-backend/server.js`
   - `const audit = []`
@@ -198,7 +198,7 @@ DUPA controller와 console-backend 모두 audit을 process memory 배열로 보�
 
 관련 코드:
 
-- `backend/dupa-control/controller.js`
+- `apps/extension-controller/runtime/controller.js`
   - `/install|enable|disable|uninstall`
   - workload readiness와 manifest 검증은 있으나 rollback/upgrade version graph 부재
 

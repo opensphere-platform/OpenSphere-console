@@ -44,7 +44,7 @@ export const controlOverridePaths = Object.freeze([
 export const canonicalConsoleOrigin = 'https://github.com/opensphere-platform/OpenSphere-console.git';
 
 export const deploymentToolingPaths = Object.freeze([
-  'backend/dupa-control/release-channel-workflow.test.js',
+  'apps/extension-controller/runtime/release-channel-workflow.test.js',
   'apps/os-shell-control/deploy.test.js',
   'apps/os-shell-control/deploy.yaml',
   'scripts/Deploy-LocalEdgeOsShell.ps1',

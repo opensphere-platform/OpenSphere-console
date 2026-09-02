@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.join(__dirname, '..', '..');
+const root = path.join(__dirname, '..', '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('Console management exposes Supabase, Gitea and HISS as distinct authorities', () => {
@@ -92,7 +92,7 @@ test('Console administrator actions keep failures visible in the action dialog',
 });
 
 test('Platform Control presents support readiness, operations, evidence and journey as correlated task views', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
   const control = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-control.ts');
   const readiness = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-readiness.ts');
@@ -128,9 +128,9 @@ test('Platform Control presents support readiness, operations, evidence and jour
 });
 
 test('DUPA active runtime depends on Supabase audit and never ships legacy data modules', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
-  const dockerfile = read('backend', 'dupa-control', 'Dockerfile');
-  const deployment = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
+  const dockerfile = read('apps', 'extension-controller', 'runtime', 'Dockerfile');
+  const deployment = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
   assert.match(controller, /Supabase audit\.event is the durable authority/);
   assert.match(controller, /function supabaseRequest/);
   assert.match(controller, /rpc\/revoke_image/);
@@ -163,7 +163,7 @@ test('Supabase revocation ledger is append-only and correlated with audit eviden
 });
 
 test('recovery readiness consumes current Supabase and Gitea evidence, never a legacy data stack', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   const recovery = read('apps', 'recovery-owner', 'opensphere-platform-recovery-evidence.yaml');
   const start = controller.indexOf('async function backupRestoreEvidence()');
   const end = controller.indexOf('async function securityPolicyEvidence()');

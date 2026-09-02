@@ -7,7 +7,7 @@ const path = require('node:path');
 // The obsolete backend/manual-subShell package (UIPluginPackage/Registration + subShell image/workload)
 // is fully retired — this file locks down the replacement contract so it cannot silently regress.
 
-const root = path.resolve(__dirname, '..', '..');
+const root = path.resolve(__dirname, '..', '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('app.routes.ts imports ManualPage and defines an authenticated native /manual route', () => {
@@ -160,9 +160,9 @@ test('the retired backend/manual-subShell package is fully absent', () => {
 });
 
 test('no Manual-specific UIPluginPackage/Registration, subShell image, or workload manifest remains in Console', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
-  const controllerDeploy = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
-  const crds = read('backend', 'dupa-control', 'ui-plugin-crds.yaml');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
+  const controllerDeploy = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
+  const crds = read('apps', 'extension-controller', 'runtime', 'ui-plugin-crds.yaml');
   const dockerfile = read('apps', 'console-web', 'Dockerfile');
 
   // ui-plugin-crds.yaml only declares the generic CRD schema (UIPluginPackage/UIPluginRegistration

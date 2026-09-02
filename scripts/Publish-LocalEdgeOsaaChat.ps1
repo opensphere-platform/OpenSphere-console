@@ -163,7 +163,7 @@ try {
     (Join-Path $checkout 'apps\osaa-gateway\r2d2-source-grounding.test.js') `
     (Join-Path $checkout 'apps\osaa-gateway\r2d2-surface-diagnostics.test.js') `
     (Join-Path $checkout 'apps\osaa-gateway\conversation-store.test.js') `
-    (Join-Path $checkout 'backend\dupa-control\osaa-native-ui.test.js') `
+    (Join-Path $checkout 'apps\extension-controller\runtime\osaa-native-ui.test.js') `
     (Join-Path $checkout 'scripts\osaa-chat-publisher.test.mjs') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {

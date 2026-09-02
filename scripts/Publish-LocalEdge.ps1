@@ -302,7 +302,7 @@ $allImages = @(
   [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile') },
   [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile.runtime') },
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'); SetupContext = $setupCheckout },
-  [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
+  [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'apps\extension-controller\runtime'); File = (Join-Path $consoleCheckout 'apps\extension-controller\runtime\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'apps\osaa-gateway'); File = (Join-Path $consoleCheckout 'apps\osaa-gateway\Dockerfile') },
   [ordered]@{ Key = 'osdst'; Image = 'opensphere-osdst'; Context = (Join-Path $consoleCheckout 'apps\osdst'); File = (Join-Path $consoleCheckout 'apps\osdst\Dockerfile') },

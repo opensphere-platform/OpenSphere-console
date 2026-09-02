@@ -22,7 +22,7 @@
 ### ✅ 재감사 P1-1 — `/api/admin/events` 무인증 쓰기 (CLOSED)
 
 **조치**: events 발행에 서비스 토큰을 강제(fail-closed). 사용자 토큰이 없는 subShell server-to-server 발행구이므로 사용자 Bearer가 아니라 공유 서비스 토큰으로 보호.
-- `backend/dupa-control/controller.js` — events 핸들러 진입 시 `X-Shell-Token == SHELL_SERVICE_TOKEN` 검사, 불일치/미설정 시 `401`.
+- `apps/extension-controller/runtime/controller.js` — events 핸들러 진입 시 `X-Shell-Token == SHELL_SERVICE_TOKEN` 검사, 불일치/미설정 시 `401`.
 - `SHELL_SERVICE_TOKEN`은 env(Secret `dupa-events-token`)에서 로드. 미설정이면 events 발행 전면 차단(fail-closed).
 
 **재현**:
@@ -41,7 +41,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST https://console.opensphere.dev/
 ### ✅ 재감사 P1-2 — plugin proxy allowlist 범위 (CLOSED)
 
 **조치**: allowlist를 "모든 UIPluginPackage 이름"에서 **"검증 성공 + 활성(published)" plugin id + enabled CLIDownload 서비스 id**로 축소.
-- `backend/dupa-control/controller.js` — `proxyAllow`를 reconcile 루프 **이후** `published`(Enabled + Ready + manifest/signature/entry 검증 성공) 기준으로 계산. enabled가 아닌 CLIDownload는 제외.
+- `apps/extension-controller/runtime/controller.js` — `proxyAllow`를 reconcile 루프 **이후** `published`(Enabled + Ready + manifest/signature/entry 검증 성공) 기준으로 계산. enabled가 아닌 CLIDownload는 제외.
 - 결과: Failed/Disabled/미검증 package id는 allowlist에서 자동 제외 → `auth_request`에서 `403`.
 
 **재현**:
@@ -56,7 +56,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://console.opensphere.dev/api/plug
 ### ✅ 재감사 P2-2 — JWT 필수 claim 방어 (CLOSED)
 
 **조치**: `exp`·`sub`·`iat` 부재를 거부(이전: `exp`는 존재할 때만 검사).
-- `backend/dupa-control/controller.js` `assertClaims` + `backend/console-backend/server.js` `verifyAuthed`: `missing exp/sub/iat` → `401`.
+- `apps/extension-controller/runtime/controller.js` `assertClaims` + `backend/console-backend/server.js` `verifyAuthed`: `missing exp/sub/iat` → `401`.
 - 보안 회귀 테스트 3건 추가(`security.test.js`): missing exp/sub/iat 거부. **npm test 18/18**.
 
 **재현**:
@@ -126,9 +126,9 @@ cd OpenSphere-console && npm test    # 18/18
 
 ## 부록 A. 변경 (커밋 30e09e1)
 ```
-backend/dupa-control/controller.js     # allowlist=published, events service-token, JWT 필수 claim
+apps/extension-controller/runtime/controller.js     # allowlist=published, events service-token, JWT 필수 claim
 backend/console-backend/server.js      # JWT 필수 claim(exp/sub/iat)
-backend/dupa-control/security.test.js  # missing-claim 회귀 테스트 3건 (총 18)
+apps/extension-controller/runtime/security.test.js  # missing-claim 회귀 테스트 3건 (총 18)
 src/app/core/auth.service.ts           # (도메인 전환) authority→auth.console.opensphere.dev
 ```
 배포: dupa `:sec5`, console-backend `:sec3`, Secret `dupa-events-token`(SHELL_SERVICE_TOKEN env).

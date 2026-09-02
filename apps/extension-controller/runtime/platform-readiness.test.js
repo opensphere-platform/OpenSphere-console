@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { condition, deploymentRolloutConverged, deploymentReadyResult, normalizeHisStatus, foundationDevOverrideEnabled, requiresDomainAdmission, crossplaneProviderProjection, verifiedActivatedRegistration, verifiedStagedUpdate, authorizationOperationId, foundationUpgradeAuthorization, verifiedFoundationStagedUpdate, verifiedFoundationUpdateAuthorization, admissionRedTestDenied, platformVerificationProjection, platformVerificationComparable, platformSupportAdmission, argocdApplicationEvidence, persistEventBeforeSeen, settledProbeProjection, platformLifecycleGateProjection, platformLifecycleGateCachedProjection } = require('./controller');
 
-const root = path.resolve(__dirname, '../..');
+const root = path.resolve(__dirname, '../../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 test('live condition never infers Ready from a label alone', () => {
@@ -44,7 +44,7 @@ test('OSAA consumes a narrow lifecycle gate instead of rebuilding full platform 
   );
   assert.equal(blocked.ready, false);
   assert.equal(blocked.reason, 'his_preflight_not_ready');
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   const gateway = read('apps', 'osaa-gateway', 'server.js');
   assert.match(controller, /\/api\/admin\/platform-readiness\/lifecycle/);
   assert.match(gateway, /DUPA_CONTROL_URL\}\/api\/admin\/platform-readiness\/lifecycle/);
@@ -124,7 +124,7 @@ test('HISS status is fail-closed on an unavailable or degraded Cluster Manager r
 });
 
 test('Foundation management shell stays accessible while PFS services remain evidence-gated', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-readiness.ts');
   const extensions = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
   const client = read('apps', 'console-web', 'src', 'app', 'core', 'plugin-control-client.service.ts');
@@ -160,7 +160,7 @@ test('Foundation management shell stays accessible while PFS services remain evi
 });
 
 test('a PFS plugin stages unconditionally and only its activation waits for the Support Profile', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
 
   // The admission contract carries the split explicitly, so a client can tell
   // "may I install?" from "may I turn it on?" instead of inferring it.
@@ -201,7 +201,7 @@ test('recovery drill evidence is advisory for service activation but remains vis
   assert.equal(admission.ready, true);
   assert.equal(admission.advisoryReady, false);
   assert.deepEqual(admission.advisory.map((item) => item.type), ['BackupRestore']);
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   assert.match(controller, /backupRestore:\s*\{ required: false \}/);
   assert.match(controller, /advisoryCapabilities:/);
 });
@@ -229,7 +229,7 @@ test('Foundation development override is explicit and production fail-closed', (
   assert.equal(foundationDevOverrideEnabled({ OPENSPHERE_RUNTIME_MODE: 'production', FOUNDATION_ACTIVATION_DEV_OVERRIDE: 'true' }), false);
   assert.equal(foundationDevOverrideEnabled({ OPENSPHERE_RUNTIME_MODE: 'development', FOUNDATION_ACTIVATION_DEV_OVERRIDE: 'false' }), false);
   assert.equal(foundationDevOverrideEnabled({ OPENSPHERE_RUNTIME_MODE: 'development', FOUNDATION_ACTIVATION_DEV_OVERRIDE: 'true' }), true);
-  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const manifest = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
   assert.match(manifest, /OPENSPHERE_RUNTIME_MODE, value: production/);
   assert.match(manifest, /FOUNDATION_ACTIVATION_DEV_OVERRIDE, value: "false"/);
 });
@@ -368,8 +368,8 @@ test('Foundation update evidence is exact-transition and expires without bypassi
     ...activeReg, spec: { desiredState: 'Installed' }, status: { ...activeReg.status, phase: 'Ready' },
   }, targetPkg, { username: 'cmars' }, `os-${'e'.repeat(24)}`), null);
 
-  const controller = read('backend', 'dupa-control', 'controller.js');
-  const crd = read('backend', 'dupa-control', 'ui-plugin-crds.yaml');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
+  const crd = read('apps', 'extension-controller', 'runtime', 'ui-plugin-crds.yaml');
   assert.match(controller, /setFoundationUpgradeAuthorization\(foundationAuthorization\)/);
   assert.doesNotMatch(controller, /foundationVerifiedUpdate/);
   assert.doesNotMatch(controller, /!activationAllowed && !currentReleaseAlreadyActivated && !foundationUpdate/);
@@ -387,7 +387,7 @@ test('known L6 domain subShells are fail-closed behind live PFS admission', () =
   assert.equal(requiresDomainAdmission({ metadata: { name: 'cluster-manager' }, spec: { kind: 'subShell', hostRef: 'main' } }), false);
   assert.equal(requiresDomainAdmission({ metadata: { name: 'developer' }, spec: { kind: 'plugin', hostRef: 'main' } }), false);
 
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   assert.match(controller, /domainActivationAllowed:\s*domainAdmissionReady/);
   assert.match(controller, /else if \(requiresDomainAdmission\(pkg\)\)/);
   assert.match(controller, /else if \(targetPkg\.ok && requiresDomainAdmission\(targetPkg\.json\)\)/);
@@ -396,7 +396,7 @@ test('known L6 domain subShells are fail-closed behind live PFS admission', () =
 });
 
 test('recovery evidence has a bounded freshness gate', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   assert.match(controller, /RECOVERY_EVIDENCE_MAX_AGE_MS/);
   assert.match(controller, /value\.maxEvidenceAgeSeconds/);
   assert.match(controller, /const ready = evidenceFresh && archiveVerified && restored/);
@@ -425,8 +425,8 @@ test('selected Crossplane adapter is part of live Delivery readiness', () => {
     deployment, provider: { ...provider, json: { status: { conditions: [{ type: 'Installed', status: 'True' }] } } }, providerConfig,
   }).ready, false);
 
-  const controller = read('backend', 'dupa-control', 'controller.js');
-  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
+  const manifest = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
   assert.match(controller, /app\.ready && crossplane\.ready/);
   assert.match(manifest, /name: opensphere-crossplane-evidence-reader/);
   assert.match(manifest, /resourceNames: \[crossplane-contrib-provider-helm\]/);
@@ -434,7 +434,7 @@ test('selected Crossplane adapter is part of live Delivery readiness', () => {
 });
 
 test('bootstrap owns the PlatformSupportProfile CRD lifecycle', () => {
-  const crd = read('backend', 'dupa-control', 'platform-support-profile-crd.yaml');
+  const crd = read('apps', 'extension-controller', 'runtime', 'platform-support-profile-crd.yaml');
   const setupContract = JSON.parse(read('packages', 'contracts', 'consumers', 'setup-cli-platform-support-profile.json'));
   assert.match(crd, /kind: PlatformSupportProfile/);
   assert.match(crd, /subresources:\s*\n\s*status:/);
@@ -453,8 +453,8 @@ test('SecurityPolicy readiness requires a real server dry-run denial from the ca
   assert.equal(admissionRedTestDenied({ ok: false, status: 422, json: { message: 'another policy denied the request' } }), false);
   assert.equal(admissionRedTestDenied({ ok: true, status: 200, json: {} }), false);
 
-  const controller = read('backend', 'dupa-control', 'controller.js');
-  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
+  const manifest = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
   assert.match(controller, /dryRun=All&fieldManager=opensphere-security-red-test/);
   assert.match(controller, /mode: 'KubernetesServerDryRun'/);
   assert.match(controller, /evidenceDigest/);
@@ -498,19 +498,19 @@ test('PlatformSupportProfile status is a controller-owned projection that change
   assert.equal(projected.conditions[0].lastTransitionTime, '2026-07-22T00:00:00.000Z');
   assert.equal(platformVerificationComparable(null), platformVerificationComparable({}));
   assert.equal(platformVerificationComparable(prior), platformVerificationComparable(projected));
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   assert.match(controller, /reconcilePlatformVerification\(\)/);
   assert.match(controller, /Promise\.all\(\[reconcile\(\), pollK8sEvents\(\), reconcilePlatformVerification\(\)\]\)/);
 });
 
 test('PlatformSupportProfile approval persists an actor label, not the authenticated actor object', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   assert.match(controller, /approval:\s*\{\s*requestedBy:\s*auditActorLabel\(actor\),\s*reason,/);
   assert.doesNotMatch(controller, /approval:\s*\{\s*requestedBy:\s*actor,\s*reason,/);
 });
 
 test('Delivery evidence reader is namespace-scoped and read-only', () => {
-  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const manifest = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
   assert.match(manifest, /name: dupa-platform-delivery-evidence-reader\s+namespace: argocd/);
   assert.match(manifest, /resources: \[applications, appprojects\]/);
   assert.match(manifest, /resourceNames: \[opensphere-platform-delivery-verify, opensphere-platform-delivery\]\s+verbs: \[get\]/);
@@ -521,7 +521,7 @@ test('Delivery evidence reader is namespace-scoped and read-only', () => {
 });
 
 test('fresh install creates optional platform namespaces before their evidence RBAC', () => {
-  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const manifest = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
   const documents = manifest.split(/^---\s*$/mu).map((document) => document.trim()).filter(Boolean);
   const namespaceDocumentIndex = (name) => documents.findIndex((document) => (
     /kind:\s*Namespace/.test(document)
@@ -542,7 +542,7 @@ test('fresh install creates optional platform namespaces before their evidence R
 });
 
 test('Platform readiness consumes the named HISS preflight probe instead of rebranding Observability evidence', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   assert.match(controller, /hisPreflight:\s*his, observability/);
   assert.doesNotMatch(controller, /const his = \{\s*ready: observability\.stackReady/);
   assert.match(controller, /his\.core\.ready\}\/\$\{his\.core\.total/);

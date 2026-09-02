@@ -111,7 +111,7 @@ test('reconcile verifies the immutable revision before Registry convergence and 
 });
 
 test('edge publisher supports an exact affected-component subset and stays separate from the integrated publisher', () => {
-  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
   assert.match(publisher, /\[ValidateSet\('console', 'dupaController', 'registry', 'backend', 'osaaGateway', 'cliArtifacts'\)\]/);
   assert.match(publisher, /cliArtifacts = "\$Registry\/opensphere-os-cli"/);
   assert.match(publisher, /\$componentNames = @\(\$Components \| Sort-Object -Unique\)/);
@@ -129,7 +129,7 @@ test('edge publisher supports an exact affected-component subset and stays separ
 });
 
 test('edge publisher builds every selected component before moving channel pointers', () => {
-  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
+  const publisher = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'scripts', 'Publish-LocalEdgeAtomicExtensions.ps1'), 'utf8');
   assert.match(publisher, /Console main must equal fresh origin\/main/);
   assert.match(publisher, /Installed release source is not the canonical Console repository/);
   assert.match(publisher, /fetch --no-tags origin \$baseRevision/);

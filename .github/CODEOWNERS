@@ -8,6 +8,6 @@
 /migrations/ @opensphere-platform @choimars
 /scripts/Publish-LocalEdge.ps1 @opensphere-platform @choimars
 /backend/release/policies/build-authority-policy.json @opensphere-platform @choimars
-/backend/dupa-control/release-build-authority-policy.test.js @opensphere-platform @choimars
+/apps/extension-controller/runtime/release-build-authority-policy.test.js @opensphere-platform @choimars
 /cmd/os-cli/Dockerfile @opensphere-platform @choimars
 /cmd/os-cli/manifest.test.mjs @opensphere-platform @choimars

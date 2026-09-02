@@ -185,6 +185,6 @@ function metricsText() {
 ## 부록 B. 출처 (코드베이스 근거)
 
 - prometheus 산발 배치(AI): `_DOCS_/OAH-SUPPORT-SERVICES-INSTALLATION-MAP-2026-06-29.md` §9
-- 콘솔 백엔드 미계측(현황): `backend/console-backend/server.js`, `backend/dupa-control/controller.js`(`/metrics` 부재)
-- dupa "의존성 0" 설계: `backend/dupa-control/controller.js` 헤더(L8 "의존성 0 node 내장")
+- 콘솔 백엔드 미계측(현황): `backend/console-backend/server.js`, `apps/extension-controller/runtime/controller.js`(`/metrics` 부재)
+- dupa "의존성 0" 설계: `apps/extension-controller/runtime/controller.js` 헤더(L8 "의존성 0 node 내장")
 - 스토리지 제약(retention/PVC): [BACKBONE-ARCHITECTURE.md](BACKBONE-ARCHITECTURE.md) §0.4

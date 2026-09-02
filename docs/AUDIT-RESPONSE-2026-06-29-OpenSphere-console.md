@@ -23,7 +23,7 @@
 
 | ID | 감사 지적 | 상태 | 조치 요약 | 핵심 위치 |
 |---|---|---|---|---|
-| **P0-1** | DUPA Admin API 무인증 변경 | ✅ Closed | controller가 `Authorization: Bearer`(Kanidm id_token, JWKS ES256) 검증 + `opensphere-console-admins` 그룹 강제. actor를 검증 토큰 claim에서 도출. nginx가 `X-OpenSphere-User` clear. 클라이언트는 Bearer 첨부. | `backend/dupa-control/controller.js`(`verifyActor`/`assertClaims`, admin gate), `nginx/default.conf.template`(`/api/admin/`), `src/app/core/plugin-control-client.service.ts` |
+| **P0-1** | DUPA Admin API 무인증 변경 | ✅ Closed | controller가 `Authorization: Bearer`(Kanidm id_token, JWKS ES256) 검증 + `opensphere-console-admins` 그룹 강제. actor를 검증 토큰 claim에서 도출. nginx가 `X-OpenSphere-User` clear. 클라이언트는 Bearer 첨부. | `apps/extension-controller/runtime/controller.js`(`verifyActor`/`assertClaims`, admin gate), `nginx/default.conf.template`(`/api/admin/`), `src/app/core/plugin-control-client.service.ts` |
 | **P0-2** | `/api/plugins/{id}` 임의 서비스 프록시 | ✅ Closed | nginx `auth_request` → controller `/api/internal/proxy-authz`가 **registry plugin명 + CLIDownload 바인딩 서비스 id** allowlist 강제. 미등록 → 403. | `nginx/default.conf.template`(`location ~ ^/api/plugins`, `/_plugin_authz`), `controller.js`(`proxyAllow`, reconcile) |
 | **P1-1** | CSP가 manifest v2보다 약함(unsafe-eval) | ✅ Closed | 글로벌 + `/index.html` 두 곳에서 `'unsafe-eval'` 제거, `worker-src`를 `'self' blob:`로 축소. 셸/플러그인은 검증된 blob import만 사용(eval 0건). | `nginx/default.conf.template` (CSP 2곳) |
 | **P1-2** | id_token이 localStorage·window 노출 | ◐ 부분(증분) | OIDC userStore **localStorage→sessionStorage**(탭/브라우저 종료 시 토큰 소멸). 전역 `window.__OS_AUTH__` 완전 제거는 §4 이연. | `src/app/core/auth.service.ts` |
@@ -32,7 +32,7 @@
 | **P2-1** | 런타임 plugin error boundary 부재 | ✅ Closed | PluginHost가 mount를 try/catch + `blob:` 출처 window error/unhandledrejection을 해당 plugin에 귀속 → 셸 생존 + 복구 배너. | `src/app/pages/plugin-host.ts` |
 | **P2-2** | lifecycle(upgrade/rollback/health) 미흡 | ◐ 부분(증분) | registrations 응답에 **워크로드 health(Ready/NotReady/N/A)** 노출. upgrade/rollback 버전그래프는 §4 이연. | `controller.js`(registrations), `plugin-control-client.service.ts`(Registration.health) |
 | **P2-3** | `/ai` deep link 하드코딩 | ✅ Closed | 특정 id 하드코딩 매처 제거 → **registry-driven clean-deeplink 일반 매처**(첫 세그먼트를 pluginId로 위임, 등록 여부는 Extension Host가 판정). | `src/app/app.routes.ts` |
-| **P2-4** | 회귀 테스트 부재 | ✅ Closed | `npm test` 동작(`node --test`) + **보안 회귀 테스트 9건**(JWT claim 검증·admin 게이트·SSRF name). dead vitest scaffolding 정리. | `backend/dupa-control/security.test.js`, `package.json`, `tsconfig.spec.json` |
+| **P2-4** | 회귀 테스트 부재 | ✅ Closed | `npm test` 동작(`node --test`) + **보안 회귀 테스트 9건**(JWT claim 검증·admin 게이트·SSRF name). dead vitest scaffolding 정리. | `apps/extension-controller/runtime/security.test.js`, `package.json`, `tsconfig.spec.json` |
 
 긍정 평가(POS-1 ExtensionHost 신뢰체인 / POS-2 console-backend IGA / POS-3 디자인시스템)는 변경하지 않았고 그대로 유효하다.
 
@@ -159,10 +159,10 @@ kubectl -n opensphere-system exec deploy/dupa-registry-controller -- \
 
 ## 부록 A. 변경 파일 (커밋 17ad750)
 ```
-backend/dupa-control/controller.js        # 인증·allowlist·SSRF가드·audit영속·에러sanitize·JWKS정합
-backend/dupa-control/Dockerfile           # kanidm CA bake(/app)
-backend/dupa-control/kanidm-ca.crt        # (신규) JWKS https 검증용 CA
-backend/dupa-control/security.test.js     # (신규) 보안 회귀 9건
+apps/extension-controller/runtime/controller.js        # 인증·allowlist·SSRF가드·audit영속·에러sanitize·JWKS정합
+apps/extension-controller/runtime/Dockerfile           # kanidm CA bake(/app)
+apps/extension-controller/runtime/kanidm-ca.crt        # (신규) JWKS https 검증용 CA
+apps/extension-controller/runtime/security.test.js     # (신규) 보안 회귀 9건
 backend/console-backend/server.js         # 읽기 인증게이트·body한도·에러sanitize·JWKS정합
 nginx/default.conf.template               # 헤더clear·auth_request·CSP·body한도
 src/app/core/plugin-control-client.service.ts  # Bearer 첨부·health 필드

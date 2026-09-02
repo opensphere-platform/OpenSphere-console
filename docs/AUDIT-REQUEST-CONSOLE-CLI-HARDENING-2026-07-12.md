@@ -20,7 +20,7 @@
 | F | WP | 구현 내용 | 변경 파일 |
 |---|---|---|---|
 | F-2 | WP-1(부분) | `os login --pat-stdin`(argv 노출 제거), `--pat` deprecated 경고, `run/login` 시그니처에 `in io.Reader` | `backend/os-cli/cmd/os/main.go` |
-| F-3 | WP-2 | `RESERVED_PROXY_SERVICE_IDS={'os-cli'}` — 재도입 가드를 바인딩 '이름'에서 native '서비스 id'로 교정 + `proxy-authz` 상태무관 403 이중 방어 | `backend/dupa-control/controller.js` |
+| F-3 | WP-2 | `RESERVED_PROXY_SERVICE_IDS={'os-cli'}` — 재도입 가드를 바인딩 '이름'에서 native '서비스 id'로 교정 + `proxy-authz` 상태무관 403 이중 방어 | `apps/extension-controller/runtime/controller.js` |
 | F-5 | WP-3(부분) | role grant/revoke 구조화 감사(`console_role_change`: actor/subject/role/action/result, intent→result) | `backend/identity/opensphere-auth/server.mjs` |
 | F-6 | WP-5 | Deployment 하드닝: `seccompProfile: RuntimeDefault`, 고정 UID/GID 101(pod+container), `automountServiceAccountToken: false`, `topologySpreadConstraints`, `PodDisruptionBudget(minAvailable:1)` | `backend/os-cli/deploy.yaml` |
 | F-8 | WP-6(부분) | `registry()` 중복·dead 조건 제거 | `backend/os-cli/cmd/os/main.go` |
@@ -30,7 +30,7 @@
 ### 2.2 회귀 방지 테스트 추가
 
 - Go: `TestLoginReadsPatFromStdin`, `TestLoginWarnsOnArgvPat`, `TestLoginWebOpensConsoleAndReadsPastedToken`, help의 `--pat-stdin` 단언 (`backend/os-cli/cmd/os/main_test.go`)
-- Node: F-3 예약 id·이중 방어, F-6 하드닝, F-2 stdin 계약 회귀 (`backend/dupa-control/main-shell-base.test.js`)
+- Node: F-3 예약 id·이중 방어, F-6 하드닝, F-2 stdin 계약 회귀 (`apps/extension-controller/runtime/main-shell-base.test.js`)
 
 ## 3. 검증 증거 (근거)
 
@@ -101,9 +101,9 @@ backend/os-cli/cmd/os/main.go            # F-2, F-8, F-9(--web)
 backend/os-cli/cmd/os/main_test.go       # F-2, F-9 테스트
 backend/os-cli/index.json                # 재빌드 바이너리 체크섬
 backend/os-cli/deploy.yaml               # F-6 하드닝 + 태그 참조
-backend/dupa-control/controller.js       # F-3
-backend/dupa-control/dupa-registry-controller.yaml  # 태그 참조
-backend/dupa-control/main-shell-base.test.js        # F-2/F-3/F-6 회귀
+apps/extension-controller/runtime/controller.js       # F-3
+apps/extension-controller/runtime/dupa-registry-controller.yaml  # 태그 참조
+apps/extension-controller/runtime/main-shell-base.test.js        # F-2/F-3/F-6 회귀
 backend/identity/opensphere-auth/server.mjs         # F-5
 backend/identity/opensphere-auth/deploy.yaml        # 태그 참조
 deploy/opensphere-console.yaml           # 태그 참조

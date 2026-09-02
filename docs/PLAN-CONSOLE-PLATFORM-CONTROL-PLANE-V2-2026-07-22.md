@@ -759,8 +759,8 @@ Self-hosted Supabase는 cloud-only reports, managed backup/PITR, advanced platfo
 | HISS Observability UI | `src/app/pages/admin-observability.ts` — 관리 화면이 아니라 Binding 소비·상태 표면으로 개편 |
 | Backend aggregation | `apps/console-api/runtime/server.js`를 domain router/adapter로 분리 |
 | Supabase migrations | `backend/supabase/migrations/`의 read model, correlation, consumer contract |
-| Gitea legacy | `backend/dupa-control/controller.js`의 `/api/admin/backbone/*` 제거·이관 |
-| HISS 경계 정리 | `backend/dupa-control/controller.js`의 monitoring CRD 광역 RBAC, ServiceMonitor 직접 생성, service DNS 탐색 제거 |
+| Gitea legacy | `apps/extension-controller/runtime/controller.js`의 `/api/admin/backbone/*` 제거·이관 |
+| HISS 경계 정리 | `apps/extension-controller/runtime/controller.js`의 monitoring CRD 광역 RBAC, ServiceMonitor 직접 생성, service DNS 탐색 제거 |
 | OSAA runtime | `backend/opensphere-console-osaa-gateway/server.js`, deploy manifest, seed |
 | Reverse proxy | `nginx/default.conf.template` |
 | Deployment | `backend/supabase/`, `backend/gitea/`, `backend/opensphere-console-osaa-gateway/deploy.yaml`, `apps/console-api/runtime/deploy.yaml`, namespace/NetworkPolicy/Secret/backup manifests |

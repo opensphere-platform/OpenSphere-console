@@ -145,9 +145,9 @@ try {
   }
 
   Invoke-Checked node --test `
-    (Join-Path $consoleCheckout 'backend\dupa-control\atomic-extension-cutover.test.js') `
-    (Join-Path $consoleCheckout 'backend\dupa-control\extension-host-lifecycle.test.js') `
-    (Join-Path $consoleCheckout 'backend\dupa-control\extension-serving-contract.test.js') | Out-Null
+    (Join-Path $consoleCheckout 'apps\extension-controller\runtime\atomic-extension-cutover.test.js') `
+    (Join-Path $consoleCheckout 'apps\extension-controller\runtime\extension-host-lifecycle.test.js') `
+    (Join-Path $consoleCheckout 'apps\extension-controller\runtime\extension-serving-contract.test.js') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {
     $token = ((Invoke-Checked gh auth token) -join '').Trim()
@@ -186,8 +186,8 @@ try {
       'buildx', 'build', '--platform', 'linux/amd64', '--push', '--provenance=mode=max',
       '--metadata-file', $controllerMetadata, '--tag', "$($repositories.dupaController):$buildTag"
     ) + $labels + @(
-      '--file', (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile'),
-      (Join-Path $consoleCheckout 'backend\dupa-control')
+      '--file', (Join-Path $consoleCheckout 'apps\extension-controller\runtime\Dockerfile'),
+      (Join-Path $consoleCheckout 'apps\extension-controller\runtime')
     )
     Invoke-Checked docker @controllerArgs | Out-Null
     $digests.dupaController = [string](Get-Content -Raw $controllerMetadata | ConvertFrom-Json).'containerimage.digest'

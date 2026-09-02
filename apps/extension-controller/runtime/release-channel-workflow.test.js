@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const consoleRoot = path.join(__dirname, '..', '..');
+const consoleRoot = path.join(__dirname, '..', '..', '..');
 const candidateWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
 const promoteWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workflows', 'promote-release.yml'), 'utf8');
 const angularConfig = JSON.parse(fs.readFileSync(path.join(consoleRoot, 'angular.json'), 'utf8'));

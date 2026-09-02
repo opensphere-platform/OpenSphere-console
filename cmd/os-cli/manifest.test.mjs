@@ -77,7 +77,7 @@ test('CLI publication authority requires the independent GitHub code owner', asy
   for (const authorityPath of [
     '/scripts/Publish-LocalEdge.ps1',
     '/backend/release/policies/build-authority-policy.json',
-    '/backend/dupa-control/release-build-authority-policy.test.js',
+    '/apps/extension-controller/runtime/release-build-authority-policy.test.js',
     '/cmd/os-cli/Dockerfile',
     '/cmd/os-cli/manifest.test.mjs',
   ]) {

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.resolve(__dirname, '../..');
+const root = path.resolve(__dirname, '../../..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const { extensionInstallTransition, navigationSettingsPatch, navigationOrderPlan } = require('./controller');
 
@@ -39,7 +39,7 @@ test('atomic navigation projection survives inactive serving without activating 
 });
 
 test('Delivery evidence reads only its owner runtime and canonical Application', () => {
-  const source = read('backend', 'dupa-control', 'controller.js');
+  const source = read('apps', 'extension-controller', 'runtime', 'controller.js');
   const start = source.indexOf('async function deliveryEvidence()');
   const end = source.indexOf('async function observabilityProfileEvidence()', start);
   const delivery = source.slice(start, end);
@@ -55,8 +55,8 @@ test('Delivery evidence reads only its owner runtime and canonical Application',
 });
 
 test('module uninstall removes every verified labelled binding and general profiles retain data', () => {
-  const source = read('backend', 'dupa-control', 'controller.js');
-  const manifest = read('backend', 'dupa-control', 'opensphere-console-dupa-controller.yaml');
+  const source = read('apps', 'extension-controller', 'runtime', 'controller.js');
+  const manifest = read('apps', 'extension-controller', 'runtime', 'opensphere-console-dupa-controller.yaml');
   assert.match(source, /function permissionBindingName\(pluginId, profile\)/);
   assert.match(source, /labelSelector=\$\{selector\}/);
   assert.match(source, /PermissionBindingOwnershipMismatch/);
@@ -74,7 +74,7 @@ test('module uninstall removes every verified labelled binding and general profi
 });
 
 test('Console and CLI share lifecycle API with scoped development-edge MFA policy and durable reason gates', () => {
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   const backend = read('apps', 'console-api', 'runtime', 'server.js');
   const client = read('apps', 'console-web', 'src', 'app', 'core', 'plugin-control-client.service.ts');
   const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
@@ -109,7 +109,7 @@ test('artifact updates preserve operator intent and reject implicit topology rep
     { allowed: false, reason: 'ExtensionLifecycleTransitionInProgress' },
   );
 
-  const controller = read('backend', 'dupa-control', 'controller.js');
+  const controller = read('apps', 'extension-controller', 'runtime', 'controller.js');
   const endpoint = controller.slice(
     controller.indexOf("if (p === '/api/admin/extensions/install'"),
     controller.indexOf("if (p === '/api/admin/plugins/catalog')"),
@@ -143,7 +143,7 @@ test('Backend serving readiness and verified-session outage cache are dependency
 });
 
 test('DUPA runtime image contains every local controller module', () => {
-  const dockerfile = read('backend', 'dupa-control', 'Dockerfile');
+  const dockerfile = read('apps', 'extension-controller', 'runtime', 'Dockerfile');
   assert.match(dockerfile, /COPY foundation-establishment\.js \/app\/foundation-establishment\.js/);
 });
 

@@ -10,7 +10,7 @@
 | 감사 F | WP | 구현 내용 | 파일 | 검증 |
 |---|---|---|---|---|
 | F-2 | WP-1(부분) | `os login --pat-stdin` 추가(stdin에서 PAT 읽어 argv 노출 제거), `--pat`는 deprecated 경고 후 유지, help·시그니처(`run/login`에 `in io.Reader`) 갱신 | `backend/os-cli/cmd/os/main.go`, `main_test.go` | go test 6/6, vet, 3-플랫폼 정적 교차빌드, 바이너리 스모크 |
-| F-3 | WP-2 | `RESERVED_PROXY_SERVICE_IDS={'os-cli'}` 도입. allowlist 조립 시 published·binding 양쪽에서 예약 id 제외 + `proxy-authz`가 예약 id를 상태 무관 403(이중 방어). 재도입 가드를 바인딩 '이름'에서 native '서비스 id' 기준으로 교정 | `backend/dupa-control/controller.js` | node 회귀 테스트, `node --check` |
+| F-3 | WP-2 | `RESERVED_PROXY_SERVICE_IDS={'os-cli'}` 도입. allowlist 조립 시 published·binding 양쪽에서 예약 id 제외 + `proxy-authz`가 예약 id를 상태 무관 403(이중 방어). 재도입 가드를 바인딩 '이름'에서 native '서비스 id' 기준으로 교정 | `apps/extension-controller/runtime/controller.js` | node 회귀 테스트, `node --check` |
 | F-5 | WP-3(부분) | role grant/revoke에 구조화 감사(`console_role_change`: actor/subject/role/action/result, intent→result before/after) 추가. actor를 핸들러로 전달 | `backend/identity/opensphere-auth/server.mjs` | `node --check` |
 | F-6 | WP-5 | os-cli Deployment 하드닝: `seccompProfile: RuntimeDefault`, `runAsUser/runAsGroup: 101`(pod+container), `automountServiceAccountToken: false`, `topologySpreadConstraints`, `PodDisruptionBudget(minAvailable:1)` | `backend/os-cli/deploy.yaml` | **라이브 적용 완료**: rollout 성공, 2/2 Running·restart 0, pod securityContext·automount:false·PDB 실적용 확인, `/api/cli/index.json` 200 |
 | F-8 | WP-6(부분) | `registry()`의 중복·dead 조건 제거 | `backend/os-cli/cmd/os/main.go` | go test/vet |
@@ -77,7 +77,7 @@ kubectl dry-run          deployment/os-cli configured · poddisruptionbudget/os-
 - `backend/os-cli/cmd/os/main.go` — F-2, F-8, F-9(`--web`)
 - `backend/os-cli/cmd/os/main_test.go` — F-2·F-9 테스트
 - `backend/os-cli/deploy.yaml` — F-6 (라이브 클러스터 적용 완료: 2/2 Running, restart 0)
-- `backend/dupa-control/controller.js` — F-3
-- `backend/dupa-control/main-shell-base.test.js` — F-2·F-3·F-6 회귀 테스트
+- `apps/extension-controller/runtime/controller.js` — F-3
+- `apps/extension-controller/runtime/main-shell-base.test.js` — F-2·F-3·F-6 회귀 테스트
 - `backend/identity/opensphere-auth/server.mjs` — F-5
 - `src/app/pages/admin-cli.ts` — F-9 콘솔 토큰 발급/폐기 UI
