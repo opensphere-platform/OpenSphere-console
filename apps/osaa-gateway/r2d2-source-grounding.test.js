@@ -14,7 +14,7 @@ const values = [
   },
   {
     tool: 'read_opensphere_source', arguments: {}, result: {
-      repositoryId: 'console', revision, path: 'backend/opensphere-console-backend/r2d2-engineering-remediation.js',
+      repositoryId: 'console', revision, path: 'apps/console-api/runtime/r2d2-engineering-remediation.js',
       digest: 'sha256:abc', startLine: 1, endLine: 8,
       text: "'use strict';\n\nconst { createHash } = require('crypto');\nconst path = require('path');\nconst { engineeringRepositoryPolicy } = require('./osaa-source-authority');\n\nconst REPOSITORIES = engineeringRepositoryPolicy();\nconst TEST_COMMANDS = new Set();",
     },
@@ -22,7 +22,7 @@ const values = [
   {
     tool: 'search_opensphere_source', arguments: {}, result: {
       repositoryId: 'console', revision, query: 'engineeringRepositoryPolicy', complete: true,
-      items: [{ path: 'backend/opensphere-console-backend/r2d2-engineering-remediation.js', line: 7, excerpt: 'const REPOSITORIES = engineeringRepositoryPolicy();' }],
+      items: [{ path: 'apps/console-api/runtime/r2d2-engineering-remediation.js', line: 7, excerpt: 'const REPOSITORIES = engineeringRepositoryPolicy();' }],
     },
   },
 ];
@@ -47,7 +47,7 @@ test('keeps grounded interpretation and appends server-generated citations', () 
   assert.equal(output.violations.length, 0);
   assert.match(output.content, /line 7에서/);
   assert.match(output.content, /OSCE가 고정한 정본 소스 근거/);
-  assert.ok(output.citations.includes(`console@${revision}/backend/opensphere-console-backend/r2d2-engineering-remediation.js#L1-L8`));
+  assert.ok(output.citations.includes(`console@${revision}/apps/console-api/runtime/r2d2-engineering-remediation.js#L1-L8`));
 });
 
 test('does not alter answers when canonical source tools were not used', () => {

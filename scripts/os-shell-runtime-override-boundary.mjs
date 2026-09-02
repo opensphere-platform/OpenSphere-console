@@ -14,9 +14,9 @@ export const runtimeInputPaths = Object.freeze([
 export const backendOverridePaths = Object.freeze([
   'apps/os-shell-control/authority/os-shell-admission.js',
   'apps/os-shell-control/authority/os-shell-admission.test.js',
-  'backend/opensphere-console-backend/Dockerfile',
-  'backend/opensphere-console-backend/local-edge-automation-token.test.js',
-  'backend/opensphere-console-backend/server.js',
+  'apps/console-api/runtime/Dockerfile',
+  'apps/console-api/runtime/local-edge-automation-token.test.js',
+  'apps/console-api/runtime/server.js',
 ]);
 
 export const consoleOverridePaths = Object.freeze([
@@ -62,7 +62,7 @@ export const deploymentToolingPaths = Object.freeze([
   'scripts/os-shell-edge-signing.ps1',
   'scripts/os-shell-runtime-override-boundary.mjs',
   'scripts/os-shell-runtime-override-boundary.test.mjs',
-  'backend/opensphere-console-backend/platform-release.test.js',
+  'apps/console-api/runtime/platform-release.test.js',
 ]);
 
 export function isRuntimeInputPath(path) {

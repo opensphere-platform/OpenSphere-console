@@ -95,12 +95,12 @@ Invoke-Checked git -C $repoRoot cat-file -e "${baseRevision}^{commit}" | Out-Nul
 $changedPaths = @(Invoke-Checked git -C $repoRoot diff --name-only $baseRevision $sourceRevision | Where-Object { $_ })
 if (-not $changedPaths.Count) { throw 'Backend publication has no source delta.' }
 $backendPaths = @($changedPaths | Where-Object {
-  $_ -like 'backend/opensphere-console-backend/*' -or $_ -eq 'scripts/Publish-LocalEdgeBackendBridge.ps1' -or
+  $_ -like 'apps/console-api/runtime/*' -or $_ -eq 'scripts/Publish-LocalEdgeBackendBridge.ps1' -or
   $_ -eq 'scripts/backend-bridge-publisher.test.mjs'
 })
 if (-not $backendPaths.Count) { throw 'Backend publication delta does not contain a backend or publisher change.' }
 
-$setupRevision = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'backend\opensphere-console-backend\setup-source.lock')).Trim()
+$setupRevision = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'apps\console-api\runtime\setup-source.lock')).Trim()
 if ($setupRevision -notmatch '^[a-f0-9]{40}$') { throw 'setup-source.lock is not canonical.' }
 $epoch = [long](((Invoke-Checked git -C $repoRoot show -s --format=%ct $sourceRevision) -join '').Trim())
 $releaseTag = [DateTimeOffset]::FromUnixTimeSeconds($epoch).ToOffset([TimeSpan]::FromHours(9)).ToString('yyyyMMddHHmm')
@@ -129,7 +129,7 @@ try {
   }
 
   Invoke-Checked node --test `
-    (Join-Path $consoleCheckout 'backend\opensphere-console-backend\platform-release.test.js') `
+    (Join-Path $consoleCheckout 'apps\console-api\runtime\platform-release.test.js') `
     (Join-Path $consoleCheckout 'scripts\backend-bridge-publisher.test.mjs') | Out-Null
 
   if (-not $UseExistingRegistryLogin) {
@@ -153,7 +153,7 @@ try {
     '--label','opensphere.io/ga-eligible=false',
     '--build-context',"setup-cli=$setupCheckout",
     '--build-arg',"SETUP_SOURCE_REVISION=$setupRevision",
-    '--file',(Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'),
+    '--file',(Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'),
     $consoleCheckout
   )
   Invoke-Checked docker @arguments | Out-Null

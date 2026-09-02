@@ -123,7 +123,7 @@ test('malformed target and method values are rejected', async () => {
 });
 
 test('nginx keeps the opaque browser cookie out of plugin workloads', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   assert.match(nginx, /auth_request_set \$plugin_authorization \$upstream_http_x_os_plugin_authorization;/);
   assert.match(nginx, /proxy_set_header Cookie "";/);
   assert.match(nginx, /proxy_set_header Authorization \$plugin_authorization;/);
@@ -144,6 +144,6 @@ test('Console Backend runtime image contains the plugin authorization mediator',
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   assert.match(
     dockerfile,
-    /COPY backend\/opensphere-console-backend\/plugin-proxy-auth\.js \.\/plugin-proxy-auth\.js/,
+    /COPY apps\/console-api\/runtime\/plugin-proxy-auth\.js \.\/plugin-proxy-auth\.js/,
   );
 });

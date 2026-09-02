@@ -150,7 +150,7 @@ test('Manual product ownership is Console-native and the standalone legacy repos
 
   assert.match(ownership, /Manual의 유일한 제품 소유자는 Main Shell인 `OpenSphere-console`/);
   assert.match(ownership, /`docs\/manual\/\*\.md`/);
-  assert.match(ownership, /`src\/app\/pages\/manual\.ts`/);
+  assert.match(ownership, /`apps\/console-web\/src\/app\/pages\/manual\.ts`/);
   assert.match(ownership, /같은 기능을 다른 이름의 Manual subShell로 다시 만들지 않는다/);
   assert.equal(fs.existsSync(legacyStandalone), false, 'the retired standalone Manual repository must stay deleted');
 });

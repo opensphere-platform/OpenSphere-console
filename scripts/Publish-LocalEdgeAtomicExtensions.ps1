@@ -133,7 +133,7 @@ try {
 
   $setupRevision = ''
   if ($componentNames -contains 'backend') {
-    $setupRevision = (Get-Content -Raw -LiteralPath (Join-Path $consoleCheckout 'backend\opensphere-console-backend\setup-source.lock')).Trim()
+    $setupRevision = (Get-Content -Raw -LiteralPath (Join-Path $consoleCheckout 'apps\console-api\runtime\setup-source.lock')).Trim()
     if ($setupRevision -notmatch '^[0-9a-f]{40}$') { throw 'Backend setup-source.lock is not canonical.' }
     Invoke-Checked git init $setupCheckout | Out-Null
     Invoke-Checked git -C $setupCheckout remote add origin https://github.com/opensphere-platform/OpenSphere-Setup-CLI.git | Out-Null
@@ -215,7 +215,7 @@ try {
       '--metadata-file', $backendMetadata, '--tag', "$($repositories.backend):$buildTag",
       '--build-arg', "SETUP_SOURCE_REVISION=$setupRevision", '--build-context', "setup-cli=$setupCheckout"
     ) + $labels + @(
-      '--file', (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'),
+      '--file', (Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'),
       $consoleCheckout
     )
     Invoke-Checked docker @backendArgs | Out-Null

@@ -87,8 +87,8 @@ test('baseline migration declares separated authority schemas, RLS and append-on
 
 test('fresh-start browser authentication has no readable refresh-token adoption path', async () => {
   const auth = await readFile(new URL('../../apps/console-web/src/app/core/auth.service.ts', import.meta.url), 'utf8');
-  const broker = await readFile(new URL('../../backend/opensphere-console-backend/browser-session.js', import.meta.url), 'utf8');
-  const server = await readFile(new URL('../../backend/opensphere-console-backend/server.js', import.meta.url), 'utf8');
+  const broker = await readFile(new URL('../../apps/console-api/runtime/browser-session.js', import.meta.url), 'utf8');
+  const server = await readFile(new URL('../../apps/console-api/runtime/server.js', import.meta.url), 'utf8');
   for (const source of [auth, broker, server]) {
     assert.doesNotMatch(source, /adoptLegacySession|adoptLegacy|\/api\/identity\/session\/adopt|opensphere\.supabase\.session/);
   }

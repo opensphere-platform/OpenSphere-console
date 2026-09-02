@@ -22,7 +22,7 @@ const {
   signedS3Request,
   targetInput,
   tlsFailure,
-} = require('../../apps/notification-dispatcher/external-backup-server');
+} = require('../../notification-dispatcher/external-backup-server');
 
 const read = (value) => fs.readFileSync(path.join(__dirname, value), 'utf8');
 
@@ -180,10 +180,10 @@ test('restore preview reports additions and changes without destructive deletion
 });
 
 test('migration isolates secrets and restore scope from browser identities', () => {
-  const migration = read('../supabase/migrations/0025_external_channels_backup.sql');
-  const s3ProfilesMigration = read('../supabase/migrations/0043_external_backup_s3_compatible_profiles.sql');
-  const tlsTrustMigration = read('../supabase/migrations/0044_external_backup_target_tls_trust.sql');
-  const reasonPolicy = read('../supabase/migrations/0027_external_channel_reason_policy.sql');
+  const migration = read('../../../backend/supabase/migrations/0025_external_channels_backup.sql');
+  const s3ProfilesMigration = read('../../../backend/supabase/migrations/0043_external_backup_s3_compatible_profiles.sql');
+  const tlsTrustMigration = read('../../../backend/supabase/migrations/0044_external_backup_target_tls_trust.sql');
+  const reasonPolicy = read('../../../backend/supabase/migrations/0027_external_channel_reason_policy.sql');
   assert.match(migration, /CREATE ROLE opensphere_external_channel_executor NOLOGIN NOINHERIT/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS console\.external_backup_secret/);
   assert.match(migration, /REVOKE ALL ON FUNCTION console\.external_backup_read_secret\(uuid\) FROM PUBLIC/);
@@ -202,10 +202,10 @@ test('migration isolates secrets and restore scope from browser identities', () 
 });
 
 test('External Channels UI and compatibility redirect expose backup and restore', () => {
-  const source = read('../../apps/console-web/src/app/pages/admin-external-channels.ts');
+  const source = read('../../console-web/src/app/pages/admin-external-channels.ts');
   const server = read('./server.js');
-  const routes = read('../../apps/console-web/src/app/app.routes.ts');
-  const nginx = read('../../apps/console-web/nginx/default.conf.template');
+  const routes = read('../../console-web/src/app/app.routes.ts');
+  const nginx = read('../../console-web/nginx/default.conf.template');
   assert.match(source, /백업 대상/);
   assert.match(source, /백업 및 복원/);
   assert.match(source, /AES-256-GCM/);
@@ -234,7 +234,7 @@ test('External Channels UI and compatibility redirect expose backup and restore'
   assert.doesNotMatch(source, /인증서 검증 안 함|verify\s*=\s*false/);
   assert.match(source, /s3ProfileLogo\(target\.vendor\)/);
   for (const logo of ['s3-compatible', 'amazon-s3', 'backblaze-b2', 'cloudflare-r2', 'minio', 'ceph-rgw']) {
-    assert.ok(fs.existsSync(path.join(__dirname, `../../apps/console-web/public/brand/storage/${logo}.svg`)), `${logo} logo must be packaged locally`);
+    assert.ok(fs.existsSync(path.join(__dirname, `../../console-web/public/brand/storage/${logo}.svg`)), `${logo} logo must be packaged locally`);
   }
   assert.doesNotMatch(source, /logo:\s*'https?:\/\//);
   assert.equal(source.match(/<clr-control-error>/g)?.length, 9);

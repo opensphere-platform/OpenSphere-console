@@ -132,7 +132,7 @@ $boundaryOutput = & node $boundaryVerifier --repository $repoRoot --base ([strin
   --backend $SourceRevision --console ([string]$console.Document.sourceRevision) --control $SourceRevision --head $SourceRevision
 if ($LASTEXITCODE -ne 0) { throw 'OS Shell two-component source boundary verification failed' }
 $boundary = ($boundaryOutput -join "`n") | ConvertFrom-Json
-if (($boundary.backendPaths -join ',') -ne 'apps/os-shell-control/authority/os-shell-admission.js,apps/os-shell-control/authority/os-shell-admission.test.js,backend/opensphere-console-backend/Dockerfile,backend/opensphere-console-backend/local-edge-automation-token.test.js,backend/opensphere-console-backend/server.js' -or
+if (($boundary.backendPaths -join ',') -ne 'apps/os-shell-control/authority/os-shell-admission.js,apps/os-shell-control/authority/os-shell-admission.test.js,apps/console-api/runtime/Dockerfile,apps/console-api/runtime/local-edge-automation-token.test.js,apps/console-api/runtime/server.js' -or
     @($boundary.controlPaths).Count -ne 4) {
   throw 'OS Shell source boundary did not attribute the exact Backend and Control inputs'
 }

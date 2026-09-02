@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { projectNotification, IncidentNotificationRelay } = require('../../apps/osaa-gateway/r2d2-incident-relay');
+const { projectNotification, IncidentNotificationRelay } = require('../../osaa-gateway/r2d2-incident-relay');
 
 function row(overrides = {}) { return { outbox_id: 'o1', incident_id: 'i1', transition_sequence: 2, event_type: 'incident_resolved', payload: { status: 'resolved', severity: 'warning', primaryNodeId: 'node' }, created_at: '2026-08-10T00:00:00Z', attempt_count: 1, ...overrides }; }
 

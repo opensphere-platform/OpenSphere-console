@@ -7,14 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const installedStateReader =
-  'backend/opensphere-console-backend/platform-release-agent-identity-cutover.js';
+  'apps/console-api/runtime/platform-release-agent-identity-cutover.js';
 const historical = (file) =>
   file.startsWith('backend/supabase/migrations/') ||
   file === 'backend/supabase/migration-history-lock.json' ||
   file === 'backend/supabase/verify.mjs' ||
   // Replays the complete immutable migration history, including the retired OAA role.
   file === 'backend/supabase/verify-ledger-integrity.mjs' ||
-  file === 'backend/opensphere-console-backend/foundation-bootstrap-bundle.js' ||
+  file === 'apps/console-api/runtime/foundation-bootstrap-bundle.js' ||
   /(?:^|\/)(?:test\/.*|[^/]+\.(?:test|spec)\.(?:js|mjs|ts))$/i.test(file) ||
   file === 'scripts/osaa-canonical-identity.test.mjs' ||
   file === installedStateReader;
@@ -53,19 +53,19 @@ test('the installed-state reader cannot become a request, route, or deployment a
       .includes('platform-release-agent-identity-cutover');
   });
   assert.deepEqual(consumers.sort(), [
-    'backend/opensphere-console-backend/platform-release-contract.js',
-    'backend/opensphere-console-backend/platform-release.test.js',
+    'apps/console-api/runtime/platform-release-contract.js',
+    'apps/console-api/runtime/platform-release.test.js',
   ]);
   assert.match(
-    readFileSync(path.join(root, 'backend/opensphere-console-backend/Dockerfile'), 'utf8'),
-    /COPY backend\/opensphere-console-backend\/platform-release-agent-identity-cutover\.js/,
+    readFileSync(path.join(root, 'apps/console-api/runtime/Dockerfile'), 'utf8'),
+    /COPY apps\/console-api\/runtime\/platform-release-agent-identity-cutover\.js/,
   );
 });
 
 test('current HTTP and deployment contracts expose OSAA only', () => {
   const activeFiles = [
     'apps/console-web/nginx/default.conf.template',
-    'backend/opensphere-console-backend/deploy.yaml',
+    'apps/console-api/runtime/deploy.yaml',
     'apps/osaa-gateway/deploy.yaml',
     'apps/osaa-gateway/server.js',
     'apps/console-web/src/app/os/os-osaa-agent.ts',

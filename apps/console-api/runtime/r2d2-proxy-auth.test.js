@@ -85,7 +85,7 @@ test('direct calls and unsupported methods fail closed', async () => {
 });
 
 test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the Gateway', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   assert.match(nginx, /auth_request_set \$r2d2_authorization \$upstream_http_x_os_r2d2_authorization;/);
   assert.match(nginx, /proxy_pass http:\/\/\$console_backend_upstream:8080\/api\/internal\/r2d2-proxy-authn;/);
   assert.match(nginx, /proxy_set_header X-OS-Original-Method \$r2d2_original_method;/);
@@ -100,7 +100,7 @@ test('nginx mediates R2D2 credentials and keeps the opaque cookie out of the Gat
 });
 
 test('nginx gives the authenticated R2D2 chat endpoint its bounded long-response window', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   const chatLocation = nginx.match(/location = \/api\/osaa\/chat \{[\s\S]*?\n    \}/)?.[0] || '';
   assert.match(chatLocation, /auth_request \/_r2d2_authn;/);
   assert.match(chatLocation, /proxy_read_timeout 120s;/);
@@ -109,7 +109,7 @@ test('nginx gives the authenticated R2D2 chat endpoint its bounded long-response
 });
 
 test('nginx authenticates Manual browser requests before forwarding them to the OSAA Gateway', () => {
-  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+  const nginx = fs.readFileSync(path.join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
   const locations = [
     nginx.match(/location = \/api\/manual \{[\s\S]*?\n    \}/)?.[0] || '',
     nginx.match(/location \/api\/manual\/ \{[\s\S]*?\n    \}/)?.[0] || '',
@@ -127,7 +127,7 @@ test('nginx authenticates Manual browser requests before forwarding them to the 
 });
 
 test('nginx keeps Engineering Remediation on Backend and preserves the scoped Repair Runner bearer', () => {
-  const nginx = fs.readFileSync(path.resolve(__dirname, '../../apps/console-web/nginx/default.conf.template'), 'utf8');
+  const nginx = fs.readFileSync(path.resolve(__dirname, '../../console-web/nginx/default.conf.template'), 'utf8');
   const location = nginx.match(/location \^~ \/api\/osaa\/remediations\/ \{[\s\S]*?\n    \}/)?.[0] || '';
   assert.match(location, /opensphere-console-backend/);
   assert.match(location, /proxy_set_header Authorization \$http_authorization/);
@@ -136,5 +136,5 @@ test('nginx keeps Engineering Remediation on Backend and preserves the scoped Re
 
 test('Console Backend runtime image contains the R2D2 authentication mediator', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
-  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/r2d2-proxy-auth\.js \.\/r2d2-proxy-auth\.js/);
+  assert.match(dockerfile, /COPY apps\/console-api\/runtime\/r2d2-proxy-auth\.js \.\/r2d2-proxy-auth\.js/);
 });

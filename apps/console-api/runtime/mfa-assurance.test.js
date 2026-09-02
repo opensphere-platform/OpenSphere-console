@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const root = path.resolve(__dirname, '../..');
+const root = path.resolve(__dirname, '../../..');
 const backend = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
 const deploy = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
 const notificationDeploy = fs.readFileSync(path.join(root, 'apps/notification-dispatcher/deploy.yaml'), 'utf8');

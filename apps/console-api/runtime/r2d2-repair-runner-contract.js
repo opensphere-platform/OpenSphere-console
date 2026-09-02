@@ -9,7 +9,7 @@ const SUPPORTED_TESTS = Object.freeze(new Set(['unit', 'contract', 'integration'
 const COMPONENT_RULES = Object.freeze([
   Object.freeze({
     sourceComponent: 'consoleBackend', releaseComponent: 'backend', image: 'opensphere-console-backend',
-    prefixes: Object.freeze(['backend/opensphere-console-backend/']),
+    prefixes: Object.freeze(['apps/console-api/runtime/']),
     publisher: 'scripts/Publish-LocalEdgeBackendBridge.ps1',
     workload: Object.freeze({ namespace: 'opensphere-console', kind: 'deployment', name: 'opensphere-console-backend', container: 'api' }),
   }),

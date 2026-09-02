@@ -3,19 +3,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const root = path.resolve(__dirname, '..');
+const root = path.resolve(__dirname, '..', '..', '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
-const server = read('opensphere-console-backend/server.js');
-const deploy = read('opensphere-console-backend/deploy.yaml');
-const dockerfile = read('opensphere-console-backend/Dockerfile');
-const governance = read('supabase/migrations/0009_platform_control_governance.sql');
-const approvals = read('supabase/migrations/0010_change_approval.sql');
-const reconcileRetry = read('supabase/migrations/0028_change_reconcile_retry.sql');
-const gitea = read('gitea/bootstrap/gitea.yaml');
-const bootstrap = read('gitea/bootstrap/control-plane-bootstrap.ps1');
-const recoveryOwner = read('opensphere-console-backend/recovery-owner.js');
-const recoveryPermissions = read('supabase/migrations/0022_oaa_recovery_owner_permissions.sql');
-const recoveryDrillOperation = read('supabase/migrations/0069_osaa_recovery_drill_operation.sql');
+const server = read('apps/console-api/runtime/server.js');
+const deploy = read('apps/console-api/runtime/deploy.yaml');
+const dockerfile = read('apps/console-api/runtime/Dockerfile');
+const governance = read('backend/supabase/migrations/0009_platform_control_governance.sql');
+const approvals = read('backend/supabase/migrations/0010_change_approval.sql');
+const reconcileRetry = read('backend/supabase/migrations/0028_change_reconcile_retry.sql');
+const gitea = read('backend/gitea/bootstrap/gitea.yaml');
+const bootstrap = read('backend/gitea/bootstrap/control-plane-bootstrap.ps1');
+const recoveryOwner = read('apps/console-api/runtime/recovery-owner.js');
+const recoveryPermissions = read('backend/supabase/migrations/0022_oaa_recovery_owner_permissions.sql');
+const recoveryDrillOperation = read('backend/supabase/migrations/0069_osaa_recovery_drill_operation.sql');
 
 test('governed change state is Supabase-only and RLS protected', () => {
   for (const table of ['consumer_contract', 'observability_claim', 'change_execution', 'change_outbox', 'gitea_webhook_receipt', 'reconcile_receipt']) {
@@ -121,7 +121,7 @@ test('durable local-edge R1 uses one recent-AAL2 administrator without bypassing
   assert.match(server, /local edge R1 OSAA operation authorization/);
   assert.match(server, /async function authorizeLocalEdgeR1Operation/);
   assert.match(server, /async function authorizeLocalEdgeGovernedChange/);
-  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/local-edge-r1-approval\.js \.\/local-edge-r1-approval\.js/);
+  assert.match(dockerfile, /COPY apps\/console-api\/runtime\/local-edge-r1-approval\.js \.\/local-edge-r1-approval\.js/);
   assert.match(governed, /LOCAL_EDGE_R1_MODE/);
   assert.match(governed, /authToken: GITEA_REVIEW_TOKEN/);
   assert.match(governed, /await assertVerifiedGovernedMerge\(mergeRevision\)/);

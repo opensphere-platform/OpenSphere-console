@@ -7,7 +7,7 @@ const { join } = require('node:path');
 
 const server = readFileSync(join(__dirname, 'server.js'), 'utf8');
 const deploy = readFileSync(join(__dirname, 'deploy.yaml'), 'utf8');
-const nginx = readFileSync(join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+const nginx = readFileSync(join(__dirname, '..', '..', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
 
 test('Dialogue State admin control accepts only the closed four-stage mode set', () => {
   assert.match(server, /new Set\(\['off', 'shadow', 'read-enforce', 'mutation-enforce'\]\)/);

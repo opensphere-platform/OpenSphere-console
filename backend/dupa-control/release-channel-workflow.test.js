@@ -9,7 +9,7 @@ const promoteWorkflow = fs.readFileSync(path.join(consoleRoot, '.github', 'workf
 const angularConfig = JSON.parse(fs.readFileSync(path.join(consoleRoot, 'angular.json'), 'utf8'));
 const localEdgePublisher = fs.readFileSync(path.join(consoleRoot, 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
 const setupSourceLock = fs.readFileSync(
-  path.join(consoleRoot, 'backend', 'opensphere-console-backend', 'setup-source.lock'),
+  path.join(consoleRoot, 'apps', 'console-api', 'runtime', 'setup-source.lock'),
   'utf8'
 ).trim();
 

@@ -9,7 +9,7 @@ test('Backend image contains the local-edge token verifier required by server st
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   assert.match(
     dockerfile,
-    /COPY backend\/opensphere-console-backend\/local-edge-automation-token\.js \.\/local-edge-automation-token\.js/,
+    /COPY apps\/console-api\/runtime\/local-edge-automation-token\.js \.\/local-edge-automation-token\.js/,
   );
 });
 

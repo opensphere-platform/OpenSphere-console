@@ -36,8 +36,8 @@ if ($backendRevision -notmatch '^[0-9a-f]{40}$') { throw 'Installed Backend sour
 
 $runnerFiles = @(
   'scripts/r2d2-local-edge-repair-runner.mjs',
-  'backend/opensphere-console-backend/r2d2-engineering-remediation.js',
-  'backend/opensphere-console-backend/r2d2-repair-runner-contract.js'
+  'apps/console-api/runtime/r2d2-engineering-remediation.js',
+  'apps/console-api/runtime/r2d2-repair-runner-contract.js'
 )
 Invoke-Checked git -C $repoRoot cat-file -e "${backendRevision}^{commit}" | Out-Null
 $delta = @((Invoke-Checked git -C $repoRoot diff --name-only $backendRevision HEAD -- @runnerFiles) | Where-Object { $_ })

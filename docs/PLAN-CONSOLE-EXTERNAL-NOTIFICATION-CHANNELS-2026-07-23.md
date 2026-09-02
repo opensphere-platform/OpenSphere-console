@@ -856,7 +856,7 @@ provider 자체 장애는 OpenSphere delivery availability와 분리해 표시�
 
 예상 변경:
 
-- `backend/opensphere-console-backend/server.js`에 BFF API와 permission gate 추가
+- `apps/console-api/runtime/server.js`에 BFF API와 permission gate 추가
 - summary/channel/rule/delivery query 함수 분리
 - mutation별 `logAudit` 호출
 - pagination/filter 입력 allowlist

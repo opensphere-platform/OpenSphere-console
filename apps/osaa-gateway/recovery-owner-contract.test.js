@@ -5,8 +5,8 @@ const path = require('node:path');
 
 const here = __dirname;
 const gateway = fs.readFileSync(path.join(here, 'server.js'), 'utf8');
-const backend = fs.readFileSync(path.join(here, '..', '..', 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
-const backendDeploy = fs.readFileSync(path.join(here, '..', '..', 'backend', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
+const backend = fs.readFileSync(path.join(here, '..', '..', 'apps', 'console-api', 'runtime', 'server.js'), 'utf8');
+const backendDeploy = fs.readFileSync(path.join(here, '..', '..', 'apps', 'console-api', 'runtime', 'deploy.yaml'), 'utf8');
 const readiness = fs.readFileSync(path.join(here, 'agent-control-readiness.js'), 'utf8');
 const migration = fs.readFileSync(path.join(here, '..', '..', 'backend', 'supabase', 'migrations', '0022_oaa_recovery_owner_permissions.sql'), 'utf8');
 const adapter = fs.readFileSync(path.join(here, '..', '..', 'backend', 'osaa-governed-adapter', 'server.js'), 'utf8');

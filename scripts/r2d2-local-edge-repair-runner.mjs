@@ -10,10 +10,10 @@ import process from 'node:process';
 const require = createRequire(import.meta.url);
 const {
   EngineeringRemediationWorker, deploymentApprovalBinding, patchTextDigest,
-} = require('../backend/opensphere-console-backend/r2d2-engineering-remediation.js');
+} = require('../apps/console-api/runtime/r2d2-engineering-remediation.js');
 const {
   COMPONENT_RULES, CONSOLE_REPOSITORY, safeSandboxRoot, sha256, validateLocalEdgeRepair,
-} = require('../backend/opensphere-console-backend/r2d2-repair-runner-contract.js');
+} = require('../apps/console-api/runtime/r2d2-repair-runner-contract.js');
 
 const consoleUrl = String(process.env.OPENSPHERE_CONSOLE_URL || 'https://localhost:1114').replace(/\/$/, '');
 const once = process.argv.includes('--once');

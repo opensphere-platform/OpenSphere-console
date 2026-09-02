@@ -5,7 +5,7 @@
   "releaseFamily": "OpenSphere-Console",
   "components": [
     { "id": "C_WEB", "path": "apps/console-web", "artifact": "opensphere-console", "legacySources": [] },
-    { "id": "C_API", "path": "apps/console-api", "artifact": "opensphere-console-api", "legacySources": ["backend/opensphere-console-backend"] },
+    { "id": "C_API", "path": "apps/console-api", "artifact": "opensphere-console-api", "legacySources": [] },
     { "id": "C_EXT", "path": "apps/extension-controller", "artifact": "opensphere-extension-controller", "legacySources": ["backend/dupa-control"] },
     { "id": "C_REG", "path": "backend/registry", "artifact": "opensphere-registry", "legacySources": [] },
     { "id": "C_AI", "path": "apps/osaa-gateway", "artifact": "opensphere-osaa-gateway", "legacySources": [] },

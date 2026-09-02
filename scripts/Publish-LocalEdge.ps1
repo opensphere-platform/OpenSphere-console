@@ -205,7 +205,7 @@ if ($backendSelected) {
   if ($setupSourceRevision -notmatch '^[0-9a-f]{40}$') {
     throw 'SetupSourceRevision must resolve to a full lowercase Git commit.'
   }
-  $setupSourceLockPath = Join-Path $consoleCheckout 'backend\opensphere-console-backend\setup-source.lock'
+  $setupSourceLockPath = Join-Path $consoleCheckout 'apps\console-api\runtime\setup-source.lock'
   $expectedSetupSourceRevision = (Get-Content -LiteralPath $setupSourceLockPath -Raw).Trim()
   if ($expectedSetupSourceRevision -notmatch '^[0-9a-f]{40}$') {
     throw 'The governed Backend setup-source.lock is invalid.'
@@ -301,7 +301,7 @@ $allImages = @(
   # never expand a local edge change into the 14-image integrated release.
   [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile') },
   [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile.runtime') },
-  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
+  [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'apps\osaa-gateway'); File = (Join-Path $consoleCheckout 'apps\osaa-gateway\Dockerfile') },

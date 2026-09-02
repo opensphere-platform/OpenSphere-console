@@ -75,7 +75,7 @@ test('module uninstall removes every verified labelled binding and general profi
 
 test('Console and CLI share lifecycle API with scoped development-edge MFA policy and durable reason gates', () => {
   const controller = read('backend', 'dupa-control', 'controller.js');
-  const backend = read('backend', 'opensphere-console-backend', 'server.js');
+  const backend = read('apps', 'console-api', 'runtime', 'server.js');
   const client = read('apps', 'console-web', 'src', 'app', 'core', 'plugin-control-client.service.ts');
   const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
   assert.doesNotMatch(controller, /CliInstallationRequired/);
@@ -131,9 +131,9 @@ test('Main Shell and extension APIs share the same MFA-aware command transport',
 });
 
 test('Backend serving readiness and verified-session outage cache are dependency-isolated', () => {
-  const backend = read('backend', 'opensphere-console-backend', 'server.js');
-  const deploy = read('backend', 'opensphere-console-backend', 'deploy.yaml');
-  const session = read('backend', 'opensphere-console-backend', 'browser-session.js');
+  const backend = read('apps', 'console-api', 'runtime', 'server.js');
+  const deploy = read('apps', 'console-api', 'runtime', 'deploy.yaml');
+  const session = read('apps', 'console-api', 'runtime', 'browser-session.js');
   const auth = read('apps', 'console-web', 'src', 'app', 'core', 'auth.service.ts');
   assert.match(backend, /p === '\/serving-readyz'/);
   assert.match(deploy, /readinessProbe: \{ httpGet: \{ path: \/serving-readyz, port: 8080 \}/);

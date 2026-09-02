@@ -108,8 +108,8 @@ test('Backend image carries the runner and deployment enables only the canonical
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
   const deploy = fs.readFileSync(path.join(__dirname, 'deploy.yaml'), 'utf8');
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/r2d2-repair-runner-api\.js \.\/r2d2-repair-runner-api\.js/u);
-  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/r2d2-repair-runner-contract\.js \.\/r2d2-repair-runner-contract\.js/u);
+  assert.match(dockerfile, /COPY apps\/console-api\/runtime\/r2d2-repair-runner-api\.js \.\/r2d2-repair-runner-api\.js/u);
+  assert.match(dockerfile, /COPY apps\/console-api\/runtime\/r2d2-repair-runner-contract\.js \.\/r2d2-repair-runner-contract\.js/u);
   assert.match(deploy, /R2D2_ENGINEERING_PROPOSAL_ENABLED, value: "true"/u);
   assert.match(deploy, /R2D2_ENGINEERING_PROPOSAL_REPOSITORIES, value: "console"/u);
   assert.match(deploy, /R2D2_ENGINEERING_EXECUTION_ENABLED, value: "true"/u);

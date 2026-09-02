@@ -244,7 +244,7 @@ test('Console release wires the Foundation template, dedicated runtime, least-pr
   const dockerfile = fs.readFileSync(path.join(directory, 'Dockerfile'), 'utf8');
   const deploy = fs.readFileSync(path.join(directory, 'deploy.yaml'), 'utf8');
   const migration = fs.readFileSync(
-    path.join(directory, '..', 'supabase', 'migrations', '0031_foundation_bootstrap_consumer.sql'),
+    path.join(directory, '..', '..', '..', 'backend', 'supabase', 'migrations', '0031_foundation_bootstrap_consumer.sql'),
     'utf8',
   );
   assert.match(server, /FOUNDATION_BOOTSTRAP_TEMPLATE_ID/);

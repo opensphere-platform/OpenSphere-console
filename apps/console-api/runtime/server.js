@@ -9,7 +9,7 @@ const { createSupabaseVerifier } = require('./supabase-auth');
 const { createNotificationApi } = require('./notification-api');
 const { createExternalChannelApi } = require('./external-channel-api');
 const { buildRecoveryOwnerStatus, buildRecoveryPlan, normalizedRecoveryEvidence } = require('./recovery-owner');
-const { normalizedEvent } = require('../../apps/notification-dispatcher/contract');
+const { normalizedEvent } = require('../../notification-dispatcher/contract');
 const {
   DEFAULT_DURATION: DEFAULT_SESSION_PERSISTENCE,
   SESSION_PERSISTENCE_METADATA_KEY,
@@ -28,8 +28,8 @@ const {
 } = require('./profile-avatar');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
-const { createOsShellAdmissionIssuer } = require('../../apps/os-shell-control/authority/os-shell-admission');
-const { createOsShellCredentialExchange } = require('../../apps/os-shell-control/authority/os-shell-delegation');
+const { createOsShellAdmissionIssuer } = require('../../os-shell-control/authority/os-shell-admission');
+const { createOsShellCredentialExchange } = require('../../os-shell-control/authority/os-shell-delegation');
 const { validateLocalEdgeAutomationTokenClaims } = require('./local-edge-automation-token');
 const { LOCAL_EDGE_R1_MODE, localEdgeR1ApprovalPolicy } = require('./local-edge-r1-approval');
 const { createBaselineMonitoring } = require('./baseline-monitoring');

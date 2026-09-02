@@ -49,7 +49,7 @@ test('deployment HEAD is limited to exact runtime evidence plus closed deploymen
 test('backend override accepts the shared admission source used by Backend and Control', () => {
   assert.doesNotThrow(() => assertBackendOverridePaths(backendOverridePaths));
   assert.throws(() => assertBackendOverridePaths([backendOverridePaths[0]]), /exact closed set/);
-  assert.throws(() => assertBackendOverridePaths([...backendOverridePaths, 'backend/opensphere-console-backend/server.js']), /exact closed set/);
+  assert.throws(() => assertBackendOverridePaths([...backendOverridePaths, 'apps/console-api/runtime/server.js']), /exact closed set/);
   assert.throws(() => assertBackendOverridePaths([...backendOverridePaths].reverse().concat(backendOverridePaths[0])), /exact closed set/);
 });
 
@@ -152,7 +152,7 @@ test('composite repository attribution rejects missing owners while ignoring unr
 
     git(repository, 'switch', '-c', 'extra-console-evidence', laterConsoleRevision);
     const extraRevision = commit(repository, 'extra Console evidence path', {
-      'backend/opensphere-console-backend/server.js': 'not a Console runtime input\n',
+      'apps/console-api/runtime/server.js': 'not a Console runtime input\n',
     });
     git(repository, 'update-ref', 'refs/remotes/origin/extra-console-evidence', extraRevision);
     git(repository, 'switch', 'main');

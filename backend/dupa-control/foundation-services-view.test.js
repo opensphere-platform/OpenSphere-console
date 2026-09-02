@@ -50,7 +50,7 @@ test('Console foundation services keep role-oriented scope and CC compatibility 
 
 test('Beszel detail uses Carbon Charts and preserves gaps as missing values', () => {
   const page = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-infrastructure-monitoring.ts');
-  const adapter = read('backend', 'opensphere-console-backend', 'baseline-monitoring.js');
+  const adapter = read('apps', 'console-api', 'runtime', 'baseline-monitoring.js');
   const styles = read('apps', 'console-web', 'src', 'styles.scss');
   const packageJson = JSON.parse(read('package.json'));
 

@@ -43,50 +43,50 @@ RUN node --version \
     && gh --version \
     && kubectl version --client
 LABEL io.opensphere.setup-source-revision="${SETUP_SOURCE_REVISION}"
-WORKDIR /repo/backend/opensphere-console-backend
-# Build with `docker build -f backend/opensphere-console-backend/Dockerfile .`
+WORKDIR /repo/apps/console-api/runtime
+# Build with `docker build -f apps/console-api/runtime/Dockerfile .`
 # from the repository root and a named `setup-cli` context, so the browser API cannot supply
 # or mutate the release executor implementation.
-COPY backend/opensphere-console-backend/package.json backend/opensphere-console-backend/package-lock.json ./
+COPY apps/console-api/runtime/package.json apps/console-api/runtime/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-COPY backend/opensphere-console-backend/server.js ./server.js
-COPY backend/opensphere-console-backend/supabase-auth.js ./supabase-auth.js
-COPY backend/opensphere-console-backend/browser-session.js ./browser-session.js
-COPY backend/opensphere-console-backend/profile-avatar.js ./profile-avatar.js
-COPY backend/opensphere-console-backend/plugin-proxy-auth.js ./plugin-proxy-auth.js
-COPY backend/opensphere-console-backend/r2d2-proxy-auth.js ./r2d2-proxy-auth.js
+COPY apps/console-api/runtime/server.js ./server.js
+COPY apps/console-api/runtime/supabase-auth.js ./supabase-auth.js
+COPY apps/console-api/runtime/browser-session.js ./browser-session.js
+COPY apps/console-api/runtime/profile-avatar.js ./profile-avatar.js
+COPY apps/console-api/runtime/plugin-proxy-auth.js ./plugin-proxy-auth.js
+COPY apps/console-api/runtime/r2d2-proxy-auth.js ./r2d2-proxy-auth.js
 COPY apps/os-shell-control/authority/os-shell-contract.js /repo/apps/os-shell-control/authority/os-shell-contract.js
 COPY apps/os-shell-control/authority/os-shell-admission.js /repo/apps/os-shell-control/authority/os-shell-admission.js
 COPY apps/os-shell-control/authority/os-shell-context.js /repo/apps/os-shell-control/authority/os-shell-context.js
 COPY apps/os-shell-control/authority/os-shell-delegation.js /repo/apps/os-shell-control/authority/os-shell-delegation.js
-COPY backend/opensphere-console-backend/local-edge-automation-token.js ./local-edge-automation-token.js
-COPY backend/opensphere-console-backend/local-edge-r1-approval.js ./local-edge-r1-approval.js
-COPY backend/opensphere-console-backend/baseline-monitoring.js ./baseline-monitoring.js
-COPY backend/opensphere-console-backend/data-identity-readiness.js ./data-identity-readiness.js
-COPY backend/opensphere-console-backend/module-operation-api.js ./module-operation-api.js
-COPY backend/opensphere-console-backend/r2d2-operation-api.js ./r2d2-operation-api.js
-COPY backend/opensphere-console-backend/r2d2-durable-operation.js ./r2d2-durable-operation.js
-COPY backend/opensphere-console-backend/r2d2-engineering-remediation.js ./r2d2-engineering-remediation.js
-COPY backend/opensphere-console-backend/r2d2-remediation-api.js ./r2d2-remediation-api.js
-COPY backend/opensphere-console-backend/r2d2-repair-runner-contract.js ./r2d2-repair-runner-contract.js
-COPY backend/opensphere-console-backend/r2d2-repair-runner-api.js ./r2d2-repair-runner-api.js
-COPY backend/opensphere-console-backend/osaa-source-authority.js ./osaa-source-authority.js
-COPY backend/opensphere-console-backend/module-lifecycle-policy.js ./module-lifecycle-policy.js
-COPY backend/opensphere-console-backend/notification-api.js ./notification-api.js
-COPY backend/opensphere-console-backend/external-channel-api.js ./external-channel-api.js
-COPY backend/opensphere-console-backend/recovery-owner.js ./recovery-owner.js
-COPY backend/opensphere-console-backend/foundation-bootstrap-contract.js ./foundation-bootstrap-contract.js
-COPY backend/opensphere-console-backend/foundation-bootstrap-bundle.js ./foundation-bootstrap-bundle.js
-COPY backend/opensphere-console-backend/foundation-bootstrap-reconciler.js ./foundation-bootstrap-reconciler.js
-COPY backend/opensphere-console-backend/platform-release-agent-identity-cutover.js ./platform-release-agent-identity-cutover.js
-COPY backend/opensphere-console-backend/platform-release-contract.js ./platform-release-contract.js
-COPY backend/opensphere-console-backend/platform-release-reconciler.js ./platform-release-reconciler.js
-COPY backend/opensphere-console-backend/platform-release-executor.mjs ./platform-release-executor.mjs
+COPY apps/console-api/runtime/local-edge-automation-token.js ./local-edge-automation-token.js
+COPY apps/console-api/runtime/local-edge-r1-approval.js ./local-edge-r1-approval.js
+COPY apps/console-api/runtime/baseline-monitoring.js ./baseline-monitoring.js
+COPY apps/console-api/runtime/data-identity-readiness.js ./data-identity-readiness.js
+COPY apps/console-api/runtime/module-operation-api.js ./module-operation-api.js
+COPY apps/console-api/runtime/r2d2-operation-api.js ./r2d2-operation-api.js
+COPY apps/console-api/runtime/r2d2-durable-operation.js ./r2d2-durable-operation.js
+COPY apps/console-api/runtime/r2d2-engineering-remediation.js ./r2d2-engineering-remediation.js
+COPY apps/console-api/runtime/r2d2-remediation-api.js ./r2d2-remediation-api.js
+COPY apps/console-api/runtime/r2d2-repair-runner-contract.js ./r2d2-repair-runner-contract.js
+COPY apps/console-api/runtime/r2d2-repair-runner-api.js ./r2d2-repair-runner-api.js
+COPY apps/console-api/runtime/osaa-source-authority.js ./osaa-source-authority.js
+COPY apps/console-api/runtime/module-lifecycle-policy.js ./module-lifecycle-policy.js
+COPY apps/console-api/runtime/notification-api.js ./notification-api.js
+COPY apps/console-api/runtime/external-channel-api.js ./external-channel-api.js
+COPY apps/console-api/runtime/recovery-owner.js ./recovery-owner.js
+COPY apps/console-api/runtime/foundation-bootstrap-contract.js ./foundation-bootstrap-contract.js
+COPY apps/console-api/runtime/foundation-bootstrap-bundle.js ./foundation-bootstrap-bundle.js
+COPY apps/console-api/runtime/foundation-bootstrap-reconciler.js ./foundation-bootstrap-reconciler.js
+COPY apps/console-api/runtime/platform-release-agent-identity-cutover.js ./platform-release-agent-identity-cutover.js
+COPY apps/console-api/runtime/platform-release-contract.js ./platform-release-contract.js
+COPY apps/console-api/runtime/platform-release-reconciler.js ./platform-release-reconciler.js
+COPY apps/console-api/runtime/platform-release-executor.mjs ./platform-release-executor.mjs
 COPY --from=setup-cli src /app/opensphere-setup-cli/src
 COPY --from=setup-cli package.json /app/opensphere-setup-cli/package.json
 COPY apps/notification-dispatcher/contract.js /repo/apps/notification-dispatcher/contract.js
 ENV PORT=8080
 EXPOSE 8080
 USER 1001
-CMD ["node", "/repo/backend/opensphere-console-backend/server.js"]
+CMD ["node", "/repo/apps/console-api/runtime/server.js"]

@@ -6,8 +6,8 @@ const fs = require('fs');
 const path = require('path');
 
 const gateway = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-const backend = fs.readFileSync(path.join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
-const authority = fs.readFileSync(path.join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'osaa-source-authority.js'), 'utf8');
+const backend = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'server.js'), 'utf8');
+const authority = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'osaa-source-authority.js'), 'utf8');
 const gatewayImage = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
 
 test('OSAA exposes canonical source catalog, revision, read and search as read-only knowledge tools', () => {

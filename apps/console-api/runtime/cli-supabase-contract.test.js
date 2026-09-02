@@ -5,9 +5,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const root = path.resolve(__dirname, '..', '..');
+const root = path.resolve(__dirname, '..', '..', '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
-const server = read('backend/opensphere-console-backend/server.js');
+const server = read('apps/console-api/runtime/server.js');
 const cli = read('cmd/os-cli/cmd/os/main.go');
 const myInfo = read('apps/console-web/src/app/pages/my-info.ts');
 const migration = read('backend/supabase/migrations/0006_cli_identity.sql');

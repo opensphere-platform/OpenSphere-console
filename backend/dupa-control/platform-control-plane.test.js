@@ -180,7 +180,7 @@ test('recovery readiness consumes current Supabase and Gitea evidence, never a l
 });
 
 test('recovery API cannot let a declared state overrule failed structured checks', () => {
-  const recoveryUnit = read('backend', 'opensphere-console-backend', 'recovery-owner.js');
+  const recoveryUnit = read('apps', 'console-api', 'runtime', 'recovery-owner.js');
   assert.match(recoveryUnit, /checks\.some\(\(item\) => item\.verdict !== 'Verified'\)/);
   assert.match(recoveryUnit, /state: attention \? 'AttentionRequired'/);
   assert.match(recoveryUnit, /declaredState/);

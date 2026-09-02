@@ -4,7 +4,7 @@
 
 The application role has no direct table write permission. `console_operation.accept_operation` atomically writes the intent, audit-chain event, and outbox event. `console_operation.approve_operation` records one independent AAL2 approver and atomically advances an approval-required operation from `Planned` to `Authorized` using the caller's expected state version. Registry credential material is used only to calculate the canonical payload digest and is never passed to the store. Extension install intake stores only the C_REG-resolved descriptor ID, catalog revision, and exact image as its non-secret execution plan.
 
-This package does not yet replace the complete legacy Backend. Its current HTTP boundary implements the foundational operation endpoint and the first Registry mutation consumers while the remaining legacy routes stay under controlled migration.
+The component owns two explicit source areas during the cutover. `src/` is the target C_API authority and implements the foundational operation, identity, Gitea, and Registry contracts. `runtime/` contains the previously verified compatibility runtime so no Console API implementation remains hidden under `backend/`. Moving that source establishes ownership; it does not route browser traffic or grant the target deployment legacy Kubernetes authority. The compatibility runtime is retired only after every authenticated browser family is served through the target owner contracts.
 
 ## Runtime
 

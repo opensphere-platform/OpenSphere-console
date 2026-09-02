@@ -16,13 +16,13 @@ $publisher = Join-Path $PSScriptRoot 'Publish-LocalEdge.ps1'
 $registry = 'ghcr.io/opensphere-platform'
 $components = @('backend', 'console')
 $featurePaths = @(
-  'backend/opensphere-console-backend/Dockerfile',
-  'backend/opensphere-console-backend/browser-session.js',
-  'backend/opensphere-console-backend/browser-session.test.js',
-  'backend/opensphere-console-backend/mfa-assurance.test.js',
-  'backend/opensphere-console-backend/profile-avatar.js',
-  'backend/opensphere-console-backend/profile-avatar.test.js',
-  'backend/opensphere-console-backend/server.js',
+  'apps/console-api/runtime/Dockerfile',
+  'apps/console-api/runtime/browser-session.js',
+  'apps/console-api/runtime/browser-session.test.js',
+  'apps/console-api/runtime/mfa-assurance.test.js',
+  'apps/console-api/runtime/profile-avatar.js',
+  'apps/console-api/runtime/profile-avatar.test.js',
+  'apps/console-api/runtime/server.js',
   'package.json',
   'scripts/Publish-LocalEdgeConsoleSession.ps1',
   'apps/console-web/src/app/core/auth.service.ts',
@@ -37,10 +37,10 @@ $consoleImageInputs = @(
   'apps/console-web/src/app/pages/my-info.ts'
 )
 $backendImageInputs = @(
-  'backend/opensphere-console-backend/Dockerfile',
-  'backend/opensphere-console-backend/browser-session.js',
-  'backend/opensphere-console-backend/profile-avatar.js',
-  'backend/opensphere-console-backend/server.js'
+  'apps/console-api/runtime/Dockerfile',
+  'apps/console-api/runtime/browser-session.js',
+  'apps/console-api/runtime/profile-avatar.js',
+  'apps/console-api/runtime/server.js'
 )
 
 function Invoke-Checked {
@@ -136,7 +136,7 @@ if ((& kubectl config current-context).Trim() -ne 'docker-desktop') {
 }
 
 $setupRoot = (Resolve-Path -LiteralPath $SetupSourcePath).Path
-$setupLock = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'backend\opensphere-console-backend\setup-source.lock')).Trim()
+$setupLock = (Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'apps\console-api\runtime\setup-source.lock')).Trim()
 if ($setupLock -notmatch '^[a-f0-9]{40}$' -or (& git -C $setupRoot rev-parse HEAD).Trim() -ne $setupLock) {
   throw 'SetupSourcePath must be the exact Backend setup-source.lock revision'
 }

@@ -1156,7 +1156,7 @@ $deploymentToolingAllowlist = @(
   'backend/dupa-control/release-channel-workflow.test.js',
   'apps/os-shell-control/deploy.yaml',
   'apps/os-shell-control/deploy.test.js',
-  'backend/opensphere-console-backend/platform-release.test.js'
+  'apps/console-api/runtime/platform-release.test.js'
 )
 $boundaryEvidence = $null
 $backendBoundaryEvidence = $null
@@ -1409,7 +1409,7 @@ foreach ($service in $expectedControlServices) {
     throw "OS Shell manifest is missing exact Service $service"
   }
 }
-$backendManifestSource = Get-Content -Raw -LiteralPath (Join-Path $consoleRoot 'backend\opensphere-console-backend\deploy.yaml')
+$backendManifestSource = Get-Content -Raw -LiteralPath (Join-Path $consoleRoot 'apps\console-api\runtime\deploy.yaml')
 foreach ($profile in $privateTlsProfiles) {
   $mountAuthoritySource = if ([string]$profile.Deployment -eq 'opensphere-console-backend') { $backendManifestSource } else { $manifestSource }
   if ($mountAuthoritySource -notmatch "secretName:\s*$([regex]::Escape([string]$profile.Secret))") {

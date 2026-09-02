@@ -6,15 +6,15 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const backendSource = readFileSync(join(__dirname, 'server.js'), 'utf8');
-const gatewaySource = readFileSync(join(__dirname, '..', '..', 'apps', 'osaa-gateway', 'server.js'), 'utf8');
-const conversationStore = readFileSync(join(__dirname, '..', '..', 'apps', 'osdst', 'conversation-store.js'), 'utf8');
-const osdstSource = readFileSync(join(__dirname, '..', '..', 'apps', 'osdst', 'server.js'), 'utf8');
-const osdstDeploy = readFileSync(join(__dirname, '..', '..', 'apps', 'osdst', 'deploy.yaml'), 'utf8');
-const migration = readFileSync(join(__dirname, '..', 'supabase', 'migrations', '0072_osaa_dialogue_maintenance_identity.sql'), 'utf8');
-const installer = readFileSync(join(__dirname, '..', 'supabase', 'install.ps1'), 'utf8');
+const gatewaySource = readFileSync(join(__dirname, '..', '..', 'osaa-gateway', 'server.js'), 'utf8');
+const conversationStore = readFileSync(join(__dirname, '..', '..', 'osdst', 'conversation-store.js'), 'utf8');
+const osdstSource = readFileSync(join(__dirname, '..', '..', 'osdst', 'server.js'), 'utf8');
+const osdstDeploy = readFileSync(join(__dirname, '..', '..', 'osdst', 'deploy.yaml'), 'utf8');
+const migration = readFileSync(join(__dirname, '..', '..', '..', 'backend', 'supabase', 'migrations', '0072_osaa_dialogue_maintenance_identity.sql'), 'utf8');
+const installer = readFileSync(join(__dirname, '..', '..', '..', 'backend', 'supabase', 'install.ps1'), 'utf8');
 const backendDockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
 const backendDeploy = readFileSync(join(__dirname, 'deploy.yaml'), 'utf8');
-const gatewayDeploy = readFileSync(join(__dirname, '..', '..', 'apps', 'osaa-gateway', 'deploy.yaml'), 'utf8');
+const gatewayDeploy = readFileSync(join(__dirname, '..', '..', 'osaa-gateway', 'deploy.yaml'), 'utf8');
 
 test('OSDST owns dialogue recovery through one direct scoped database login', () => {
   assert.match(installer, /CREATE ROLE opensphere_osaa_dialogue_maintenance LOGIN PASSWORD/);

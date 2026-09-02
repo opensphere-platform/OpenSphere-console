@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = fs.readFileSync(path.join(root, 'scripts', 'Publish-LocalEdgeBackendBridge.ps1'), 'utf8');
-const backend = fs.readFileSync(path.join(root, 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
+const backend = fs.readFileSync(path.join(root, 'apps', 'console-api', 'runtime', 'server.js'), 'utf8');
 const featureOperation = fs.readFileSync(path.join(root, 'scripts', 'Invoke-OsShellFeatureOperation.ps1'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'backend', 'supabase', 'migrations',
   '0064_shell_feature_release_ledger_contract.sql'), 'utf8');

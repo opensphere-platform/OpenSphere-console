@@ -47,7 +47,7 @@ test('release Job admission applies only to the reserved executor service accoun
 });
 
 test('failed local-edge automation remains retryable by an authenticated administrator', () => {
-  const ui = fs.readFileSync(path.join(directory, '..', '..', 'apps', 'console-web', 'src', 'app', 'pages', 'admin-change-control.ts'), 'utf8');
+  const ui = fs.readFileSync(path.join(directory, '..', '..', 'console-web', 'src', 'app', 'pages', 'admin-change-control.ts'), 'utf8');
   assert.match(ui, /@else if \(canRetry\(change\)\)/);
   assert.match(ui, /isLocalEdgeAutomation\(change: ChangeRequest\): boolean \{ return change[.]actor_type === 'service' && change[.]target === 'opensphere-platform'; \}/);
   assert.match(ui, /change[.]status === 'failed' && \(this[.]isApprovalApplied\(change\) \|\| this[.]isLocalEdgeAutomation\(change\)\)/);
@@ -373,9 +373,9 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   const server = fs.readFileSync(path.join(directory, 'server.js'), 'utf8');
   const deploy = fs.readFileSync(path.join(directory, 'deploy.yaml'), 'utf8');
   const dockerfile = fs.readFileSync(path.join(directory, 'Dockerfile'), 'utf8');
-  const migration = fs.readFileSync(path.join(directory, '..', 'supabase', 'migrations', '0033_platform_release_consumer.sql'), 'utf8');
-  const ui = fs.readFileSync(path.join(directory, '..', '..', 'apps', 'console-web', 'src', 'app', 'pages', 'admin-platform-release.ts'), 'utf8');
-  const deployer = fs.readFileSync(path.join(directory, '..', '..', 'scripts', 'Invoke-LocalEdgePlatformRelease.ps1'), 'utf8');
+  const migration = fs.readFileSync(path.join(directory, '..', '..', '..', 'backend', 'supabase', 'migrations', '0033_platform_release_consumer.sql'), 'utf8');
+  const ui = fs.readFileSync(path.join(directory, '..', '..', 'console-web', 'src', 'app', 'pages', 'admin-platform-release.ts'), 'utf8');
+  const deployer = fs.readFileSync(path.join(directory, '..', '..', '..', 'scripts', 'Invoke-LocalEdgePlatformRelease.ps1'), 'utf8');
 
   assert.match(server, /validatePlatformReleaseDesiredState/);
   assert.match(server, /previousReleaseDigest !== installed\.summary\.releaseDigest/);
@@ -420,7 +420,7 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.doesNotMatch(deployer, /kubectl\s+(?:apply|patch|set|replace|delete)/i);
   assert.doesNotMatch(deployer, /SkipCertificateCheck|--insecure|-k\b/);
   assert.match(dockerfile, /COPY --from=setup-cli src \/app\/opensphere-setup-cli\/src/);
-  assert.match(dockerfile, /COPY backend\/opensphere-console-backend\/platform-release-agent-identity-cutover\.js/);
+  assert.match(dockerfile, /COPY apps\/console-api\/runtime\/platform-release-agent-identity-cutover\.js/);
   assert.match(dockerfile, /registry\.k8s\.io\/kubectl@sha256:/);
   assert.match(dockerfile, /node:24-bookworm-slim@sha256:/);
   assert.match(dockerfile, /powershell-7\.5\.7-linux-\$\{PS_ARCH\}\.tar\.gz/);
@@ -446,7 +446,7 @@ test('Platform Release runtime is isolated from browser and local workstation ex
 
 test('session preference release publishes only the Console and Backend component pair', () => {
   const publisher = fs.readFileSync(
-    path.join(directory, '..', '..', 'scripts', 'Publish-LocalEdgeConsoleSession.ps1'),
+    path.join(directory, '..', '..', '..', 'scripts', 'Publish-LocalEdgeConsoleSession.ps1'),
     'utf8',
   );
 
@@ -461,7 +461,7 @@ test('session preference release publishes only the Console and Backend componen
   assert.match(publisher, /merge-base --is-ancestor \$setupLock origin\/main/);
   assert.match(publisher, /SetupSourcePath = \$setupRoot/);
   assert.match(publisher, /src\/app\/core\/auth\.service\.ts/);
-  assert.match(publisher, /backend\/opensphere-console-backend\/browser-session\.js/);
+  assert.match(publisher, /apps\/console-api\/runtime\/browser-session\.js/);
   assert.match(publisher, /Installation lock .* differs from supplied publication evidence/);
   assert.match(publisher, /must not change the Supabase migration lineage/);
   assert.match(publisher, /affectedImages = @\([\s\S]*opensphere-console[\s\S]*opensphere-console-backend/);

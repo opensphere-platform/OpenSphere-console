@@ -201,8 +201,8 @@ test('OSAA Admin distinguishes reachable Gateway health from complete Agent read
 
 test('OSAA credential writes enter the Console Backend policy and audit boundary, never the read-only Gateway mutation path', () => {
   const nginx = read('apps', 'console-web', 'nginx', 'default.conf.template');
-  const backend = read('backend', 'opensphere-console-backend', 'server.js');
-  const backendDeploy = read('backend', 'opensphere-console-backend', 'deploy.yaml');
+  const backend = read('apps', 'console-api', 'runtime', 'server.js');
+  const backendDeploy = read('apps', 'console-api', 'runtime', 'deploy.yaml');
   const gateway = read('apps', 'osaa-gateway', 'server.js');
   const gatewayDeploy = read('apps', 'osaa-gateway', 'deploy.yaml');
   const admin = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
