@@ -229,7 +229,7 @@ export function verifyExtensionControllerDeployment({ documents }) {
   assert(roleBinding.subjects?.length === 1 && roleBinding.subjects[0]?.name === 'opensphere-extension-controller', 'C_EXT RoleBinding has an unexpected subject');
   const permissions = Object.fromEntries((role.rules || []).map((rule) => [rule.resources?.join(','), [...(rule.verbs || [])].sort()]));
   assert(JSON.stringify(permissions.uipluginpackages) === JSON.stringify(['get']), 'C_EXT Package RBAC exceeds its read contract');
-  assert(JSON.stringify(permissions.uipluginregistrations) === JSON.stringify(['create', 'get', 'patch']), 'C_EXT Registration RBAC differs from its apply contract');
+  assert(JSON.stringify(permissions.uipluginregistrations) === JSON.stringify(['create', 'get', 'list', 'patch']), 'C_EXT Registration RBAC differs from its read/apply contract');
   const pod = deployment.spec?.template?.spec;
   const container = pod?.containers?.find(({ name }) => name === 'controller');
   assert(pod?.serviceAccountName === 'opensphere-extension-controller' && pod?.automountServiceAccountToken === true, 'C_EXT pod lost its scoped Kubernetes identity');
@@ -509,6 +509,19 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
 
   const candidateWorkflow = await readFile(resolve(root, '.github', 'workflows', 'publish-candidate-images.yml'), 'utf8');
   const promotionWorkflow = await readFile(resolve(root, '.github', 'workflows', 'promote-release.yml'), 'utf8');
+  const candidateReleaseArtifacts = new Set(
+    (yaml.load(candidateWorkflow)?.jobs?.publish?.strategy?.matrix?.include || []).map(({ image }) => image),
+  );
+  const boundaryReleaseArtifacts = boundary.components.flatMap((component) => [
+    component.artifact,
+    ...(component.auxiliaryArtifacts || []),
+  ]);
+  assert(new Set(boundaryReleaseArtifacts).size === boundaryReleaseArtifacts.length,
+    'component boundaries contain duplicate release artifact names');
+  for (const artifact of boundaryReleaseArtifacts) {
+    assert(candidateReleaseArtifacts.has(artifact),
+      `component boundary artifact differs from the candidate release matrix: ${artifact}`);
+  }
   const beszelReleaseContract = await json(resolve(root, 'deploy', 'baseline-monitoring', 'release-contract.json'));
   assert(beszelReleaseContract.ownerComponent === 'C_API' && beszelReleaseContract.authoritySystem === 'S_HOBS'
     && beszelReleaseContract.adapterComponent === 'API_HOBS' && beszelReleaseContract.requirement === 'CON-FR-011',
