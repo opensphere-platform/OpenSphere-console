@@ -158,6 +158,59 @@ test('Supabase managed-user projection is bounded to one service-role subject', 
   assert.equal(calls[0].init.headers.apikey, serviceRoleKey);
 });
 
+test('Supabase managed-user lifecycle uses only exact admin-user and factor endpoints', async () => {
+  const managedId = '33333333-3333-4333-8333-333333333333';
+  let user = {
+    id: managedId, email: 'viewer@example.test', banned_until: null,
+    user_metadata: { preferred_username: 'viewer', display_name: 'Viewer' },
+    factors: [{ id: 'totp-factor-1', factor_type: 'totp', status: 'verified' }],
+  };
+  const calls = [];
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', serviceRoleKey: 's'.repeat(64), now: () => now,
+    async fetchImpl(url, init) {
+      const path = new URL(url).pathname;
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      calls.push({ path, method: init.method, body });
+      if (path === '/admin/users' && init.method === 'POST') return jsonResponse(user);
+      if (path === `/admin/users/${managedId}` && init.method === 'GET') return jsonResponse(user);
+      if (path === `/admin/users/${managedId}` && init.method === 'PUT') {
+        if (body.user_metadata) user = { ...user, email: body.email, user_metadata: body.user_metadata };
+        if (body.ban_duration) user = { ...user, banned_until: body.ban_duration === 'none' ? null : '2126-09-02T00:00:00.000Z' };
+        return jsonResponse(user);
+      }
+      if (path === '/admin/generate_link' && init.method === 'POST') {
+        return jsonResponse({ id: managedId, action_link: 'http://supabase-auth.test/verify?token=managed-recovery-token&type=recovery&redirect_to=https%3A%2F%2Fconsole.example.test%2Fauth%2Frecovery' });
+      }
+      if (path === `/admin/users/${managedId}/factors/totp-factor-1` && init.method === 'DELETE') {
+        user = { ...user, factors: [] };
+        return emptyResponse();
+      }
+      if (path === `/admin/users/${managedId}` && init.method === 'DELETE') return emptyResponse();
+      return jsonResponse({}, 404);
+    },
+  });
+  assert.deepEqual(await client.createManagedUser({
+    username: 'viewer', displayName: 'Viewer', email: 'viewer@example.test',
+  }), { subjectId: managedId });
+  assert.deepEqual(await client.updateManagedUserProfile({
+    subjectId: managedId, displayName: 'Console Viewer', email: 'console-viewer@example.test',
+  }), { subjectId: managedId, previous: { displayName: 'Viewer', email: 'viewer@example.test' } });
+  assert.deepEqual(await client.setManagedUserEnabled({ subjectId: managedId, enabled: false }), {
+    subjectId: managedId, previousEnabled: true,
+  });
+  const link = await client.createManagedUserRecoveryLink({
+    subjectId: managedId, publicOrigin: 'https://console.example.test',
+    redirectUrl: 'https://console.example.test/auth/recovery',
+  });
+  assert.equal(link.subjectId, managedId);
+  assert.match(link.onboardingPath, /^https:\/\/console[.]example[.]test\/auth\/v1\/verify[?]/u);
+  assert.deepEqual(await client.resetManagedUserTotp(managedId), { subjectId: managedId, removedFactorCount: 1 });
+  await client.deleteManagedUser(managedId);
+  assert.equal(calls.every(({ path }) => path === '/admin/users' || path === '/admin/generate_link' || path.startsWith('/admin/users/' + managedId)), true);
+  assert.equal(calls[0].body.password, undefined);
+});
+
 test('HTTP managed identity routes preserve read and CSRF-bound mutation separation', async (t) => {
   const calls = [];
   const handler = createConsoleApiHandler({
@@ -200,6 +253,136 @@ test('HTTP managed identity routes preserve read and CSRF-bound mutation separat
       },
     },
   ]);
+});
+
+test('managed identity lifecycle keeps five Web actions inside one broker and two DB gates', async () => {
+  const target = '33333333-3333-4333-8333-333333333333';
+  const calls = [];
+  const store = {
+    async resolveSession() {
+      return {
+        sessionId, subjectId, expiresAt: '2026-09-02T12:00:00.000Z',
+        idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+        persistence: '24h', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z', revokedAt: null,
+        authorityFresh: true, permissions: ['console.identity.manage'], permissionRevision: 1, revokeEpoch: 0, aal: 'aal2',
+      };
+    },
+    async issueSession() { throw new Error('login must not run'); },
+    async getPendingMfa() { throw new Error('MFA must not run'); },
+    async activateMfa() { throw new Error('MFA must not run'); },
+    async getRefreshCredentials() { throw new Error('refresh must not run'); },
+    async rotateCredentials() { throw new Error('refresh must not run'); },
+    async rejectRefresh() { throw new Error('refresh must not run'); },
+    async touchActivity() { throw new Error('activity touch must not run'); },
+    ...unusedOwnedSessionMethods(),
+    async prepareManagedIdentityLifecycle(input) {
+      calls.push(['prepare', input]);
+      return { acceptedEventId: '44444444-4444-4444-8444-444444444444', requestDigest: input.requestDigest };
+    },
+    async completeManagedIdentityLifecycle(input) {
+      calls.push(['complete', input]);
+      return {
+        targetSubjectId: input.targetSubjectId, action: input.action,
+        auditEventId: '55555555-5555-4555-8555-555555555555',
+        revokedSessionCount: input.revokeSessions ? 1 : 0,
+      };
+    },
+  };
+  const authClient = {
+    async authenticatePassword() { throw new Error('login must not run'); },
+    async completeTotp() { throw new Error('MFA must not run'); },
+    async refreshSession() { throw new Error('refresh must not run'); },
+    async logout() {},
+    async createManagedUser(input) { calls.push(['auth-create', input]); return { subjectId: target }; },
+    async deleteManagedUser(value) { calls.push(['auth-delete', value]); },
+    async createManagedUserRecoveryLink(input) {
+      calls.push(['auth-link', input]);
+      return { subjectId: input.subjectId, onboardingPath: 'https://console.example.test/auth/v1/verify?token=managed-recovery&type=recovery' };
+    },
+    async updateManagedUserProfile(input) {
+      calls.push(['auth-profile', input]);
+      return { subjectId: input.subjectId, previous: { displayName: 'Previous', email: 'previous@example.test' } };
+    },
+    async setManagedUserEnabled(input) {
+      calls.push(['auth-enabled', input]);
+      return { subjectId: input.subjectId, previousEnabled: !input.enabled };
+    },
+    async resetManagedUserTotp(value) { calls.push(['auth-mfa', value]); return { subjectId: value, removedFactorCount: 2 }; },
+  };
+  const broker = createIdentitySessionBroker({
+    store, authClient,
+    credentialCipher: createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 21) }),
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const request = { headers: {
+    cookie: '__Host-opensphere-session=managed-lifecycle-handle-value-00000001',
+    'x-os-csrf-token': 'managed-lifecycle-csrf-proof',
+  } };
+  const control = { idempotencyKey: 'managed-lifecycle-key-0001', correlationId: 'managed-lifecycle-correlation-0001' };
+  const created = await broker.createManagedIdentity(request, {
+    ...control,
+    body: { username: 'viewer', displayName: 'Viewer', email: 'viewer@example.test', roles: ['console-viewers'], reason: 'create managed viewer identity' },
+  });
+  assert.equal(created.id, target);
+  await broker.updateManagedIdentityProfile(request, {
+    targetSubjectId: target, ...control,
+    body: { displayName: 'Updated Viewer', email: 'updated-viewer@example.test', reason: 'update managed viewer profile' },
+  });
+  const enabled = await broker.setManagedIdentityEnabled(request, {
+    targetSubjectId: target, ...control, body: { enabled: false, reason: 'disable managed viewer identity' },
+  });
+  assert.equal(enabled.revokedSessionCount, 1);
+  const onboarding = await broker.createManagedIdentityOnboardingLink(request, {
+    targetSubjectId: target, ...control, body: { reason: 'issue managed onboarding link' },
+  });
+  assert.match(onboarding.onboardingPath, /managed-recovery/u);
+  const reset = await broker.resetManagedIdentityMfa(request, {
+    targetSubjectId: target, ...control, body: { reason: 'reset managed viewer mfa' },
+  });
+  assert.equal(reset.removedFactorCount, 2);
+  assert.deepEqual(calls.filter(([name]) => name === 'prepare').map(([, input]) => input.action), [
+    'identity.create', 'profile.update', 'enabled.change', 'onboarding.link', 'mfa.reset',
+  ]);
+  assert.deepEqual(calls.filter(([name]) => name === 'complete').map(([, input]) => input.action), [
+    'identity.create', 'profile.update', 'enabled.change', 'onboarding.link', 'mfa.reset',
+  ]);
+  assert.equal(calls.some(([name]) => name === 'auth-delete'), false);
+});
+
+test('HTTP managed identity lifecycle maps only the five existing Web routes', async (t) => {
+  const calls = [];
+  const methods = [
+    ['createManagedIdentity', '/api/identity/users', 201, { username: 'viewer', displayName: 'Viewer', email: 'viewer@example.test', roles: [], reason: 'create managed viewer identity' }],
+    ['updateManagedIdentityProfile', `/api/identity/users/${subjectId}/attrs`, 200, { displayName: 'Viewer', email: 'viewer@example.test', reason: 'update managed viewer profile' }],
+    ['setManagedIdentityEnabled', `/api/identity/users/${subjectId}/enabled`, 200, { enabled: false, reason: 'disable managed viewer identity' }],
+    ['createManagedIdentityOnboardingLink', `/api/identity/users/${subjectId}/onboarding`, 200, { reason: 'issue managed onboarding link' }],
+    ['resetManagedIdentityMfa', `/api/identity/users/${subjectId}/mfa/reset`, 200, { reason: 'reset managed viewer mfa' }],
+  ];
+  const identitySessionBroker = Object.fromEntries(methods.map(([name]) => [name, async (_request, input) => {
+    calls.push([name, input]);
+    return { ok: true };
+  }]));
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('generic session resolution must not run'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {}, identitySessionBroker,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  for (const [, path, status, body] of methods) {
+    const response = await fetch(base + path, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-os-idempotency-key': 'managed-http-key-0001',
+        'x-os-correlation-id': 'managed-http-correlation-0001',
+      },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, status);
+  }
+  assert.deepEqual(calls.map(([name]) => name), methods.map(([name]) => name));
+  assert.equal(calls.every(([, input]) => input.idempotencyKey === 'managed-http-key-0001'), true);
 });
 
 test('Supabase MFA client binds the verified factor and returns only an aal2 session', async () => {
@@ -438,7 +621,7 @@ test('initial administrator bootstrap creates Auth identity before one atomic Co
     async getInitialAdministratorBootstrapStatus() { return { state: 'required' }; },
     async claimInitialAdministrator(input) {
       calls.push(['claim', input]);
-      return { state: 'complete', subjectId, permissionRevision: 1, permissionCount: 8 };
+      return { state: 'complete', subjectId, permissionRevision: 1, permissionCount: 10 };
     },
   };
   const authClient = {

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-onboarding-response.schema.json",
+  "title": "Managed Console identity onboarding-link result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "targetSubjectId", "onboardingPath"],
+  "properties": {
+    "ok": { "const": true },
+    "targetSubjectId": { "type": "string", "format": "uuid" },
+    "onboardingPath": { "type": "string", "format": "uri", "maxLength": 16384 }
+  }
+}

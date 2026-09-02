@@ -26,6 +26,10 @@ function digest(value) {
   return createHash('sha256').update(value).digest();
 }
 
+function requestDigest(value) {
+  return 'sha256:' + createHash('sha256').update(JSON.stringify(value), 'utf8').digest('hex');
+}
+
 function credentials(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) fail('ValidationFailed', 'login body must be an object', 400);
   const unknown = Object.keys(body).filter((key) => !['email', 'password'].includes(key));
@@ -102,6 +106,90 @@ function managedRoleChangeInput(body) {
     fail('ValidationFailed', 'managed role change is invalid', 400);
   }
   return { operation, role, reason };
+}
+
+function managedSubject(value) {
+  const subjectId = String(value || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(subjectId)) {
+    fail('ValidationFailed', 'managed identity subject is invalid', 400);
+  }
+  return subjectId;
+}
+
+function managedReason(value) {
+  const reason = String(value || '').trim();
+  if (reason.length < 8 || reason.length > 500 || /[\r\n]/u.test(reason)) {
+    fail('ValidationFailed', 'managed identity reason is invalid', 400);
+  }
+  return reason;
+}
+
+function managedIdempotencyKey(value) {
+  const key = String(value || '').trim();
+  if (key.length < 8 || key.length > 256 || /[\r\n]/u.test(key)) {
+    fail('ValidationFailed', 'managed identity idempotency key is invalid', 400);
+  }
+  return key;
+}
+
+function managedCreateInput(body, idempotencyKey) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    fail('ValidationFailed', 'managed identity creation body must be an object', 400);
+  }
+  const unknown = Object.keys(body).filter((key) => !['username', 'displayName', 'email', 'roles', 'reason'].includes(key));
+  const username = String(body.username || '').trim().toLowerCase();
+  const displayName = String(body.displayName || '').trim();
+  const email = String(body.email || '').trim().toLowerCase();
+  const roles = Array.isArray(body.roles) ? body.roles.map((role) => String(role).trim()) : [];
+  const uniqueRoles = [...new Set(roles)].sort();
+  if (unknown.length || !/^[a-z][a-z0-9._-]{1,62}$/u.test(username)
+      || displayName.length < 1 || displayName.length > 120
+      || /[\r\n\u0000-\u001f\u007f]/u.test(displayName)
+      || email.length < 3 || email.length > 254 || !/^[^@\s]+@[^@\s]+[.][^@\s]+$/u.test(email)
+      || uniqueRoles.length !== roles.length || uniqueRoles.some((role) => !MANAGED_ROLES.has(role))) {
+    fail('ValidationFailed', 'managed identity creation input is invalid', 400);
+  }
+  return { username, displayName, email, roles: uniqueRoles, reason: managedReason(body.reason), idempotencyKey: managedIdempotencyKey(idempotencyKey) };
+}
+
+function managedProfileInput(body, idempotencyKey) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['displayName', 'email', 'reason'].includes(key))) {
+    fail('ValidationFailed', 'managed identity profile body is invalid', 400);
+  }
+  const displayName = String(body.displayName || '').trim();
+  const email = String(body.email || '').trim().toLowerCase();
+  if (displayName.length < 1 || displayName.length > 120
+      || /[\r\n\u0000-\u001f\u007f]/u.test(displayName)
+      || email.length < 3 || email.length > 254 || !/^[^@\s]+@[^@\s]+[.][^@\s]+$/u.test(email)) {
+    fail('ValidationFailed', 'managed identity profile input is invalid', 400);
+  }
+  return { displayName, email, reason: managedReason(body.reason), idempotencyKey: managedIdempotencyKey(idempotencyKey) };
+}
+
+function managedEnabledInput(body, idempotencyKey) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).some((key) => !['enabled', 'reason'].includes(key))
+      || typeof body.enabled !== 'boolean') {
+    fail('ValidationFailed', 'managed identity enabled body is invalid', 400);
+  }
+  return { enabled: body.enabled, reason: managedReason(body.reason), idempotencyKey: managedIdempotencyKey(idempotencyKey) };
+}
+
+function managedReasonInput(body, idempotencyKey) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'reason')) {
+    fail('ValidationFailed', 'managed identity action requires exactly reason', 400);
+  }
+  return { reason: managedReason(body.reason), idempotencyKey: managedIdempotencyKey(idempotencyKey) };
+}
+
+function uncertain(error, message) {
+  if (error && typeof error === 'object') {
+    error.sideEffect = 'unknown';
+    return error;
+  }
+  return Object.assign(new Error(message), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'unknown' });
 }
 
 async function mapBounded(items, mapper, concurrency = 8) {
@@ -284,6 +372,175 @@ export function createIdentitySessionBroker({
         revokedSessionCount: Number(changed.revokedSessionCount || 0),
         replayed: Boolean(changed.replayed),
       });
+    },
+
+    async createManagedIdentity(request, { body, idempotencyKey, correlationId }) {
+      if (!store?.prepareManagedIdentityLifecycle || !store?.completeManagedIdentityLifecycle
+          || !authClient?.createManagedUser || !authClient?.deleteManagedUser
+          || !authClient?.createManagedUserRecoveryLink) {
+        fail('AuthorityUnavailable', 'managed identity lifecycle authority is unavailable', 503);
+      }
+      const input = managedCreateInput(body, idempotencyKey);
+      const session = await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const action = 'identity.create';
+      const requestHash = requestDigest({ action, username: input.username, displayName: input.displayName, email: input.email, roles: input.roles, reason: input.reason });
+      await store.prepareManagedIdentityLifecycle({
+        sessionId: session.sessionId, actorRef: session.subjectId,
+        expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+        targetSubjectId: null, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+        roles: input.roles, enabled: null, reason: input.reason, correlationId,
+      });
+      let created;
+      try {
+        created = await authClient.createManagedUser(input);
+        const link = await authClient.createManagedUserRecoveryLink({
+          subjectId: created.subjectId, publicOrigin: origin, redirectUrl: origin + '/auth/recovery',
+        });
+        await store.completeManagedIdentityLifecycle({
+          sessionId: session.sessionId, actorRef: session.subjectId,
+          expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+          targetSubjectId: created.subjectId, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+          roles: input.roles, enabled: null, revokeSessions: false, effectCount: 0,
+          reason: input.reason, correlationId,
+        });
+        return Object.freeze({ ok: true, id: created.subjectId, username: input.username, roles: Object.freeze(input.roles), onboardingPath: link.onboardingPath });
+      } catch (error) {
+        if (created?.subjectId) {
+          try { await authClient.deleteManagedUser(created.subjectId); }
+          catch { throw uncertain(error, 'managed identity creation cleanup failed'); }
+        }
+        throw error;
+      }
+    },
+
+    async updateManagedIdentityProfile(request, { targetSubjectId, body, idempotencyKey, correlationId }) {
+      if (!store?.prepareManagedIdentityLifecycle || !store?.completeManagedIdentityLifecycle
+          || !authClient?.updateManagedUserProfile) {
+        fail('AuthorityUnavailable', 'managed identity lifecycle authority is unavailable', 503);
+      }
+      const target = managedSubject(targetSubjectId);
+      const input = managedProfileInput(body, idempotencyKey);
+      const session = await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const action = 'profile.update';
+      const requestHash = requestDigest({ action, target, displayName: input.displayName, email: input.email, reason: input.reason });
+      await store.prepareManagedIdentityLifecycle({
+        sessionId: session.sessionId, actorRef: session.subjectId,
+        expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+        targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+        roles: [], enabled: null, reason: input.reason, correlationId,
+      });
+      const changed = await authClient.updateManagedUserProfile({ subjectId: target, displayName: input.displayName, email: input.email });
+      try {
+        await store.completeManagedIdentityLifecycle({
+          sessionId: session.sessionId, actorRef: session.subjectId,
+          expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+          targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+          roles: [], enabled: null, revokeSessions: false, effectCount: 0, reason: input.reason, correlationId,
+        });
+      } catch (error) {
+        try { await authClient.updateManagedUserProfile({ subjectId: target, ...changed.previous }); }
+        catch { throw uncertain(error, 'managed identity profile rollback failed'); }
+        throw error;
+      }
+      return Object.freeze({ ok: true, targetSubjectId: target });
+    },
+
+    async setManagedIdentityEnabled(request, { targetSubjectId, body, idempotencyKey, correlationId }) {
+      if (!store?.prepareManagedIdentityLifecycle || !store?.completeManagedIdentityLifecycle
+          || !authClient?.setManagedUserEnabled) {
+        fail('AuthorityUnavailable', 'managed identity lifecycle authority is unavailable', 503);
+      }
+      const target = managedSubject(targetSubjectId);
+      const input = managedEnabledInput(body, idempotencyKey);
+      const session = await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const action = 'enabled.change';
+      const requestHash = requestDigest({ action, target, enabled: input.enabled, reason: input.reason });
+      await store.prepareManagedIdentityLifecycle({
+        sessionId: session.sessionId, actorRef: session.subjectId,
+        expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+        targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+        roles: [], enabled: input.enabled, reason: input.reason, correlationId,
+      });
+      const changed = await authClient.setManagedUserEnabled({ subjectId: target, enabled: input.enabled });
+      try {
+        const completed = await store.completeManagedIdentityLifecycle({
+          sessionId: session.sessionId, actorRef: session.subjectId,
+          expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+          targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+          roles: [], enabled: input.enabled, revokeSessions: true, effectCount: 0, reason: input.reason, correlationId,
+        });
+        return Object.freeze({ ok: true, targetSubjectId: target, enabled: input.enabled, revokedSessionCount: Number(completed.revokedSessionCount || 0) });
+      } catch (error) {
+        try { await authClient.setManagedUserEnabled({ subjectId: target, enabled: changed.previousEnabled }); }
+        catch { throw uncertain(error, 'managed identity enabled-state rollback failed'); }
+        throw error;
+      }
+    },
+
+    async createManagedIdentityOnboardingLink(request, { targetSubjectId, body, idempotencyKey, correlationId }) {
+      if (!store?.prepareManagedIdentityLifecycle || !store?.completeManagedIdentityLifecycle
+          || !authClient?.createManagedUserRecoveryLink) {
+        fail('AuthorityUnavailable', 'managed identity lifecycle authority is unavailable', 503);
+      }
+      const target = managedSubject(targetSubjectId);
+      const input = managedReasonInput(body, idempotencyKey);
+      const session = await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const action = 'onboarding.link';
+      const requestHash = requestDigest({ action, target, reason: input.reason });
+      await store.prepareManagedIdentityLifecycle({
+        sessionId: session.sessionId, actorRef: session.subjectId,
+        expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+        targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+        roles: [], enabled: null, reason: input.reason, correlationId,
+      });
+      const link = await authClient.createManagedUserRecoveryLink({ subjectId: target, publicOrigin: origin, redirectUrl: origin + '/auth/recovery' });
+      try {
+        await store.completeManagedIdentityLifecycle({
+          sessionId: session.sessionId, actorRef: session.subjectId,
+          expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+          targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+          roles: [], enabled: null, revokeSessions: false, effectCount: 0, reason: input.reason, correlationId,
+        });
+      } catch (error) {
+        throw uncertain(error, 'managed identity onboarding-link completion failed');
+      }
+      return Object.freeze({ ok: true, targetSubjectId: target, onboardingPath: link.onboardingPath });
+    },
+
+    async resetManagedIdentityMfa(request, { targetSubjectId, body, idempotencyKey, correlationId }) {
+      if (!store?.prepareManagedIdentityLifecycle || !store?.completeManagedIdentityLifecycle
+          || !authClient?.resetManagedUserTotp) {
+        fail('AuthorityUnavailable', 'managed identity lifecycle authority is unavailable', 503);
+      }
+      const target = managedSubject(targetSubjectId);
+      const input = managedReasonInput(body, idempotencyKey);
+      const session = await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const action = 'mfa.reset';
+      const requestHash = requestDigest({ action, target, reason: input.reason });
+      await store.prepareManagedIdentityLifecycle({
+        sessionId: session.sessionId, actorRef: session.subjectId,
+        expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+        targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+        roles: [], enabled: null, reason: input.reason, correlationId,
+      });
+      const reset = await authClient.resetManagedUserTotp(target);
+      try {
+        const completed = await store.completeManagedIdentityLifecycle({
+          sessionId: session.sessionId, actorRef: session.subjectId,
+          expectedPermissionRevision: session.permissionRevision, expectedRevokeEpoch: session.revokeEpoch,
+          targetSubjectId: target, action, requestDigest: requestHash, idempotencyKey: input.idempotencyKey,
+          roles: [], enabled: null, revokeSessions: true, effectCount: reset.removedFactorCount,
+          reason: input.reason, correlationId,
+        });
+        return Object.freeze({
+          ok: true, targetSubjectId: target, removedFactorCount: reset.removedFactorCount,
+          revokedSessionCount: Number(completed.revokedSessionCount || 0),
+          reloginRequired: reset.removedFactorCount > 0,
+          enrollmentPath: '/me?tab=security&enroll=totp',
+        });
+      } catch (error) {
+        throw uncertain(error, 'managed identity MFA-reset completion failed');
+      }
     },
 
     async getProfileAvatar(request, { correlationId } = {}) {
@@ -486,7 +743,7 @@ export function createIdentitySessionBroker({
           correlationId,
         });
         if (claimed?.state !== 'complete' || String(claimed?.subjectId || '') !== created.subjectId
-            || Number(claimed?.permissionRevision) !== 1 || Number(claimed?.permissionCount) !== 8) {
+            || Number(claimed?.permissionRevision) !== 1 || Number(claimed?.permissionCount) !== 10) {
           fail('AuthorityUnavailable', 'initial administrator authority returned an invalid receipt', 503);
         }
         return Object.freeze({ state: 'complete' });

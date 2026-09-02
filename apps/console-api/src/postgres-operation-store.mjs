@@ -130,6 +130,21 @@ const CHANGE_MANAGED_IDENTITY_ROLE_SQL = [
   ') AS role_change',
 ].join(' ');
 
+const PREPARE_MANAGED_IDENTITY_LIFECYCLE_SQL = [
+  'SELECT console_identity.prepare_managed_identity_lifecycle(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid, $6::text,',
+  '$7::text, $8::text, $9::text[], $10::boolean, $11::text, $12::text',
+  ') AS lifecycle_record',
+].join(' ');
+
+const COMPLETE_MANAGED_IDENTITY_LIFECYCLE_SQL = [
+  'SELECT console_identity.complete_managed_identity_lifecycle(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid, $6::text,',
+  '$7::text, $8::text, $9::text[], $10::boolean, $11::boolean, $12::integer,',
+  '$13::text, $14::text',
+  ') AS lifecycle_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -217,7 +232,7 @@ function databaseError(error) {
     'SelfApprovalDenied', 'ApprovalNotRequired', 'StaleRevision',
     'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
     'ObservationMismatch', 'NotFound', 'RefreshNotRequired', 'BootstrapComplete',
-    'RoleContinuityRequired', 'InventoryLimitExceeded',
+    'RoleContinuityRequired', 'InventoryLimitExceeded', 'IdempotencyReplayUnavailable', 'Conflict',
   ]);
   const mapped = known.has(code) ? code : 'AuthorityUnavailable';
   const status = {
@@ -243,6 +258,8 @@ function databaseError(error) {
     BootstrapComplete: 409,
     RoleContinuityRequired: 409,
     InventoryLimitExceeded: 409,
+    IdempotencyReplayUnavailable: 409,
+    Conflict: 409,
   }[mapped];
   const messages = {
     ValidationFailed: 'operation request failed database validation',
@@ -267,10 +284,13 @@ function databaseError(error) {
     BootstrapComplete: 'initial administrator bootstrap is already complete',
     RoleContinuityRequired: 'at least one Console administrator must remain',
     InventoryLimitExceeded: 'managed identity inventory exceeds the bounded Console view',
+    IdempotencyReplayUnavailable: 'managed identity response material cannot be replayed',
+    Conflict: 'managed identity state conflicts with the request',
   };
   return Object.assign(new Error(messages[mapped]), {
     code: mapped,
     status,
+    ...(mapped === 'IdempotencyReplayUnavailable' ? { sideEffect: 'unknown' } : {}),
     cause: error,
   });
 }
@@ -602,6 +622,60 @@ export function createPostgresOperationStore({ query }) {
           throw new Error('change_managed_identity_role returned no result');
         }
         return changed;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async prepareManagedIdentityLifecycle(input) {
+      try {
+        const result = await query(PREPARE_MANAGED_IDENTITY_LIFECYCLE_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.targetSubjectId ?? null,
+          input.action,
+          input.requestDigest,
+          input.idempotencyKey,
+          input.roles ?? [],
+          input.enabled ?? null,
+          input.reason,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.lifecycle_record;
+        if (!record?.acceptedEventId || record?.requestDigest !== input.requestDigest) {
+          throw new Error('prepare_managed_identity_lifecycle returned no result');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async completeManagedIdentityLifecycle(input) {
+      try {
+        const result = await query(COMPLETE_MANAGED_IDENTITY_LIFECYCLE_SQL, [
+          input.sessionId,
+          input.actorRef,
+          input.expectedPermissionRevision,
+          input.expectedRevokeEpoch,
+          input.targetSubjectId,
+          input.action,
+          input.requestDigest,
+          input.idempotencyKey,
+          input.roles ?? [],
+          input.enabled ?? null,
+          input.revokeSessions,
+          input.effectCount ?? 0,
+          input.reason,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.lifecycle_record;
+        if (!record?.targetSubjectId || record?.action !== input.action || !record?.auditEventId) {
+          throw new Error('complete_managed_identity_lifecycle returned no result');
+        }
+        return record;
       } catch (error) {
         throw databaseError(error);
       }

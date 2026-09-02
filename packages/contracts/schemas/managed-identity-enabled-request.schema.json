@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-enabled-request.schema.json",
+  "title": "Managed Console identity enabled-state change",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enabled", "reason"],
+  "properties": {
+    "enabled": { "type": "boolean" },
+    "reason": { "type": "string", "minLength": 8, "maxLength": 500, "pattern": "^[^\\r\\n]+$" }
+  }
+}

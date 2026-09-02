@@ -172,7 +172,7 @@ try {
     initialAdministratorSingleWinner: true,
     losingAuthUserCleaned: true,
     exactOriginDeniedBeforeAuthWrite: true,
-    permissionCount: 8,
+    permissionCount: 10,
   }) + '\n');
 } finally {
   await admin.end().catch(() => {});

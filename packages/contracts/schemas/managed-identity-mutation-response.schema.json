@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-mutation-response.schema.json",
+  "title": "Managed Console identity mutation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "targetSubjectId"],
+  "properties": {
+    "ok": { "const": true },
+    "targetSubjectId": { "type": "string", "format": "uuid" },
+    "enabled": { "type": "boolean" },
+    "revokedSessionCount": { "type": "integer", "minimum": 0 }
+  }
+}

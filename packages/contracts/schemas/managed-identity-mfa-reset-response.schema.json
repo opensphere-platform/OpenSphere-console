@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-mfa-reset-response.schema.json",
+  "title": "Managed Console identity MFA-reset result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "targetSubjectId", "removedFactorCount", "revokedSessionCount", "reloginRequired", "enrollmentPath"],
+  "properties": {
+    "ok": { "const": true },
+    "targetSubjectId": { "type": "string", "format": "uuid" },
+    "removedFactorCount": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "revokedSessionCount": { "type": "integer", "minimum": 0 },
+    "reloginRequired": { "type": "boolean" },
+    "enrollmentPath": { "const": "/me?tab=security&enroll=totp" }
+  }
+}

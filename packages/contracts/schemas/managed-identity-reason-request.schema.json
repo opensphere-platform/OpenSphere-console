@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-reason-request.schema.json",
+  "title": "Managed Console identity reason-only action",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reason"],
+  "properties": {
+    "reason": { "type": "string", "minLength": 8, "maxLength": 500, "pattern": "^[^\\r\\n]+$" }
+  }
+}

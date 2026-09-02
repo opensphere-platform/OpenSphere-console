@@ -129,6 +129,17 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
         return send(response, 200, await identitySessionBroker.listManagedIdentities(request, { correlationId }));
       }
+      if (url.pathname === '/api/identity/users' && request.method === 'POST') {
+        if (!identitySessionBroker?.createManagedIdentity) {
+          throw Object.assign(new Error('managed identity creation is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 201, await identitySessionBroker.createManagedIdentity(request, {
+          body: await jsonBody(request),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
+          correlationId,
+        }));
+      }
       const managedRoleMatch = url.pathname.match(/^\/api\/identity\/users\/([0-9a-fA-F-]{36})\/group$/u);
       if (managedRoleMatch && request.method === 'POST') {
         if (!identitySessionBroker?.changeManagedIdentityRole) {
@@ -137,6 +148,26 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
         return send(response, 200, await identitySessionBroker.changeManagedIdentityRole(request, {
           targetSubjectId: managedRoleMatch[1], body: await jsonBody(request), correlationId,
+        }));
+      }
+      const managedLifecycleMatch = url.pathname.match(/^\/api\/identity\/users\/([0-9a-fA-F-]{36})\/(attrs|enabled|onboarding|mfa\/reset)$/u);
+      if (managedLifecycleMatch && request.method === 'POST') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        const [, targetSubjectId, action] = managedLifecycleMatch;
+        const method = {
+          attrs: 'updateManagedIdentityProfile',
+          enabled: 'setManagedIdentityEnabled',
+          onboarding: 'createManagedIdentityOnboardingLink',
+          'mfa/reset': 'resetManagedIdentityMfa',
+        }[action];
+        if (!identitySessionBroker?.[method]) {
+          throw Object.assign(new Error('managed identity lifecycle action is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return send(response, 200, await identitySessionBroker[method](request, {
+          targetSubjectId,
+          body: await jsonBody(request),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
+          correlationId,
         }));
       }
       if (url.pathname === '/api/identity/session/events' && request.method === 'GET') {

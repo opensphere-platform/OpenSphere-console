@@ -86,6 +86,37 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "503":
           $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/users:
+    post:
+      operationId: createManagedIdentity
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-authority: SupabaseAuthAndPermissionGrant
+      x-opensphere-permission: console.identity.manage
+      x-opensphere-risk: R2
+      x-opensphere-idempotency: accepted-intent-key
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/managed-identity-create-request.schema.json"
+      responses:
+        "201":
+          description: Supabase Auth subject, closed role grants, audit receipt, and one-time onboarding link were created
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/managed-identity-create-response.schema.json"
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
   /api/identity/users/{subjectId}/group:
     parameters:
       - name: subjectId
@@ -129,6 +160,154 @@ paths:
           $ref: "#/components/responses/StepUpRequired"
         "503":
           $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/users/{subjectId}/attrs:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: updateManagedIdentityProfile
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-authority: SupabaseAuthAndCurrentAuthority
+      x-opensphere-permission: self-or-console.identity.manage
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: accepted-intent-key
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/managed-identity-profile-update-request.schema.json"
+      responses:
+        "200":
+          description: Exact Supabase Auth subject profile was updated and completion was audited
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/managed-identity-mutation-response.schema.json"
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
+  /api/identity/users/{subjectId}/enabled:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: setManagedIdentityEnabled
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-authority: SupabaseAuthAndPermissionGrant
+      x-opensphere-permission: console.identity.manage
+      x-opensphere-risk: R2
+      x-opensphere-idempotency: accepted-intent-key
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/managed-identity-enabled-request.schema.json"
+      responses:
+        "200":
+          description: Supabase Auth enabled state was confirmed and target Console sessions were revoked
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/managed-identity-mutation-response.schema.json"
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
+  /api/identity/users/{subjectId}/onboarding:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: createManagedIdentityOnboardingLink
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-authority: SupabaseAuthAndPermissionGrant
+      x-opensphere-permission: console.identity.manage
+      x-opensphere-risk: R2
+      x-opensphere-idempotency: one-time-material-not-replayable
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/managed-identity-reason-request.schema.json"
+      responses:
+        "200":
+          description: Same-origin one-time Supabase recovery link was issued for the exact managed subject
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/managed-identity-onboarding-response.schema.json"
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
+  /api/identity/users/{subjectId}/mfa/reset:
+    parameters:
+      - name: subjectId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: resetManagedIdentityMfa
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-008
+      x-opensphere-authority: SupabaseAuthAndPermissionGrant
+      x-opensphere-permission: console.identity.manage
+      x-opensphere-risk: R2
+      x-opensphere-idempotency: accepted-intent-key
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/managed-identity-reason-request.schema.json"
+      responses:
+        "200":
+          description: Exact subject TOTP factors and target Console sessions were removed
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/managed-identity-mfa-reset-response.schema.json"
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
   /api/identity/session/preference:
     get:
       operationId: getSessionPreference

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-create-response.schema.json",
+  "title": "Managed Console identity creation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "id", "username", "roles", "onboardingPath"],
+  "properties": {
+    "ok": { "const": true },
+    "id": { "type": "string", "format": "uuid" },
+    "username": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{1,62}$" },
+    "roles": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "enum": ["console-admins", "console-operators", "console-viewers"] }
+    },
+    "onboardingPath": { "type": "string", "format": "uri", "maxLength": 16384 }
+  }
+}

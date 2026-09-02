@@ -20,6 +20,7 @@ const origin = 'http://127.0.0.1:' + port;
 const publicOrigin = 'https://console.integration.test';
 const loginSubjectId = '11111111-1111-4111-8111-111111111111';
 const managedTargetSubjectId = '77777777-7777-4777-8777-777777777777';
+const managedCreatedSubjectId = 'aaaaaaaa-0000-4000-8000-000000000888';
 function integrationAccessToken({ aal, expiresInSeconds, sessionId, amr }) {
   return [
   Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
@@ -107,6 +108,16 @@ const installImage = 'ghcr.io/opensphere-platform/opensphere-plugin-workspace@' 
 const serviceRoleKey = 'integration-service-role-' + 's'.repeat(64);
 let recoveryLinkRequests = 0;
 let registration = null;
+const managedAuthUsers = new Map([[
+  managedTargetSubjectId,
+  {
+    id: managedTargetSubjectId,
+    email: 'viewer@opensphere.test',
+    banned_until: null,
+    user_metadata: { preferred_username: 'viewer', display_name: 'Console Viewer' },
+    factors: [{ id: 'managed-target-factor-1', factor_type: 'totp', status: 'verified' }],
+  },
+]]);
 const authorityServer = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -171,18 +182,39 @@ const authorityServer = createServer(async (request, response) => {
   if (request.url === '/admin/generate_link' && request.method === 'POST') {
     assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
     assert.equal(request.headers.apikey, serviceRoleKey);
-    assert.deepEqual(requestBody, {
-      type: 'recovery',
-      email: 'operator@opensphere.test',
-      redirect_to: publicOrigin + '/auth/recovery',
-    });
+    assert.equal(requestBody?.type, 'recovery');
+    assert.equal(requestBody?.redirect_to, publicOrigin + '/auth/recovery');
+    const managedEntry = [...managedAuthUsers.values()].find((candidate) => candidate.email === requestBody?.email);
+    assert.ok(requestBody?.email === 'operator@opensphere.test' || managedEntry);
+    const recoverySubjectId = managedEntry?.id || loginSubjectId;
     recoveryLinkRequests += 1;
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
-      id: loginSubjectId,
-      action_link: authorityOrigin + '/verify?token=integration-recovery-link-token&type=recovery&redirect_to='
+      id: recoverySubjectId,
+      action_link: authorityOrigin + '/verify?token=integration-recovery-link-token-' + recoverySubjectId.slice(0, 8) + '&type=recovery&redirect_to='
         + encodeURIComponent(publicOrigin + '/auth/recovery'),
     }));
+    return;
+  }
+  if (request.url === '/admin/users' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
+    assert.equal(request.headers.apikey, serviceRoleKey);
+    assert.deepEqual(requestBody, {
+      email: 'new-viewer@opensphere.test',
+      email_confirm: true,
+      user_metadata: { preferred_username: 'new-viewer', display_name: 'New Console Viewer' },
+    });
+    const created = {
+      id: managedCreatedSubjectId,
+      email: requestBody.email,
+      banned_until: null,
+      user_metadata: requestBody.user_metadata,
+      factors: [],
+    };
+    managedAuthUsers.set(managedCreatedSubjectId, created);
+    await admin.query('INSERT INTO auth.users(id) VALUES ($1) ON CONFLICT DO NOTHING', [managedCreatedSubjectId]);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(created));
     return;
   }
   const managedUserMatch = request.url?.match(/^\/admin\/users\/([0-9a-f-]{36})$/u);
@@ -190,18 +222,64 @@ const authorityServer = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
     assert.equal(request.headers.apikey, serviceRoleKey);
     const requestedSubject = managedUserMatch[1];
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({
+    const managedEntry = managedAuthUsers.get(requestedSubject);
+    const projected = managedEntry || {
       id: requestedSubject,
-      email: requestedSubject === managedTargetSubjectId ? 'viewer@opensphere.test' : 'operator@opensphere.test',
-      user_metadata: {
-        preferred_username: requestedSubject === managedTargetSubjectId ? 'viewer' : 'operator-' + requestedSubject.slice(0, 4),
-        display_name: requestedSubject === managedTargetSubjectId ? 'Console Viewer' : 'Console Operator',
-      },
+      email: 'operator@opensphere.test',
+      banned_until: null,
+      user_metadata: { preferred_username: 'operator-' + requestedSubject.slice(0, 4), display_name: 'Console Operator' },
       factors: requestedSubject === loginSubjectId
         ? [{ id: 'factor-enrollment-1', factor_type: 'totp', status: totpEnrollmentState === 'none' ? 'unverified' : totpEnrollmentState }]
         : [],
-    }));
+    };
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(projected));
+    return;
+  }
+  if (managedUserMatch && request.method === 'PUT') {
+    assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
+    assert.equal(request.headers.apikey, serviceRoleKey);
+    const requestedSubject = managedUserMatch[1];
+    const current = managedAuthUsers.get(requestedSubject);
+    if (!current) {
+      response.writeHead(404, { 'content-type': 'application/json' });
+      response.end('{}');
+      return;
+    }
+    const updated = {
+      ...current,
+      ...(requestBody?.email ? { email: requestBody.email } : {}),
+      ...(requestBody?.user_metadata ? { user_metadata: requestBody.user_metadata } : {}),
+      ...(requestBody?.ban_duration ? {
+        banned_until: requestBody.ban_duration === 'none' ? null : '2126-09-02T00:00:00.000Z',
+      } : {}),
+    };
+    managedAuthUsers.set(requestedSubject, updated);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(updated));
+    return;
+  }
+  if (managedUserMatch && request.method === 'DELETE') {
+    assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
+    assert.equal(request.headers.apikey, serviceRoleKey);
+    const requestedSubject = managedUserMatch[1];
+    managedAuthUsers.delete(requestedSubject);
+    await admin.query('DELETE FROM auth.users WHERE id=$1', [requestedSubject]);
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+  const managedFactorMatch = request.url?.match(/^\/admin\/users\/([0-9a-f-]{36})\/factors\/([^/]+)$/u);
+  if (managedFactorMatch && request.method === 'DELETE') {
+    assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
+    assert.equal(request.headers.apikey, serviceRoleKey);
+    const requestedSubject = managedFactorMatch[1];
+    const factorId = decodeURIComponent(managedFactorMatch[2]);
+    const current = managedAuthUsers.get(requestedSubject);
+    assert.ok(current?.factors.some((factor) => factor.id === factorId && factor.factor_type === 'totp'));
+    managedAuthUsers.set(requestedSubject, { ...current, factors: current.factors.filter((factor) => factor.id !== factorId) });
+    response.writeHead(204);
+    response.end();
     return;
   }
   if (request.url === '/user' && request.method === 'PUT') {
@@ -1028,6 +1106,100 @@ try {
   });
   assert.doesNotMatch(managedRoleEvidence.rows[0].audit_evidence, /service-role|refresh|token|apikey/i);
 
+  async function managedLifecycle(path, key, correlation, payload) {
+    return fetch(origin + path, {
+      method: 'POST',
+      headers: {
+        cookie: loginCookieHeader,
+        'x-os-csrf-token': loginCsrf,
+        'x-os-idempotency-key': key,
+        'x-os-correlation-id': correlation,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  const managedCreateResponse = await managedLifecycle(
+    '/api/identity/users',
+    'integration-managed-create-key-0001',
+    'integration-managed-create-correlation-0001',
+    {
+      username: 'new-viewer', displayName: 'New Console Viewer', email: 'new-viewer@opensphere.test',
+      roles: ['console-viewers'], reason: 'create managed viewer identity',
+    },
+  );
+  const managedCreated = await managedCreateResponse.json();
+  assert.equal(managedCreateResponse.status, 201, JSON.stringify(managedCreated));
+  assert.equal(managedCreated.id, managedCreatedSubjectId);
+  assert.deepEqual(managedCreated.roles, ['console-viewers']);
+  assert.equal(new URL(managedCreated.onboardingPath).origin, publicOrigin);
+
+  const managedProfileResponse = await managedLifecycle(
+    `/api/identity/users/${managedTargetSubjectId}/attrs`,
+    'integration-managed-profile-key-0001',
+    'integration-managed-profile-correlation-0001',
+    { displayName: 'Updated Console Viewer', email: 'updated-viewer@opensphere.test', reason: 'update managed viewer profile' },
+  );
+  assert.equal(managedProfileResponse.status, 200, await managedProfileResponse.text());
+  assert.equal(managedAuthUsers.get(managedTargetSubjectId).user_metadata.display_name, 'Updated Console Viewer');
+  assert.equal(managedAuthUsers.get(managedTargetSubjectId).email, 'updated-viewer@opensphere.test');
+
+  const managedEnabledResponse = await managedLifecycle(
+    `/api/identity/users/${managedTargetSubjectId}/enabled`,
+    'integration-managed-enabled-key-0001',
+    'integration-managed-enabled-correlation-0001',
+    { enabled: false, reason: 'disable managed viewer identity' },
+  );
+  const managedEnabled = await managedEnabledResponse.json();
+  assert.equal(managedEnabledResponse.status, 200, JSON.stringify(managedEnabled));
+  assert.equal(managedEnabled.enabled, false);
+  assert.equal(managedAuthUsers.get(managedTargetSubjectId).banned_until, '2126-09-02T00:00:00.000Z');
+
+  const managedOnboardingResponse = await managedLifecycle(
+    `/api/identity/users/${managedTargetSubjectId}/onboarding`,
+    'integration-managed-onboarding-key-0001',
+    'integration-managed-onboarding-correlation-0001',
+    { reason: 'issue managed onboarding link' },
+  );
+  const managedOnboarding = await managedOnboardingResponse.json();
+  assert.equal(managedOnboardingResponse.status, 200, JSON.stringify(managedOnboarding));
+  assert.equal(new URL(managedOnboarding.onboardingPath).origin, publicOrigin);
+
+  const managedMfaResponse = await managedLifecycle(
+    `/api/identity/users/${managedTargetSubjectId}/mfa/reset`,
+    'integration-managed-mfa-key-0001',
+    'integration-managed-mfa-correlation-0001',
+    { reason: 'reset managed viewer mfa' },
+  );
+  const managedMfa = await managedMfaResponse.json();
+  assert.equal(managedMfaResponse.status, 200, JSON.stringify(managedMfa));
+  assert.equal(managedMfa.removedFactorCount, 1);
+  assert.equal(managedAuthUsers.get(managedTargetSubjectId).factors.length, 0);
+
+  const managedLifecycleEvidence = await admin.query(
+    [
+      'SELECT count(*)::int AS event_count, COALESCE(string_agg(action || evidence::text,\'\'),\'\') AS evidence',
+      'FROM console_audit.event',
+      "WHERE action LIKE 'console.identity.lifecycle.%'",
+    ].join(' '),
+  );
+  assert.equal(managedLifecycleEvidence.rows[0].event_count, 10);
+  assert.doesNotMatch(managedLifecycleEvidence.rows[0].evidence,
+    /new-viewer@opensphere|updated-viewer@opensphere|integration-recovery-link-token|service-role|apikey/i);
+  const managedAuthorityEvidence = await admin.query(
+    [
+      'SELECT permission_revision, revoke_epoch,',
+      '(SELECT count(*)::int FROM console_identity.permission_grant g',
+      ' WHERE g.subject_id=a.subject_id AND g.revoked_at IS NULL) AS active_permissions',
+      'FROM console_identity.subject_authority a WHERE subject_id=$1',
+    ].join(' '),
+    [managedCreatedSubjectId],
+  );
+  assert.deepEqual(managedAuthorityEvidence.rows[0], {
+    permission_revision: '1', revoke_epoch: '0', active_permissions: 3,
+  });
+
   const secondLoginResponse = await fetch(origin + '/api/identity/session/login', {
     method: 'POST',
     headers: {
@@ -1817,6 +1989,7 @@ try {
     mfaEnrollmentLifecycle: true,
     privilegedStepUpLifecycle: true,
     managedIdentityRoleLifecycle: true,
+    managedIdentityLifecycle: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     passwordRecoveryLifecycle: true,

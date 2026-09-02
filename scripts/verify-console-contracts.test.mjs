@@ -9,12 +9,12 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 40,
+    operations: 45,
     actionPolicies: 5,
-    schemas: 35,
+    schemas: 43,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 34,
+    consoleApiDatabaseFunctions: 36,
     browserApiPatterns: 122,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
@@ -47,7 +47,8 @@ test('Console API authority verification rejects missing grants and direct table
   const recoveryLinkSource = await readFile(new URL('../migrations/versions/0014_owned_password_recovery_link.sql', import.meta.url), 'utf8');
   const avatarSource = await readFile(new URL('../migrations/versions/0015_owned_profile_avatar.sql', import.meta.url), 'utf8');
   const managedIdentitySource = await readFile(new URL('../migrations/versions/0016_managed_identity_roles.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource, managedIdentitySource].join('\n');
+  const managedIdentityLifecycleSource = await readFile(new URL('../migrations/versions/0017_managed_identity_lifecycle.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource, managedIdentitySource, managedIdentityLifecycleSource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

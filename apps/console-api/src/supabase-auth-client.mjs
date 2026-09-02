@@ -122,6 +122,101 @@ export function createSupabaseAuthClient({
     return document;
   }
 
+  function managedSubject(value) {
+    const subjectId = String(value || '');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(subjectId)) {
+      fail('ValidationFailed', 'managed-user subject is invalid', 400);
+    }
+    return subjectId;
+  }
+
+  async function readAdminUser(subjectId) {
+    if (!adminKey) fail('AuthorityUnavailable', 'Supabase managed-user authority is unavailable', 503);
+    const expectedSubjectId = managedSubject(subjectId);
+    const user = await request(`/admin/users/${encodeURIComponent(expectedSubjectId)}`, {
+      token: adminKey,
+      apiKey: adminKey,
+      rejectedCode: 'ManagedIdentityNotFound',
+      rejectedMessage: 'managed identity was not found in Supabase Auth',
+      rejectedStatus: 404,
+      rejectedStatuses: [404],
+    });
+    if (String(user?.id || '') !== expectedSubjectId) {
+      fail('AuthorityUnavailable', 'Supabase Auth changed the managed-user subject', 503);
+    }
+    return user;
+  }
+
+  function managedProfile(user) {
+    const metadata = user?.user_metadata && typeof user.user_metadata === 'object' && !Array.isArray(user.user_metadata)
+      ? user.user_metadata : {};
+    const email = String(user?.email || '').trim().toLowerCase();
+    const username = String(metadata.preferred_username || (email.includes('@') ? email.split('@')[0] : '')).trim();
+    const displayName = String(metadata.display_name || metadata.name || username).trim();
+    if (email.length > 254 || username.length < 1 || username.length > 63
+        || displayName.length < 1 || displayName.length > 120
+        || /[\r\n\u0000-\u001f\u007f]/u.test(username + displayName)) {
+      fail('AuthorityUnavailable', 'Supabase Auth returned an invalid managed-user profile', 503);
+    }
+    const factors = Array.isArray(user?.factors) ? user.factors.filter((factor) => factor?.factor_type === 'totp') : [];
+    const verifiedTotpCount = factors.filter((factor) => factor?.status === 'verified').length;
+    const bannedUntil = Date.parse(String(user?.banned_until || ''));
+    return Object.freeze({
+      id: String(user.id), username, displayName, email,
+      enabled: !Number.isFinite(bannedUntil) || bannedUntil <= now().getTime(),
+      mfa: Object.freeze({
+        totpCount: factors.length,
+        verifiedTotpCount,
+        status: verifiedTotpCount ? 'registered' : 'enrollment-required',
+      }),
+    });
+  }
+
+  async function generateManagedRecoveryLink(subjectId, publicOrigin, redirectUrl) {
+    const user = await readAdminUser(subjectId);
+    const email = String(user?.email || '').trim();
+    if (email.length < 3 || email.length > 254 || !/^[^@\s]+@[^@\s]+[.][^@\s]+$/u.test(email)) {
+      fail('AuthorityUnavailable', 'Supabase Auth returned no verified recovery subject', 503);
+    }
+    let publicUrl;
+    try { publicUrl = new URL(publicOrigin); } catch {
+      fail('AuthorityUnavailable', 'Console recovery-link origin is invalid', 503);
+    }
+    if (publicUrl.origin !== publicOrigin || publicUrl.protocol !== 'https:'
+        || redirectUrl !== publicUrl.origin + '/auth/recovery') {
+      fail('AuthorityUnavailable', 'Console recovery-link redirect is invalid', 503);
+    }
+    const generated = await request('/admin/generate_link', {
+      method: 'POST', token: adminKey, apiKey: adminKey,
+      body: { type: 'recovery', email, redirect_to: redirectUrl },
+      rejectedCode: 'RecoveryLinkRejected',
+      rejectedMessage: 'password recovery link request was rejected',
+      rejectedStatus: 400,
+      rejectedStatuses: [400, 401, 403, 409, 422],
+    });
+    const returnedSubjectId = String(generated?.id || generated?.user?.id || '');
+    if (returnedSubjectId && returnedSubjectId !== String(subjectId)) {
+      fail('AuthorityUnavailable', 'Supabase Auth changed the recovery-link subject', 503);
+    }
+    const rawActionLink = generated?.action_link || generated?.properties?.action_link;
+    let action;
+    try { action = new URL(String(rawActionLink || ''), origin + '/'); } catch {
+      fail('AuthorityUnavailable', 'Supabase Auth returned no usable recovery link', 503);
+    }
+    const hasToken = ['token', 'token_hash'].some((name) => {
+      const value = action.searchParams.get(name);
+      return value != null && value.length >= 8 && value.length <= 16384;
+    });
+    if (action.origin !== origin || action.pathname !== '/verify'
+        || action.searchParams.get('type') !== 'recovery'
+        || action.searchParams.get('redirect_to') !== redirectUrl || !hasToken) {
+      fail('AuthorityUnavailable', 'Supabase Auth returned an invalid recovery link', 503);
+    }
+    const publicAction = new URL('/auth/v1/verify', publicUrl.origin);
+    publicAction.search = action.search;
+    return publicAction.toString();
+  }
+
   return Object.freeze({
     async readManagedUser(subjectId) {
       if (!adminKey) fail('AuthorityUnavailable', 'Supabase managed-user authority is unavailable', 503);
@@ -129,42 +224,113 @@ export function createSupabaseAuthClient({
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(expectedSubjectId)) {
         fail('ValidationFailed', 'managed-user subject is invalid', 400);
       }
-      const user = await request(`/admin/users/${encodeURIComponent(expectedSubjectId)}`, {
-        token: adminKey,
-        apiKey: adminKey,
-        rejectedCode: 'ManagedIdentityNotFound',
-        rejectedMessage: 'managed identity was not found in Supabase Auth',
-        rejectedStatus: 404,
-        rejectedStatuses: [404],
+      return managedProfile(await readAdminUser(expectedSubjectId));
+    },
+
+    async createManagedUser({ username, displayName, email }) {
+      if (!adminKey) fail('AuthorityUnavailable', 'Supabase managed-user authority is unavailable', 503);
+      const created = await request('/admin/users', {
+        method: 'POST', token: adminKey, apiKey: adminKey,
+        body: {
+          email,
+          email_confirm: true,
+          user_metadata: { preferred_username: username, display_name: displayName },
+        },
+        rejectedCode: 'ManagedIdentityConflict',
+        rejectedMessage: 'managed identity already exists or was rejected',
+        rejectedStatus: 409,
+        rejectedStatuses: [400, 409, 422],
       });
-      if (String(user?.id || '') !== expectedSubjectId) {
-        fail('AuthorityUnavailable', 'Supabase Auth changed the managed-user subject', 503);
+      const subjectId = managedSubject(created?.id);
+      const projection = managedProfile(created);
+      if (projection.username !== username || projection.displayName !== displayName
+          || projection.email !== email.toLowerCase()) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not confirm the managed-user profile', 503);
       }
-      const metadata = user?.user_metadata && typeof user.user_metadata === 'object' && !Array.isArray(user.user_metadata)
-        ? user.user_metadata : {};
-      const email = String(user?.email || '').trim().toLowerCase();
-      const username = String(metadata.preferred_username || (email.includes('@') ? email.split('@')[0] : '')).trim();
-      const displayName = String(metadata.display_name || metadata.name || username).trim();
-      if (email.length > 254 || username.length < 1 || username.length > 63
-          || displayName.length < 1 || displayName.length > 120
-          || /[\r\n\u0000-\u001f\u007f]/u.test(username + displayName)) {
-        fail('AuthorityUnavailable', 'Supabase Auth returned an invalid managed-user profile', 503);
-      }
-      const factors = Array.isArray(user?.factors) ? user.factors.filter((factor) => factor?.factor_type === 'totp') : [];
-      const verifiedTotpCount = factors.filter((factor) => factor?.status === 'verified').length;
-      const bannedUntil = Date.parse(String(user?.banned_until || ''));
-      return Object.freeze({
-        id: expectedSubjectId,
-        username,
-        displayName,
-        email,
-        enabled: !Number.isFinite(bannedUntil) || bannedUntil <= now().getTime(),
-        mfa: Object.freeze({
-          totpCount: factors.length,
-          verifiedTotpCount,
-          status: verifiedTotpCount ? 'registered' : 'enrollment-required',
-        }),
+      return Object.freeze({ subjectId });
+    },
+
+    async deleteManagedUser(subjectId) {
+      if (!adminKey) return;
+      await request(`/admin/users/${encodeURIComponent(managedSubject(subjectId))}`, {
+        method: 'DELETE', token: adminKey, apiKey: adminKey,
+        rejectedCode: 'ManagedIdentityCleanupRejected',
+        rejectedMessage: 'unclaimed managed identity cleanup was rejected',
+        rejectedStatus: 503,
+        rejectedStatuses: [400, 401, 403, 404, 409, 422],
+        expectEmpty: true,
       });
+    },
+
+    async updateManagedUserProfile({ subjectId, displayName, email }) {
+      const expectedSubjectId = managedSubject(subjectId);
+      const current = await readAdminUser(expectedSubjectId);
+      const before = managedProfile(current);
+      const metadata = current?.user_metadata && typeof current.user_metadata === 'object' && !Array.isArray(current.user_metadata)
+        ? current.user_metadata : {};
+      const updated = await request(`/admin/users/${encodeURIComponent(expectedSubjectId)}`, {
+        method: 'PUT', token: adminKey, apiKey: adminKey,
+        body: { email, user_metadata: { ...metadata, display_name: displayName } },
+        rejectedCode: 'ManagedIdentityRejected',
+        rejectedMessage: 'managed identity profile update was rejected',
+        rejectedStatus: 400,
+        rejectedStatuses: [400, 401, 403, 409, 422],
+      });
+      const after = managedProfile(updated);
+      if (after.id !== expectedSubjectId || after.displayName !== displayName || after.email !== email.toLowerCase()) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not confirm the managed-user profile update', 503);
+      }
+      return Object.freeze({ subjectId: expectedSubjectId, previous: Object.freeze({ displayName: before.displayName, email: before.email }) });
+    },
+
+    async setManagedUserEnabled({ subjectId, enabled }) {
+      const expectedSubjectId = managedSubject(subjectId);
+      const before = managedProfile(await readAdminUser(expectedSubjectId));
+      const updated = await request(`/admin/users/${encodeURIComponent(expectedSubjectId)}`, {
+        method: 'PUT', token: adminKey, apiKey: adminKey,
+        body: { ban_duration: enabled ? 'none' : '876000h' },
+        rejectedCode: 'ManagedIdentityRejected',
+        rejectedMessage: 'managed identity enabled state was rejected',
+        rejectedStatus: 400,
+        rejectedStatuses: [400, 401, 403, 409, 422],
+      });
+      const after = managedProfile(updated);
+      if (after.id !== expectedSubjectId || after.enabled !== enabled) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not confirm the managed-user enabled state', 503);
+      }
+      return Object.freeze({ subjectId: expectedSubjectId, previousEnabled: before.enabled });
+    },
+
+    async createManagedUserRecoveryLink({ subjectId, publicOrigin, redirectUrl }) {
+      const expectedSubjectId = managedSubject(subjectId);
+      const onboardingPath = await generateManagedRecoveryLink(expectedSubjectId, publicOrigin, redirectUrl);
+      return Object.freeze({ subjectId: expectedSubjectId, onboardingPath });
+    },
+
+    async resetManagedUserTotp(subjectId) {
+      const expectedSubjectId = managedSubject(subjectId);
+      const user = await readAdminUser(expectedSubjectId);
+      const factors = (Array.isArray(user?.factors) ? user.factors : [])
+        .filter((factor) => factor?.factor_type === 'totp')
+        .map((factor) => String(factor?.id || ''));
+      if (factors.length > 100 || factors.some((id) => id.length < 1 || id.length > 256 || /[\r\n]/u.test(id))) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned an invalid managed-user factor inventory', 503);
+      }
+      for (const factorId of factors) {
+        await request(`/admin/users/${encodeURIComponent(expectedSubjectId)}/factors/${encodeURIComponent(factorId)}`, {
+          method: 'DELETE', token: adminKey, apiKey: adminKey,
+          rejectedCode: 'ManagedIdentityMfaResetRejected',
+          rejectedMessage: 'managed identity TOTP reset was rejected',
+          rejectedStatus: 409,
+          rejectedStatuses: [400, 401, 403, 404, 409, 422],
+          expectEmpty: true,
+        });
+      }
+      const remaining = managedProfile(await readAdminUser(expectedSubjectId));
+      if (remaining.mfa.totpCount !== 0) {
+        fail('AuthorityUnavailable', 'Supabase Auth did not confirm managed-user TOTP reset', 503);
+      }
+      return Object.freeze({ subjectId: expectedSubjectId, removedFactorCount: factors.length });
     },
 
     async readProfileAvatar({ accessToken, expectedSubjectId }) {

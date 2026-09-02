@@ -9,8 +9,8 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 16);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0016');
+  assert.equal(manifest.migrationCount, 17);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0017');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
   assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   assert.equal(manifest.migrations[2].sourceRevision, 'd7c5d09ecdcfbeed01b32fd13a447c15b5692116');
@@ -27,6 +27,7 @@ test('fresh migration manifest binds the exact source revision and ordered SQL i
   assert.equal(manifest.migrations[13].sourceRevision, '806b675c3d9e3e107d69d0670645dbf3008c4c57');
   assert.equal(manifest.migrations[14].sourceRevision, 'd29c46e715a1e890b97bfc008fda96e27f2e9bc8');
   assert.equal(manifest.migrations[15].sourceRevision, 'b4fd3db7d00d37506129cd15e9b4c3d026b6a0cc');
+  assert.equal(manifest.migrations[16].sourceRevision, '75d6bd2b1a5fe514390ef68f9a105d21aacdff4b');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
@@ -142,6 +143,14 @@ test('managed identity role successor is independently renderable', () => {
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]list_managed_identities/);
   assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]change_managed_identity_role/);
   assert.match(sql, /opensphere-console\/20260902\/0016/);
+});
+
+test('managed identity lifecycle successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0017' });
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]prepare_managed_identity_lifecycle/);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]complete_managed_identity_lifecycle/);
+  assert.match(sql, /opensphere-console\/20260902\/0017/);
+  assert.doesNotMatch(sql, /CREATE TABLE/);
 });
 
 test('migration renderer emits only a manifest-bound transaction body', () => {

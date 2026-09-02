@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opensphere.dev/contracts/managed-identity-profile-update-request.schema.json",
+  "title": "Managed Console identity profile update",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["displayName", "email", "reason"],
+  "properties": {
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^\\r\\n]+$" },
+    "email": { "type": "string", "format": "email", "maxLength": 254 },
+    "reason": { "type": "string", "minLength": 8, "maxLength": 500, "pattern": "^[^\\r\\n]+$" }
+  }
+}
