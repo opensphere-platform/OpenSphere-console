@@ -4,8 +4,7 @@
 # This is an overlay of a complete Console image, not a new Nginx image. The
 # complete base owns native Console assets such as /api/cli/index.json and the
 # downloadable os binaries; an Angular-only rebuild must preserve them.
-ARG BASE_IMAGE=ghcr.io/opensphere-platform/opensphere-console@sha256:3afd4b43fcddbcce518091b4c2109fba6a65c78d917a8453ff88fd20ed7d578b
-FROM ${BASE_IMAGE}
+FROM ghcr.io/opensphere-platform/opensphere-console@sha256:3afd4b43fcddbcce518091b4c2109fba6a65c78d917a8453ff88fd20ed7d578b
 
 ENV OS_PLUGIN_NAMESPACE=opensphere-console
 USER root
