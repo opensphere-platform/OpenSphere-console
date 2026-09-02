@@ -49,12 +49,12 @@ test('the independent CLI artifact image compiles the manifest version', async (
   const rootDockerfile = await readFile(new URL('../../Dockerfile', import.meta.url), 'utf8');
   const cliDockerfile = await readFile(new URL('./Dockerfile', import.meta.url), 'utf8');
   const manifestGenerator = await readFile(new URL('./generate-manifest.mjs', import.meta.url), 'utf8');
-  const runtimeDockerfile = await readFile(new URL('./Dockerfile.runtime', import.meta.url), 'utf8');
+  const runtimeDockerfile = await readFile(new URL('../../apps/os-shell-control/Dockerfile.runtime', import.meta.url), 'utf8');
   const releaseManifest = JSON.parse(await readFile(new URL('./index.json', import.meta.url), 'utf8'));
   const escapedVersion = releaseManifest.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const versionPattern = new RegExp(`main\\.version=${escapedVersion}`);
   assert.match(cliDockerfile, versionPattern);
-  assert.match(runtimeDockerfile, /COPY go[.]mod go[.]sum index[.]json [.][\\/]/);
+  assert.match(runtimeDockerfile, /COPY cmd\/os-cli\/go[.]mod cmd\/os-cli\/go[.]sum cmd\/os-cli\/index[.]json [.][\\/]/);
   assert.match(runtimeDockerfile, /OS_CLI_VERSION="\$\(sed [^\r\n]+ index[.]json\)"/);
   assert.match(runtimeDockerfile, /-X main[.]osCLIVersion=\$\{OS_CLI_VERSION\}/);
   assert.match(runtimeDockerfile, /-X main[.]version=\$\{OS_CLI_VERSION\}/);

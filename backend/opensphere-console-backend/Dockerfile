@@ -56,10 +56,10 @@ COPY backend/opensphere-console-backend/browser-session.js ./browser-session.js
 COPY backend/opensphere-console-backend/profile-avatar.js ./profile-avatar.js
 COPY backend/opensphere-console-backend/plugin-proxy-auth.js ./plugin-proxy-auth.js
 COPY backend/opensphere-console-backend/r2d2-proxy-auth.js ./r2d2-proxy-auth.js
-COPY backend/opensphere-console-backend/os-shell-contract.js ./os-shell-contract.js
-COPY backend/opensphere-console-backend/os-shell-admission.js ./os-shell-admission.js
-COPY backend/opensphere-console-backend/os-shell-context.js ./os-shell-context.js
-COPY backend/opensphere-console-backend/os-shell-delegation.js ./os-shell-delegation.js
+COPY apps/os-shell-control/authority/os-shell-contract.js /repo/apps/os-shell-control/authority/os-shell-contract.js
+COPY apps/os-shell-control/authority/os-shell-admission.js /repo/apps/os-shell-control/authority/os-shell-admission.js
+COPY apps/os-shell-control/authority/os-shell-context.js /repo/apps/os-shell-control/authority/os-shell-context.js
+COPY apps/os-shell-control/authority/os-shell-delegation.js /repo/apps/os-shell-control/authority/os-shell-delegation.js
 COPY backend/opensphere-console-backend/local-edge-automation-token.js ./local-edge-automation-token.js
 COPY backend/opensphere-console-backend/local-edge-r1-approval.js ./local-edge-r1-approval.js
 COPY backend/opensphere-console-backend/baseline-monitoring.js ./baseline-monitoring.js

@@ -1154,8 +1154,8 @@ $deploymentToolingAllowlist = @(
   'scripts/os-shell-runtime-override-boundary.test.mjs',
   'scripts/backend-bridge-publisher.test.mjs',
   'backend/dupa-control/release-channel-workflow.test.js',
-  'backend/os-shell-control/deploy.yaml',
-  'backend/os-shell-control/deploy.test.js',
+  'apps/os-shell-control/deploy.yaml',
+  'apps/os-shell-control/deploy.test.js',
   'backend/opensphere-console-backend/platform-release.test.js'
 )
 $boundaryEvidence = $null
@@ -1254,7 +1254,7 @@ $osShellControlRelease = if ($controlPublicationPath) {
 } else {
   $osShellRelease
 }
-$runtimeTemplatePath = Join-Path $consoleRoot 'backend\os-shell-control\runtime-template.js'
+$runtimeTemplatePath = Join-Path $consoleRoot 'apps\os-shell-control\runtime-template.js'
 if (-not $osShellRelease -or
     [string]$osShellRelease.cliManifest.image -ne [string]$cliArtifacts.image -or
     [string]$osShellRelease.cliManifest.imagePath -ne '/srv/index.json' -or
@@ -1265,7 +1265,7 @@ if (-not $osShellRelease -or
   throw 'OS Shell signed CLI manifest or session policy evidence is absent or inconsistent'
 }
 if (-not $osShellControlRelease -or
-    [string]$osShellControlRelease.runtimeTemplate.path -ne 'backend/os-shell-control/runtime-template.js' -or
+    [string]$osShellControlRelease.runtimeTemplate.path -ne 'apps/os-shell-control/runtime-template.js' -or
     [string]$osShellControlRelease.runtimeTemplate.sha256 -ne (Get-CanonicalTextSha256 -Path $runtimeTemplatePath) -or
     [int]$osShellControlRelease.runtimeProcessPolicy.maxProcesses -ne $runtimeMaxProcesses -or
     [int]$osShellControlRelease.runtimeProcessPolicy.globalPodLimit -ne $runtimeGlobalPodLimit -or
@@ -1370,7 +1370,7 @@ if ($PrepareTrustOnly) {
   return
 }
 
-if (-not $ManifestPath) { $ManifestPath = Join-Path $consoleRoot 'backend\os-shell-control\deploy.yaml' }
+if (-not $ManifestPath) { $ManifestPath = Join-Path $consoleRoot 'apps\os-shell-control\deploy.yaml' }
 if (-not (Test-Path -LiteralPath $ManifestPath)) {
   throw "OS Shell deployment manifest is not available at '$ManifestPath'; publication remains non-deployed"
 }
@@ -1650,10 +1650,10 @@ $profilePath = Join-Path $receiptDirectory 'opensphere-local-os-shell-release-pr
 $signaturePath = "$profilePath.sig.json"
 $verificationInputs = [ordered]@{}
 foreach ($relativePath in @(
-  'backend/os-shell-control/deploy.yaml',
-  'backend/os-shell-control/deploy.test.js',
-  'backend/os-shell-control/runtime-template.test.js',
-  'backend/os-shell-control/server.test.js',
+  'apps/os-shell-control/deploy.yaml',
+  'apps/os-shell-control/deploy.test.js',
+  'apps/os-shell-control/runtime-template.test.js',
+  'apps/os-shell-control/server.test.js',
   'backend/supabase/verify-ledger-integrity.mjs',
   'scripts/Test-OsShellRuntimeAdmission.ps1',
   'scripts/Test-OsShellEdgeSigning.ps1',
@@ -1679,10 +1679,10 @@ foreach ($limb in $applicableLimbs) {
   $artifact = if ($limb -match '^P-(22|39|48)') { 'scripts/Test-OsShellRuntimeAdmission.ps1' }
     elseif ($limb -match '^P-04') { 'scripts/Test-OsShellEdgeSigning.ps1' }
     elseif ($limb -match '^P-(06|41)') { 'scripts/Invoke-OsShellFeatureOperation.ps1' }
-    elseif ($limb -match '^P-2[467]') { 'backend/os-shell-control/runtime-template.test.js' }
+    elseif ($limb -match '^P-2[467]') { 'apps/os-shell-control/runtime-template.test.js' }
     elseif ($limb -match '^P-(15|16|17|18|19|20|21|23|25|28|29|30|31|32|33|34|35|36|37|38|40|42|43)') {
       'backend/supabase/verify-ledger-integrity.mjs'
-    } else { 'backend/os-shell-control/deploy.test.js' }
+    } else { 'apps/os-shell-control/deploy.test.js' }
   $applicableEvidence[$limb] = [ordered]@{
     result = 'NOT_EXECUTED'
     artifactUri = "source://OpenSphere-console/$artifact"

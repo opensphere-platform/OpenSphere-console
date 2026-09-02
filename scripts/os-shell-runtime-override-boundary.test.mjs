@@ -11,20 +11,23 @@ import {
 } from './os-shell-runtime-override-boundary.mjs';
 
 const validRuntime = [
-  'cmd/os-cli/cmd/os-shell-runtime/agent.go',
-  'cmd/os-cli/cmd/os-shell-runtime/runtime_directory.go',
-  'cmd/os-cli/Dockerfile.runtime',
+  'apps/os-shell-control/runtime/agent.go',
+  'apps/os-shell-control/runtime/runtime_directory.go',
+  'apps/os-shell-control/Dockerfile.runtime',
+  'cmd/os-cli/go.mod',
+  'cmd/os-cli/go.sum',
+  'cmd/os-cli/index.json',
   'cmd/os-cli/manifest.test.mjs',
+  'cmd/os-cli/cmd/os/main.go',
 ];
 
-test('runtime override is closed over runtime source and its dedicated build overlay only', () => {
+test('runtime override is closed over Runtime plus the exact embedded C_CLI source inputs', () => {
   assert.doesNotThrow(() => assertRuntimeOverridePaths(validRuntime));
   for (const path of [
     'backend/supabase/migrate-only.ps1',
-    'backend/os-shell-control/deploy.yaml',
-    'cmd/os-cli/cmd/os/operator.go',
-    'cmd/os-cli/cmd/os/web_shell_agent.go',
-    'cmd/os-cli/go.mod',
+    'apps/os-shell-control/deploy.yaml',
+    'cmd/os-cli/Dockerfile',
+    'cmd/os-cli/generate-manifest.mjs',
   ]) {
     assert.throws(() => assertRuntimeOverridePaths([...validRuntime, path]), /non-runtime authority/);
   }
@@ -61,7 +64,7 @@ test('console override accepts exactly the OS Shell UI, isolated frame and Nginx
 test('control override accepts exactly runtime projection/readiness source and their tests', () => {
   assert.doesNotThrow(() => assertControlOverridePaths(controlOverridePaths));
   assert.throws(() => assertControlOverridePaths(controlOverridePaths.slice(0, -1)), /exact closed set/);
-  assert.throws(() => assertControlOverridePaths([...controlOverridePaths, 'backend/os-shell-control/config.js']), /exact closed set/);
+  assert.throws(() => assertControlOverridePaths([...controlOverridePaths, 'apps/os-shell-control/config.js']), /exact closed set/);
 });
 
 test('backend override rejects path escape and non-canonical separators before allowlist comparison', () => {

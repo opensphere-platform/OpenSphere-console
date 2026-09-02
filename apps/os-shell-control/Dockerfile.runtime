@@ -1,0 +1,48 @@
+FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS runtime-build
+WORKDIR /src/runtime
+RUN apk add --no-cache bash && adduser -S -D -u 65531 runtime-test
+COPY apps/os-shell-control/runtime/go.mod apps/os-shell-control/runtime/go.sum ./
+RUN go mod download
+COPY apps/os-shell-control/runtime ./
+COPY cmd/os-cli/index.json /src/index.json
+COPY cmd/os-cli/cmd/os ./test-fixtures/os
+RUN OS_CLI_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /src/index.json)" && \
+    echo "$OS_CLI_VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$' && \
+    OPENSPHERE_OS_CLI_SOURCE=./test-fixtures/os go test ./... && \
+    go test -c -o /tmp/os-shell-runtime.test . && \
+    OPENSPHERE_SHELL_PID_STRESS_TEST=true su runtime-test -s /bin/sh -c '/tmp/os-shell-runtime.test -test.run=TestPTYProcessLimitForkStress -test.count=1' && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/opensphere-os-shell-runtime.exe . && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+      -ldflags="-s -w -X main.version=0.1.0 -X main.osCLIVersion=${OS_CLI_VERSION}" \
+      -o /out/opensphere-os-shell-runtime .
+
+FROM docker.io/library/golang@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS cli-build
+WORKDIR /src/cli
+COPY cmd/os-cli/go.mod cmd/os-cli/go.sum cmd/os-cli/index.json ./
+RUN go mod download
+COPY cmd/os-cli/cmd/os ./cmd/os
+RUN OS_CLI_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' index.json)" && \
+    echo "$OS_CLI_VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$' && \
+    go test ./cmd/os && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+      -ldflags="-s -w -X main.version=${OS_CLI_VERSION} -X main.webShellAgentSocketPath=/run/opensphere-shell/channel/agent.sock -X main.webShellAgentPublicKeyPath=/run/opensphere-shell/channel/agent-public-key.pem" \
+      -o /out/os ./cmd/os
+
+FROM docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+ARG OPENSPHERE_VERSION=dev
+LABEL org.opencontainers.image.title="OpenSphere OS Shell Runtime" \
+      org.opencontainers.image.version="${OPENSPHERE_VERSION}" \
+      org.opencontainers.image.vendor="OpenSphere" \
+      io.opensphere.session-class="operator-interactive" \
+      io.opensphere.runtime-adapter="cbss.kubernetes-pod"
+RUN apk add --no-cache bash ca-certificates && \
+    addgroup -S -g 65532 opensphere && \
+    adduser -S -D -u 65532 -G opensphere -h /home/opensphere -s /bin/bash opensphere && \
+    install -d -o 65532 -g 65532 -m 0750 /home/opensphere /run/opensphere-shell
+COPY --from=runtime-build --chown=65532:65532 /out/opensphere-os-shell-runtime /usr/local/bin/opensphere-os-shell-runtime
+COPY --from=cli-build --chown=65532:65532 /out/os /usr/local/bin/os
+USER 65532:65532
+WORKDIR /home/opensphere
+EXPOSE 8443
+ENTRYPOINT ["/usr/local/bin/opensphere-os-shell-runtime"]
+CMD ["pty"]

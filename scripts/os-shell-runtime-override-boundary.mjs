@@ -4,15 +4,18 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 export const runtimeInputPaths = Object.freeze([
-  'cmd/os-cli/Dockerfile.runtime',
+  'apps/os-shell-control/Dockerfile.runtime',
+  'cmd/os-cli/go.mod',
+  'cmd/os-cli/go.sum',
+  'cmd/os-cli/index.json',
   'cmd/os-cli/manifest.test.mjs',
 ]);
 
 export const backendOverridePaths = Object.freeze([
+  'apps/os-shell-control/authority/os-shell-admission.js',
+  'apps/os-shell-control/authority/os-shell-admission.test.js',
   'backend/opensphere-console-backend/Dockerfile',
   'backend/opensphere-console-backend/local-edge-automation-token.test.js',
-  'backend/opensphere-console-backend/os-shell-admission.js',
-  'backend/opensphere-console-backend/os-shell-admission.test.js',
   'backend/opensphere-console-backend/server.js',
 ]);
 
@@ -32,18 +35,18 @@ export const consoleOverridePaths = Object.freeze([
 ]);
 
 export const controlOverridePaths = Object.freeze([
-  'backend/os-shell-control/runtime-template.js',
-  'backend/os-shell-control/runtime-template.test.js',
-  'backend/os-shell-control/server.js',
-  'backend/os-shell-control/server.test.js',
+  'apps/os-shell-control/runtime-template.js',
+  'apps/os-shell-control/runtime-template.test.js',
+  'apps/os-shell-control/server.js',
+  'apps/os-shell-control/server.test.js',
 ]);
 
 export const canonicalConsoleOrigin = 'https://github.com/opensphere-platform/OpenSphere-console.git';
 
 export const deploymentToolingPaths = Object.freeze([
   'backend/dupa-control/release-channel-workflow.test.js',
-  'backend/os-shell-control/deploy.test.js',
-  'backend/os-shell-control/deploy.yaml',
+  'apps/os-shell-control/deploy.test.js',
+  'apps/os-shell-control/deploy.yaml',
   'scripts/Deploy-LocalEdgeOsShell.ps1',
   'scripts/backend-bridge-publisher.test.mjs',
   'scripts/Invoke-LocalEdgePlatformRelease.ps1',
@@ -63,7 +66,9 @@ export const deploymentToolingPaths = Object.freeze([
 ]);
 
 export function isRuntimeInputPath(path) {
-  return path.startsWith('cmd/os-cli/cmd/os-shell-runtime/') || runtimeInputPaths.includes(path);
+  return path.startsWith('apps/os-shell-control/runtime/')
+    || path.startsWith('cmd/os-cli/cmd/os/')
+    || runtimeInputPaths.includes(path);
 }
 
 export function assertRuntimeOverridePaths(paths) {
@@ -137,7 +142,7 @@ function changedPaths(repository, from, to) {
 
 function runtimePathsAtRevision(repository, revision) {
   const output = execFileSync('git', ['-C', repository, 'ls-tree', '-r', '--name-only', '-z', revision, '--',
-    'cmd/os-cli/cmd/os-shell-runtime', ...runtimeInputPaths], { encoding: 'buffer', windowsHide: true });
+    'apps/os-shell-control/runtime', 'cmd/os-cli/cmd/os', ...runtimeInputPaths], { encoding: 'buffer', windowsHide: true });
   return output.length ? output.toString('utf8').split('\0').filter(Boolean).sort() : [];
 }
 

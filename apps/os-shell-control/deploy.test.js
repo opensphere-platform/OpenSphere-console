@@ -13,10 +13,10 @@ const featureOperationScript = fs.readFileSync(path.join(__dirname, '..', '..', 
 const edgeSigning = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'os-shell-edge-signing.ps1'), 'utf8');
 const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Publish-LocalEdge.ps1'), 'utf8');
 const admissionHarness = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Test-OsShellRuntimeAdmission.ps1'), 'utf8');
-const backendServer = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'server.js'), 'utf8');
-const backendDeploy = fs.readFileSync(path.join(__dirname, '..', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
+const backendServer = fs.readFileSync(path.join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'server.js'), 'utf8');
+const backendDeploy = fs.readFileSync(path.join(__dirname, '..', '..', 'backend', 'opensphere-console-backend', 'deploy.yaml'), 'utf8');
 const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'nginx', 'default.conf.template'), 'utf8');
-const runtimeDockerfile = fs.readFileSync(path.join(__dirname, '..', 'os-cli', 'Dockerfile.runtime'), 'utf8');
+const runtimeDockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile.runtime'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));
 
@@ -273,7 +273,7 @@ test('internal Console API uses the canonical data-driven Registry and plugin/PF
   const deployment = find('Deployment', 'opensphere-shell-console-api', 'opensphere-console');
   assert.equal(deployment.spec.template.spec.containers[0].name, 'console-frontdoor');
   assert.equal(deployment.spec.template.spec.containers[0].image, '__OPENSPHERE_CONSOLE_IMAGE__');
-  assert.match(canonicalConsoleNginx, /location \/api\/v1\/registry/);
+  assert.match(canonicalConsoleNginx, /location = \/api\/v1\/registry/);
   assert.match(canonicalConsoleNginx, /location \/api\/proxy\//);
   assert.match(canonicalConsoleNginx, /location \/api\/identity/);
   assert.match(canonicalConsoleNginx, /location ~ \^\/api\/plugins\/\(\[a-z0-9-\]\+\)\/\(\.\*\)\$/);
@@ -349,7 +349,7 @@ test('local-edge deploy binds every component-only override through exact source
   const declaredToolingPaths = [...toolingBlock.matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
   assert.deepEqual(declaredToolingPaths, [...boundary.deploymentToolingPaths].sort());
   assert.ok(declaredToolingPaths.includes('scripts/Invoke-OsShellFeatureOperation.ps1'));
-  const runtimePaths = ['cmd/os-cli/cmd/os-shell-runtime/agent.go', 'cmd/os-cli/Dockerfile.runtime'];
+  const runtimePaths = ['apps/os-shell-control/runtime/agent.go', 'apps/os-shell-control/Dockerfile.runtime'];
   const backendPaths = [...boundary.backendOverridePaths];
   const consolePaths = [...boundary.consoleOverridePaths];
   const controlPaths = [...boundary.controlOverridePaths];
@@ -357,7 +357,7 @@ test('local-edge deploy binds every component-only override through exact source
   assert.doesNotThrow(() => boundary.assertBackendOverridePaths(backendPaths));
   assert.doesNotThrow(() => boundary.assertConsoleOverridePaths(consolePaths));
   assert.doesNotThrow(() => boundary.assertControlOverridePaths(controlPaths));
-  for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'cmd/os-cli/cmd/os/operator.go', 'cmd/os-cli/cmd/os/web_shell_agent.go']) {
+  for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'apps/os-shell-control/deploy.yaml', 'cmd/os-cli/cmd/os/operator.go', 'cmd/os-cli/cmd/os/web_shell_agent.go']) {
     assert.throws(() => boundary.assertRuntimeOverridePaths([...runtimePaths, privilegedPath]), /non-runtime authority/);
     assert.throws(() => boundary.assertBackendOverridePaths([...backendPaths, privilegedPath]), /exact closed set/);
     assert.throws(() => boundary.assertConsoleOverridePaths([...consolePaths, privilegedPath]), /exact closed set/);

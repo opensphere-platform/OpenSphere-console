@@ -178,6 +178,13 @@ func TestPLAN011AgentWSSDetachThenReconnectsSameRuntimeBinding(t *testing.T) {
 // PLAN011_OS_BINARY may point at /usr/local/bin/os copied from the exact
 // deployed runtime digest. Without it, the test builds the workspace CLI so
 // the contract remains part of the normal source gate.
+func osCLISourcePath() string {
+	if configured := strings.TrimSpace(os.Getenv("OPENSPHERE_OS_CLI_SOURCE")); configured != "" {
+		return configured
+	}
+	return filepath.Clean(filepath.Join("..", "..", "..", "cmd", "os-cli", "cmd", "os"))
+}
+
 func TestPLAN011OSRejectsLocalAndExternalToolsInAttestedRuntime(t *testing.T) {
 	if os.PathSeparator == '\\' {
 		t.Skip("Unix credential-agent contract")
@@ -191,7 +198,7 @@ func TestPLAN011OSRejectsLocalAndExternalToolsInAttestedRuntime(t *testing.T) {
 		build := exec.Command("go", "build", "-trimpath", "-ldflags", fmt.Sprintf(
 			"-X main.webShellAgentSocketPath=%s -X main.webShellAgentPublicKeyPath=%s",
 			agentSocketPath, agentKeyPath,
-		), "-o", binaryPath, "../os")
+		), "-o", binaryPath, osCLISourcePath())
 		if output, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("build os CLI fixture: %v\n%s", err, output)
 		}

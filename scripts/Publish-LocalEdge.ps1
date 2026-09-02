@@ -299,8 +299,8 @@ $allImages = @(
   [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'cmd\os-cli'); File = (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile') },
   # CBSS OS Shell images are auxiliary component workloads. Selecting one may
   # never expand a local edge change into the 14-image integrated release.
-  [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\os-shell-control\Dockerfile') },
-  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = (Join-Path $consoleCheckout 'cmd\os-cli'); File = (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile.runtime') },
+  [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile') },
+  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile.runtime') },
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
@@ -470,10 +470,10 @@ $releaseArtifacts = [ordered]@{
   }
 }
 if ($requestedComponents.Contains('osShellControl')) {
-  $runtimeTemplatePath = Join-Path $consoleCheckout 'backend\os-shell-control\runtime-template.js'
+  $runtimeTemplatePath = Join-Path $consoleCheckout 'apps\os-shell-control\runtime-template.js'
   $releaseArtifacts['osShellControlRelease'] = [ordered]@{
     runtimeTemplate = [ordered]@{
-      path = 'backend/os-shell-control/runtime-template.js'
+      path = 'apps/os-shell-control/runtime-template.js'
       sha256 = Get-CanonicalTextSha256 -Path $runtimeTemplatePath
     }
     runtimeProcessPolicy = [ordered]@{

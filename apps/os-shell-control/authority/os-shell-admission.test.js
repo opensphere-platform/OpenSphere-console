@@ -59,7 +59,9 @@ test('rejects replay against a changed request projection or tampered signature'
   assert.throws(() => verifyOsShellAdmission(assertion, {
     secret, now, method: 'DELETE', path: '/api/os-shell/sessions', origin: 'https://console.example.test',
   }), (e) => e.code === 403);
-  assert.throws(() => verifyOsShellAdmission(`${assertion.slice(0, -1)}x`, {
+  const [header, payload, signature] = assertion.split('.');
+  const tamperedSignature = `${signature[0] === 'A' ? 'B' : 'A'}${signature.slice(1)}`;
+  assert.throws(() => verifyOsShellAdmission(`${header}.${payload}.${tamperedSignature}`, {
     secret, now, method: 'POST', path: '/api/os-shell/sessions', origin: 'https://console.example.test',
   }), (e) => e.code === 401);
 });

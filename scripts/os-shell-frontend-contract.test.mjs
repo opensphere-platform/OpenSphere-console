@@ -225,7 +225,7 @@ test('the native Shell route and proxy remain disjoint from canonical PFSS routi
 });
 
 test('active runtime authorization is revalidated on a two-second cadence within the five-second revoke SLO', () => {
-  const agent = read('cmd/os-cli/cmd/os-shell-runtime/agent.go');
+  const agent = read('apps/os-shell-control/runtime/agent.go');
   assert.match(agent, /time[.]NewTicker\(2 \* time[.]Second\)/);
   assert.match(agent, /server[.]control[.]revalidate\(revalidateContext, server[.]binding\)/);
   assert.match(agent, /ptyFrame\{Type: "revoked", Message: "runtime authorization revoked"\}/);

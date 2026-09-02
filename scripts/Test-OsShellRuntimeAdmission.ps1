@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $namespace = 'opensphere-shell-sessions'
 $reconciler = 'system:serviceaccount:opensphere-console:opensphere-shell-reconciler'
-$module = (Resolve-Path (Join-Path $PSScriptRoot '../backend/os-shell-control/runtime-template.js')).Path
+$module = (Resolve-Path (Join-Path $PSScriptRoot '../apps/os-shell-control/runtime-template.js')).Path
 $sessionId = [guid]::NewGuid().ToString()
 $actorId = [guid]::NewGuid().ToString()
 $canonical = & node -e @'

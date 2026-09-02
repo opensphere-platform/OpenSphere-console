@@ -933,7 +933,7 @@ func TestReleasedOSWhoamiCrossesRuntimeAgentContract(t *testing.T) {
 	binaryPath := filepath.Join(temporary, "os")
 	build := exec.Command("go", "build", "-trimpath", "-ldflags", fmt.Sprintf(
 		"-X main.webShellAgentSocketPath=%s -X main.webShellAgentPublicKeyPath=%s", socketPath, publicKeyPath,
-	), "-o", binaryPath, "../os")
+	), "-o", binaryPath, osCLISourcePath())
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build released os CLI fixture: %v\n%s", err, output)
 	}

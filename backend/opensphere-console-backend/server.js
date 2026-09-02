@@ -28,8 +28,8 @@ const {
 } = require('./profile-avatar');
 const { authorizePluginProxyRequest } = require('./plugin-proxy-auth');
 const { authorizeR2d2ProxyRequest } = require('./r2d2-proxy-auth');
-const { createOsShellAdmissionIssuer } = require('./os-shell-admission');
-const { createOsShellCredentialExchange } = require('./os-shell-delegation');
+const { createOsShellAdmissionIssuer } = require('../../apps/os-shell-control/authority/os-shell-admission');
+const { createOsShellCredentialExchange } = require('../../apps/os-shell-control/authority/os-shell-delegation');
 const { validateLocalEdgeAutomationTokenClaims } = require('./local-edge-automation-token');
 const { LOCAL_EDGE_R1_MODE, localEdgeR1ApprovalPolicy } = require('./local-edge-r1-approval');
 const { createBaselineMonitoring } = require('./baseline-monitoring');
