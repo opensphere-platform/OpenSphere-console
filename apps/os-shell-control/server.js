@@ -10,6 +10,7 @@ const { WebSocketServer } = WebSocket;
 const { createOsShellDatabase } = require('./authority/os-shell-database');
 const { createAttachTicket, hashAttachTicket, normalizeSessionIntent } = require('./authority/os-shell-contract');
 const { verifyOsShellAdmission } = require('./authority/os-shell-admission');
+const { createOsShellConsoleOwnerAdmission } = require('./authority/console-owner-admission');
 const { verifyOsShellContextJws } = require('./authority/os-shell-context');
 const { loadConfig } = require('./config');
 const { createKubernetesClient, validatedRuntimeIdentity } = require('./kubernetes');
@@ -86,7 +87,8 @@ function publicSession(row) {
       sessionPolicyRevision: row.session_policy_revision } };
 }
 
-function admission(req, config) {
+async function admission(req, config, targetAdmission) {
+  if (config.targetOwnerAdmission) return targetAdmission(req);
   if (req.headers.cookie || req.headers.authorization) throw Object.assign(new Error('browser credentials reached OS Shell control'), { status: 403 });
   return verifyOsShellAdmission(req.headers['x-os-shell-admission'], { secret: config.admissionSecret,
     method: req.method, path: new URL(req.url, 'http://control').pathname,
@@ -173,6 +175,12 @@ function createControl({ config = loadConfig(), database, kubernetes,
     key: fs.readFileSync(files.keyFile), minVersion: 'TLSv1.3' }, handler) } = {}) {
   const pool = database ? null : (config.enabled ? new Pool(config.database) : null);
   const db = database || (pool && createOsShellDatabase({ query: (text, values) => pool.query(text, values), allowLoopbackHttp: config.allowLoopbackHttp }));
+  const targetAdmission = config.targetOwnerAdmission ? createOsShellConsoleOwnerAdmission({
+    baseUrl: config.consoleOwnerAuthorityURL,
+    publicOrigin: config.publicOrigin,
+    allowLoopbackHttp: config.allowLoopbackHttp,
+    resolvePermissionRevision: (subjectId) => db.currentPermissionRevision(subjectId),
+  }) : null;
   const kube = kubernetes || (config.enabled && config.mode === 'reconciler' ? createKubernetesClient() : null);
   const active = new Map();
   let lastReconcileSuccess = 0;
@@ -322,7 +330,7 @@ function createControl({ config = loadConfig(), database, kubernetes,
       if (!internalPath && req.socket.encrypted) throw Object.assign(new Error('browser routes are not served on the internal listener'), { status: 404 });
       if (path === '/internal/runtime/register' && req.method === 'POST') return await registerRuntime(req, res);
       if (path.startsWith('/api/os-shell/runtime/') && req.method === 'POST') return await runtimeApi(req, res, path);
-      const claims = admission(req, config); return await browserApi(req, res, path, claims);
+      const claims = await admission(req, config, targetAdmission); return await browserApi(req, res, path, claims);
     } catch (error) { return json(res, status(error), { error: error.code || 'ShellControlFailed', message: error.message || 'OS Shell control failed' }); }
   }
 
@@ -395,7 +403,7 @@ function createControl({ config = loadConfig(), database, kubernetes,
   async function attach(req, socket, head) {
     try {
       if (!config.enabled || config.mode !== 'gateway' || !config.attachEnabled) throw new Error('gateway disabled');
-      const claims = admission(req, config); const path = new URL(req.url, 'http://gateway').pathname;
+      const claims = await admission(req, config, targetAdmission); const path = new URL(req.url, 'http://gateway').pathname;
       const match = path.match(/^\/api\/os-shell\/sessions\/([0-9a-f-]{36})\/attach$/i);
       if (!match || !UUID.test(match[1]) || req.headers['sec-websocket-protocol'] !== PTY_PROTOCOL) throw new Error('attach request rejected');
       wss.handleUpgrade(req, socket, head, (browser) => {

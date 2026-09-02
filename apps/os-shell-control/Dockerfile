@@ -9,7 +9,7 @@ WORKDIR /app/os-shell-control
 COPY --from=dependencies /app/os-shell-control/node_modules ./node_modules
 COPY apps/os-shell-control/config.js apps/os-shell-control/kubernetes.js apps/os-shell-control/runtime-template.js apps/os-shell-control/server.js ./
 COPY apps/os-shell-control/authority/os-shell-contract.js apps/os-shell-control/authority/os-shell-database.js ./authority/
-COPY apps/os-shell-control/authority/os-shell-admission.js apps/os-shell-control/authority/os-shell-context.js ./authority/
+COPY apps/os-shell-control/authority/os-shell-admission.js apps/os-shell-control/authority/os-shell-context.js apps/os-shell-control/authority/console-owner-admission.js ./authority/
 RUN node --check server.js \
   && chown -R 10001:10001 /app
 ENV NODE_ENV=production PORT=8080

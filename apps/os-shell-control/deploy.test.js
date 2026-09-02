@@ -16,6 +16,7 @@ const admissionHarness = fs.readFileSync(path.join(__dirname, '..', '..', 'scrip
 const backendServer = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'server.js'), 'utf8');
 const backendDeploy = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'deploy.yaml'), 'utf8');
 const canonicalConsoleNginx = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8');
+const controlDockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
 const runtimeDockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile.runtime'), 'utf8');
 const docs = []; yaml.loadAll(source, (doc) => { if (doc) docs.push(doc); });
 const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && doc.metadata?.name === name && (!namespace || doc.metadata?.namespace === namespace));
@@ -240,14 +241,18 @@ test('NetworkPolicy peers are exact and runtime egress uses post-DNAT target por
   });
   const apiEgress = find('NetworkPolicy', 'opensphere-shell-api-egress', 'opensphere-console');
   assert.deepEqual(apiEgress.spec.egress[0], {
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
+    ports: [{ protocol: 'TCP', port: 8080 }],
+  });
+  assert.deepEqual(apiEgress.spec.egress[1], {
     to: [{ podSelector: { matchLabels: { app: 'opensphere-console-backend' } } }],
     ports: [{ protocol: 'TCP', port: 8444 }],
   });
-  assert.deepEqual(apiEgress.spec.egress[1], {
+  assert.deepEqual(apiEgress.spec.egress[2], {
     to: [{ podSelector: { matchExpressions: [{ key: 'app', operator: 'In', values: ['opensphere-shell-gateway', 'opensphere-shell-reconciler'] }] } }],
     ports: [{ protocol: 'TCP', port: 8080 }],
   });
-  assert.deepEqual(apiEgress.spec.egress[2], {
+  assert.deepEqual(apiEgress.spec.egress[3], {
     to: [{ podSelector: { matchLabels: { app: 'opensphere-shell-console-api' } } }],
     ports: [{ protocol: 'TCP', port: 8443 }],
   });
@@ -263,6 +268,10 @@ test('NetworkPolicy peers are exact and runtime egress uses post-DNAT target por
   });
   const gatewayEgress = find('NetworkPolicy', 'opensphere-shell-gateway-egress', 'opensphere-console');
   assert.deepEqual(gatewayEgress.spec.egress[0], {
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
+    ports: [{ protocol: 'TCP', port: 8080 }],
+  });
+  assert.deepEqual(gatewayEgress.spec.egress[1], {
     to: [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'opensphere-shell-sessions' } },
       podSelector: { matchLabels: { app: 'opensphere-os-shell-runtime' } } }],
     ports: [{ protocol: 'TCP', port: 8443 }],
@@ -433,4 +442,20 @@ test('0062 owner operation is projected-SA, bidirectional, signed-intent-first a
   assert.match(backendServer, /signed local-edge release owner after exact migration, component, and readiness verification/);
   assert.match(backendServer, /scale-down-claim/);
   assert.match(backendServer, /scale-down-complete/);
+});
+
+test('target Owner admission is prewired while optional OS Shell activation remains disabled', () => {
+  for (const name of ['opensphere-shell-api', 'opensphere-shell-gateway']) {
+    const deployment = find('Deployment', name, 'opensphere-console');
+    const env = Object.fromEntries(deployment.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry.value]));
+    assert.equal(deployment.spec.replicas, 0);
+    assert.equal(env.OS_SHELL_CONTROL_ENABLED, 'false');
+    assert.equal(env.OS_SHELL_TARGET_OWNER_ADMISSION, 'true');
+    assert.equal(env.OS_SHELL_OWNER_AUTHORITY_URL, 'http://opensphere-console-api.opensphere-console.svc.cluster.local:8080');
+    assert.equal(env.OS_SHELL_PUBLIC_ORIGIN, 'https://localhost:1114');
+  }
+  const reconciler = find('Deployment', 'opensphere-shell-reconciler', 'opensphere-console');
+  const names = reconciler.spec.template.spec.containers[0].env.map((entry) => entry.name);
+  assert.equal(names.includes('OS_SHELL_TARGET_OWNER_ADMISSION'), false);
+  assert.match(controlDockerfile, /console-owner-admission[.]js [.][\/]authority/u);
 });

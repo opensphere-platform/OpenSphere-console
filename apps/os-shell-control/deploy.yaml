@@ -112,6 +112,9 @@ spec:
           args: ["node", "server.js"]
           env:
             - { name: OS_SHELL_MODE, value: api }
+            - { name: OS_SHELL_TARGET_OWNER_ADMISSION, value: "true" }
+            - { name: OS_SHELL_OWNER_AUTHORITY_URL, value: "http://opensphere-console-api.opensphere-console.svc.cluster.local:8080" }
+            - { name: OS_SHELL_PUBLIC_ORIGIN, value: "https://localhost:1114" }
             - { name: OS_SHELL_CONTROL_ENABLED, value: "false" }
             - { name: OS_SHELL_RUNTIME_CONTROL_ENABLED, value: "false" }
             - { name: OS_SHELL_ATTACH_ENABLED, value: "false" }
@@ -168,6 +171,9 @@ spec:
           image: __OPENSPHERE_OS_SHELL_CONTROL_IMAGE__
           env:
             - { name: OS_SHELL_MODE, value: gateway }
+            - { name: OS_SHELL_TARGET_OWNER_ADMISSION, value: "true" }
+            - { name: OS_SHELL_OWNER_AUTHORITY_URL, value: "http://opensphere-console-api.opensphere-console.svc.cluster.local:8080" }
+            - { name: OS_SHELL_PUBLIC_ORIGIN, value: "https://localhost:1114" }
             - { name: OS_SHELL_CONTROL_ENABLED, value: "false" }
             - { name: OS_SHELL_ATTACH_ENABLED, value: "false" }
             - { name: OS_SHELL_RECONCILER_ENABLED, value: "false" }
@@ -517,6 +523,7 @@ spec:
   ingress:
     - from:
         - podSelector: { matchLabels: { app: opensphere-console } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
       ports: [{ protocol: TCP, port: 8080 }]
     - from:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-shell-sessions } }
@@ -532,6 +539,7 @@ spec:
   ingress:
     - from:
         - podSelector: { matchLabels: { app: opensphere-console } }
+        - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
       ports: [{ protocol: TCP, port: 8080 }]
     - from:
         - podSelector: { matchLabels: { app: opensphere-shell-api } }
@@ -589,6 +597,9 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
         - podSelector: { matchLabels: { app: opensphere-console-backend } }
       ports: [{ protocol: TCP, port: 8444 }]
     - to:
@@ -614,6 +625,9 @@ spec:
   podSelector: { matchLabels: { app: opensphere-shell-gateway } }
   policyTypes: [Egress]
   egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
+      ports: [{ protocol: TCP, port: 8080 }]
     - to:
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-shell-sessions } }
           podSelector: { matchLabels: { app: opensphere-os-shell-runtime } }
