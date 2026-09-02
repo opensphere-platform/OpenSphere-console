@@ -154,6 +154,15 @@ test('local edge defaults to the canonical 18 and blocks the legacy backend befo
   );
   assert.match(source, /io\.opensphere\.release-scope=\$releaseScope/u);
   assert.match(source, /ExpectedReleaseScope \$releaseScope/u);
+  const builtImageMetadataCheck = source.slice(
+    source.indexOf('$metadata = Get-Content -Raw -LiteralPath $metadataFile'),
+    source.indexOf('$digests[$item.Key] = $digest'),
+  );
+  assert.match(
+    builtImageMetadataCheck,
+    /Assert-LocalEdgeImageMetadata[\s\S]*-ExpectedPlatform \$Platform -ExpectedReleaseScope \$releaseScope/u,
+    'a newly built image must verify the canonical or auxiliary release-scope label before publication',
+  );
   assert.match(source, /-Tag \$releaseTag -Immutable/u);
   assert.match(source, /gh api user --jq \.login/u);
   assert.match(source, /docker login ghcr\.io -u \$registryActor --password-stdin/u);

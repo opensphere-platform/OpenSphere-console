@@ -490,7 +490,7 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
   # Buildx produced the wrong platform or if any policy label is absent/stale.
   Assert-LocalEdgeImageMetadata -Repository $repository -Digest $digest `
     -ExpectedSourceRevision $SourceRevision -ExpectedReleaseTag $releaseTag `
-    -ExpectedPlatform $Platform
+    -ExpectedPlatform $Platform -ExpectedReleaseScope $releaseScope
   $digests[$item.Key] = $digest
   Write-Host "[pushed] ${repository}:$localTag -> $digest"
 }
