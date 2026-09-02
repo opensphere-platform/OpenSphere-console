@@ -105,6 +105,12 @@ const PREPARE_SESSION_PREFERENCE_UPDATE_SQL = [
   ') AS session_record',
 ].join(' ');
 
+const PREPARE_OWNED_PASSWORD_RECOVERY_LINK_SQL = [
+  'SELECT console_identity.prepare_owned_password_recovery_link(',
+  '$1::bytea, $2::bytea, $3::text, $4::text, $5::text',
+  ') AS recovery_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -496,6 +502,22 @@ export function createPostgresOperationStore({ query }) {
         if (!record?.sessionId || !record?.subjectId || !record?.accessTokenCiphertext
             || !record?.auditEventId) {
           throw new Error('prepare_browser_session_preference_update returned no record');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async prepareOwnedPasswordRecoveryLink(input) {
+      try {
+        const result = await query(PREPARE_OWNED_PASSWORD_RECOVERY_LINK_SQL, [
+          input.tokenDigest, input.csrfTokenDigest, input.idempotencyKey,
+          input.correlationId, input.reason,
+        ]);
+        const record = result?.rows?.[0]?.recovery_record;
+        if (!['prepared', 'duplicate'].includes(record?.state) || !record?.subjectId) {
+          throw new Error('prepare_owned_password_recovery_link returned no record');
         }
         return record;
       } catch (error) {

@@ -157,6 +157,58 @@ export function createSupabaseAuthClient({
       return Object.freeze({ subjectId: String(claims.sub), duration: selected });
     },
 
+    async createOwnedPasswordRecoveryLink({ accessToken, expectedSubjectId, redirectUrl, publicOrigin }) {
+      if (!adminKey) fail('AuthorityUnavailable', 'Supabase recovery-link authority is unavailable', 503);
+      const claims = jwtClaims(accessToken, now());
+      if (String(claims.sub) !== String(expectedSubjectId || '')) {
+        fail('AuthenticationRequired', 'password recovery subject does not match', 401);
+      }
+      const user = await request('/user', { token: accessToken });
+      const email = String(user?.email || '').trim();
+      if (String(user?.id || '') !== String(claims.sub)
+          || email.length < 3 || email.length > 254
+          || !/^[^@\s]+@[^@\s]+[.][^@\s]+$/u.test(email)) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned no verified recovery subject', 503);
+      }
+      let publicUrl;
+      try { publicUrl = new URL(publicOrigin); } catch {
+        fail('AuthorityUnavailable', 'Console recovery-link origin is invalid', 503);
+      }
+      if (publicUrl.origin !== publicOrigin || publicUrl.protocol !== 'https:'
+          || redirectUrl !== publicUrl.origin + '/auth/recovery') {
+        fail('AuthorityUnavailable', 'Console recovery-link redirect is invalid', 503);
+      }
+      const generated = await request('/admin/generate_link', {
+        method: 'POST', token: adminKey, apiKey: adminKey,
+        body: { type: 'recovery', email, redirect_to: redirectUrl },
+        rejectedCode: 'RecoveryLinkRejected',
+        rejectedMessage: 'password recovery link request was rejected',
+        rejectedStatus: 400,
+        rejectedStatuses: [400, 401, 403, 409, 422],
+      });
+      const returnedSubjectId = String(generated?.id || generated?.user?.id || '');
+      if (returnedSubjectId && returnedSubjectId !== String(claims.sub)) {
+        fail('AuthorityUnavailable', 'Supabase Auth changed the recovery-link subject', 503);
+      }
+      const rawActionLink = generated?.action_link || generated?.properties?.action_link;
+      let action;
+      try { action = new URL(String(rawActionLink || ''), origin + '/'); } catch {
+        fail('AuthorityUnavailable', 'Supabase Auth returned no usable recovery link', 503);
+      }
+      const hasToken = ['token', 'token_hash'].some((name) => {
+        const value = action.searchParams.get(name);
+        return value != null && value.length >= 8 && value.length <= 16384;
+      });
+      if (action.origin !== origin || action.pathname !== '/verify'
+          || action.searchParams.get('type') !== 'recovery'
+          || action.searchParams.get('redirect_to') !== redirectUrl || !hasToken) {
+        fail('AuthorityUnavailable', 'Supabase Auth returned an invalid recovery link', 503);
+      }
+      const publicAction = new URL('/auth/v1/verify', publicUrl.origin);
+      publicAction.search = action.search;
+      return Object.freeze({ subjectId: String(claims.sub), resetUrl: publicAction.toString() });
+    },
+
     async createInitialAdministrator({ username, displayName, email, password }) {
       if (!adminKey) fail('AuthorityUnavailable', 'Supabase administrator authority is unavailable', 503);
       const created = await request('/admin/users', {

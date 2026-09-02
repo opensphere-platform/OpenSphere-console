@@ -18,6 +18,7 @@
     "verifySessionTotpEnrollment",
     "stepUpSession",
     "completePasswordRecovery",
+    "requestOwnedPasswordRecoveryLink",
     "touchSessionActivity",
     "listOwnedSessions",
     "revokeAllOwnedSessions",
@@ -73,6 +74,8 @@
     "session-totp-verification-response.schema.json",
     "session-step-up-response.schema.json",
     "password-recovery-request.schema.json",
+    "owned-password-recovery-link-request.schema.json",
+    "owned-password-recovery-link-response.schema.json",
     "session-touch-request.schema.json",
     "session-touch-response.schema.json",
     "session-inventory-response.schema.json"

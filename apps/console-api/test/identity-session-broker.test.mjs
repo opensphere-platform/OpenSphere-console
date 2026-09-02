@@ -268,7 +268,46 @@ test('Supabase password recovery accepts only a recovery AMR, changes the same s
   assert.equal(called, false);
 });
 
-test('Supabase initial administrator client confines the service credential to Auth admin create and cleanup', async () => {
+test('Supabase recovery-link client revalidates the current subject and rewrites only the Auth verify endpoint', async () => {
+  const accessToken = token();
+  const serviceRoleKey = 'service-role-key-' + 'r'.repeat(64);
+  const redirectUrl = 'https://console.example.test/auth/recovery';
+  const calls = [];
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://127.0.0.1:54321', serviceRoleKey, now: () => now,
+    async fetchImpl(url, init) {
+      calls.push({ url, init });
+      if (url.endsWith('/user')) {
+        assert.equal(init.headers.authorization, 'Bearer ' + accessToken);
+        assert.equal(Object.hasOwn(init.headers, 'apikey'), false);
+        return jsonResponse({ id: subjectId, email: 'operator@example.test' });
+      }
+      if (url.endsWith('/admin/generate_link')) {
+        assert.equal(init.headers.authorization, 'Bearer ' + serviceRoleKey);
+        assert.equal(init.headers.apikey, serviceRoleKey);
+        assert.deepEqual(JSON.parse(init.body), {
+          type: 'recovery', email: 'operator@example.test', redirect_to: redirectUrl,
+        });
+        return jsonResponse({
+          id: subjectId,
+          action_link: 'http://127.0.0.1:54321/verify?token=recovery-token-value&type=recovery&redirect_to='
+            + encodeURIComponent(redirectUrl),
+        });
+      }
+      return jsonResponse({}, 404);
+    },
+  });
+  assert.deepEqual(await client.createOwnedPasswordRecoveryLink({
+    accessToken, expectedSubjectId: subjectId,
+    publicOrigin: 'https://console.example.test', redirectUrl,
+  }), {
+    subjectId,
+    resetUrl: 'https://console.example.test/auth/v1/verify?token=recovery-token-value&type=recovery&redirect_to=https%3A%2F%2Fconsole.example.test%2Fauth%2Frecovery',
+  });
+  assert.equal(calls.length, 2);
+});
+
+test('Supabase initial administrator client confines exercised service credentials to Auth admin create and cleanup', async () => {
   const serviceRoleKey = 'service-role-key-' + 's'.repeat(64);
   const calls = [];
   const client = createSupabaseAuthClient({
@@ -552,6 +591,85 @@ test('password recovery revokes the verified subject Console sessions before clo
     requestOrigin: 'https://attacker.example.test',
     correlationId: 'password-recovery-correlation-0002',
   }), { code: 'PermissionDenied' });
+});
+
+test('owned password recovery-link request persists one intent before issuing a same-subject link', async () => {
+  const calls = [];
+  const handle = 'opaque-owned-password-recovery-handle';
+  const csrf = 'csrf-owned-password-recovery-proof';
+  const accessToken = token();
+  const cipher = createSessionCredentialCipher({
+    encryptionKey, randomBytes: (size) => Buffer.alloc(size, 20),
+  });
+  let duplicate = false;
+  const broker = createIdentitySessionBroker({
+    store: {
+      async resolveSession() {
+        return {
+          sessionId, subjectId, expiresAt: '2026-09-02T12:00:00.000Z',
+          idleExpiresAt: '2026-09-02T12:00:00.000Z', absoluteExpiresAt: '2026-09-03T00:00:00.000Z',
+          persistence: '24h', accessTokenExpiresAt: '2026-09-02T01:00:00.000Z', revokedAt: null,
+          authorityFresh: true, permissions: [], permissionRevision: 1, revokeEpoch: 0, aal: 'aal2',
+        };
+      },
+      async issueSession() { throw new Error('login must not run'); },
+      async getPendingMfa() { throw new Error('MFA must not run'); },
+      async activateMfa() { throw new Error('MFA must not run'); },
+      async getRefreshCredentials() { throw new Error('refresh must not run'); },
+      async rotateCredentials() { throw new Error('refresh must not run'); },
+      async rejectRefresh() { throw new Error('refresh must not run'); },
+      async touchActivity() { throw new Error('activity touch must not run'); },
+      ...unusedOwnedSessionMethods(),
+      async prepareOwnedPasswordRecoveryLink(input) {
+        calls.push(['prepare', input]);
+        if (duplicate) return { state: 'duplicate', subjectId };
+        return {
+          state: 'prepared', sessionId, subjectId,
+          accessTokenCiphertext: cipher.encrypt(accessToken),
+          auditEventId: '33333333-3333-4333-8333-333333333333',
+        };
+      },
+    },
+    authClient: {
+      async authenticatePassword() { throw new Error('login must not run'); },
+      async completeTotp() { throw new Error('MFA must not run'); },
+      async refreshSession() { throw new Error('refresh must not run'); },
+      async logout() {},
+      async createOwnedPasswordRecoveryLink(input) {
+        calls.push(['auth', input]);
+        return {
+          subjectId,
+          resetUrl: 'https://console.example.test/auth/v1/verify?token=recovery-token-value&type=recovery',
+        };
+      },
+    },
+    credentialCipher: cipher,
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const request = { headers: {
+    cookie: `__Host-opensphere-session=${handle}`,
+    'x-os-csrf-token': csrf,
+  } };
+  assert.deepEqual(await broker.requestOwnedPasswordRecoveryLink(request, {
+    body: { reason: 'self-service password change' },
+    idempotencyKey: 'owned-password-recovery-key-0001',
+    correlationId: 'owned-password-recovery-correlation-0001',
+  }), {
+    ok: true,
+    resetUrl: 'https://console.example.test/auth/v1/verify?token=recovery-token-value&type=recovery',
+  });
+  assert.equal(calls[0][1].tokenDigest.length, 32);
+  assert.equal(calls[0][1].csrfTokenDigest.length, 32);
+  assert.equal(calls[0][1].reason, 'self-service password change');
+  assert.equal(calls[1][1].accessToken, accessToken);
+  assert.equal(calls[1][1].redirectUrl, 'https://console.example.test/auth/recovery');
+  duplicate = true;
+  await assert.rejects(broker.requestOwnedPasswordRecoveryLink(request, {
+    body: { reason: 'self-service password change' },
+    idempotencyKey: 'owned-password-recovery-key-0001',
+    correlationId: 'owned-password-recovery-correlation-0002',
+  }), { code: 'IdempotencyReplayUnavailable', status: 409, sideEffect: 'unknown' });
+  assert.deepEqual(calls.map(([name]) => name), ['prepare', 'auth', 'prepare']);
 });
 
 test('password login issues only opaque cookies and persists encrypted credentials', async () => {
@@ -1200,6 +1318,58 @@ test('HTTP password recovery uses the target C_API route and clears stale Consol
   assert.equal(calls[0].requestOrigin, 'https://console.example.test');
   assert.equal(calls[0].body.password, 'new-password-value');
   assert.equal(calls[0].correlationId, 'password-recovery-http-0001');
+});
+
+test('HTTP owned password recovery-link route requires canonical control headers and preserves unknown replay state', async (t) => {
+  const calls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession() { throw new Error('generic session resolution must not run'); },
+    operationService: {}, registryOperations: {}, auditOperations: {}, identityOperations: {},
+    identitySessionBroker: {
+      async requestOwnedPasswordRecoveryLink(request, input) {
+        calls.push({ request, input });
+        if (input.idempotencyKey === 'owned-password-recovery-replay') {
+          throw Object.assign(new Error('prior one-time link cannot be replayed'), {
+            code: 'IdempotencyReplayUnavailable', status: 409, sideEffect: 'unknown',
+          });
+        }
+        return {
+          ok: true,
+          resetUrl: 'https://console.example.test/auth/v1/verify?token=recovery-token-value&type=recovery',
+        };
+      },
+    },
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const endpoint = 'http://127.0.0.1:' + server.address().port + '/api/identity/me/password';
+  const request = (idempotencyHeader, idempotencyKey) => fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      cookie: '__Host-opensphere-session=opaque-owned-password-recovery',
+      'x-os-csrf-token': 'csrf-owned-password-recovery-proof',
+      'x-os-correlation-id': 'owned-password-recovery-http-0001',
+      [idempotencyHeader]: idempotencyKey,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ reason: 'self-service password change' }),
+  });
+  const response = await request('x-os-idempotency-key', 'owned-password-recovery-key-0001');
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).ok, true);
+  assert.equal(calls[0].input.idempotencyKey, 'owned-password-recovery-key-0001');
+  assert.equal(calls[0].input.correlationId, 'owned-password-recovery-http-0001');
+
+  const retiredAlias = await request('idempotency-key', 'owned-password-recovery-key-0002');
+  assert.equal(retiredAlias.status, 400);
+  assert.equal((await retiredAlias.json()).code, 'ValidationFailed');
+  assert.equal(calls.length, 1);
+
+  const replay = await request('x-os-idempotency-key', 'owned-password-recovery-replay');
+  assert.equal(replay.status, 409);
+  const replayBody = await replay.json();
+  assert.equal(replayBody.code, 'IdempotencyReplayUnavailable');
+  assert.equal(replayBody.sideEffect, 'unknown');
 });
 
 test('HTTP initial administrator routes expose safe status and forward only the closed bootstrap body', async (t) => {

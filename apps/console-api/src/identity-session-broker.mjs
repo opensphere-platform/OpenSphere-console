@@ -52,6 +52,20 @@ function passwordRecoveryInput(body) {
   return { recoveryAccessToken, password };
 }
 
+function passwordRecoveryLinkInput(body, idempotencyKey) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+      || Object.keys(body).length !== 1 || !Object.hasOwn(body, 'reason')) {
+    fail('ValidationFailed', 'password recovery link request requires exactly reason', 400);
+  }
+  const reason = String(body.reason || '').trim();
+  const key = String(idempotencyKey || '').trim();
+  if (reason.length < 8 || reason.length > 500 || /[\r\n]/u.test(reason)
+      || key.length < 8 || key.length > 256 || /[\r\n]/u.test(key)) {
+    fail('ValidationFailed', 'password recovery link request is invalid', 400);
+  }
+  return { reason, idempotencyKey: key };
+}
+
 function initialAdministratorInput(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     fail('ValidationFailed', 'initial administrator body must be an object', 400);
@@ -305,6 +319,49 @@ export function createIdentitySessionBroker({
         completed: true,
         revokedSessions: revoked.revokedCount,
       });
+    },
+
+    async requestOwnedPasswordRecoveryLink(request, { body, idempotencyKey, correlationId }) {
+      if (!store?.prepareOwnedPasswordRecoveryLink || !authClient?.createOwnedPasswordRecoveryLink) {
+        fail('AuthorityUnavailable', 'password recovery-link authority is unavailable', 503);
+      }
+      const input = passwordRecoveryLinkInput(body, idempotencyKey);
+      await broker.resolveSession(request, { requireCsrf: true, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf: true });
+      const context = await store.prepareOwnedPasswordRecoveryLink({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+        idempotencyKey: input.idempotencyKey,
+        correlationId,
+        reason: input.reason,
+      });
+      if (context?.state === 'duplicate') {
+        throw Object.assign(new Error('password recovery link replay cannot expose a prior one-time credential'), {
+          code: 'IdempotencyReplayUnavailable', status: 409, sideEffect: 'unknown',
+        });
+      }
+      if (context?.state !== 'prepared' || !context?.sessionId || !context?.subjectId
+          || !context?.accessTokenCiphertext || !context?.auditEventId) {
+        fail('AuthorityUnavailable', 'password recovery-link authority returned an invalid context', 503);
+      }
+      const result = await authClient.createOwnedPasswordRecoveryLink({
+        accessToken: credentialCipher.decrypt(context.accessTokenCiphertext),
+        expectedSubjectId: context.subjectId,
+        publicOrigin: origin,
+        redirectUrl: origin + '/auth/recovery',
+      });
+      if (result?.subjectId !== context.subjectId || typeof result?.resetUrl !== 'string') {
+        fail('AuthorityUnavailable', 'password recovery-link authority changed subject', 503);
+      }
+      let resetUrl;
+      try { resetUrl = new URL(result.resetUrl); } catch {
+        fail('AuthorityUnavailable', 'password recovery-link authority returned an invalid URL', 503);
+      }
+      if (resetUrl.origin !== origin || resetUrl.pathname !== '/auth/v1/verify'
+          || resetUrl.searchParams.get('type') !== 'recovery') {
+        fail('AuthorityUnavailable', 'password recovery-link authority escaped the Console origin', 503);
+      }
+      return Object.freeze({ ok: true, resetUrl: resetUrl.toString() });
     },
 
     async login({ body, requestOrigin, correlationId }) {

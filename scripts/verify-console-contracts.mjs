@@ -25,6 +25,7 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.list_owned_browser_session_events',
   'console_identity.list_owned_browser_sessions',
   'console_identity.prepare_browser_session_preference_update',
+  'console_identity.prepare_owned_password_recovery_link',
   'console_identity.reject_browser_session_refresh',
   'console_identity.resolve_browser_session',
   'console_identity.revoke_all_owned_browser_sessions',
@@ -275,7 +276,18 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     sessionEventRead?.parameters?.find((parameter) => parameter.name === 'limit')?.schema?.maximum === 100,
     'listOwnedSessionEvents must keep a bounded self-service page size',
   );
-  for (const operationId of ['completeSessionMfa', 'getSession', 'deleteSession', 'getMe']) {
+  const recoveryLink = entries.find(({ operation }) => operation.operationId === 'requestOwnedPasswordRecoveryLink')?.operation;
+  assert(recoveryLink?.['x-opensphere-authority'] === 'SupabaseAuth',
+    'requestOwnedPasswordRecoveryLink must declare Supabase Auth authority');
+  assert(recoveryLink?.parameters?.some((entry) => entry.$ref === '#/components/parameters/IdempotencyKey'),
+    'requestOwnedPasswordRecoveryLink must require the canonical idempotency key');
+  assert(recoveryLink?.requestBody?.content?.['application/json']?.schema?.$ref
+    === '../schemas/owned-password-recovery-link-request.schema.json',
+  'requestOwnedPasswordRecoveryLink must use the closed reason schema');
+  assert(recoveryLink?.responses?.['200']?.content?.['application/json']?.schema?.$ref
+    === '../schemas/owned-password-recovery-link-response.schema.json',
+  'requestOwnedPasswordRecoveryLink must use the closed same-origin response schema');
+  for (const operationId of ['completeSessionMfa', 'getSession', 'deleteSession', 'getMe', 'requestOwnedPasswordRecoveryLink']) {
     const identityRead = entries.find(({ operation }) => operation.operationId === operationId)?.operation;
     assert(identityRead?.['x-opensphere-authority'] === 'SupabaseAuth', operationId + ' must declare Supabase Auth authority');
   }

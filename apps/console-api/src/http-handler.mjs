@@ -61,12 +61,15 @@ function errorEnvelope(error, correlationId) {
     ReasonRequired: 'ValidationFailed',
     SelfApprovalDenied: 'PermissionDenied',
   }[internalCode] || internalCode;
+  const sideEffect = ['none', 'unknown', 'present'].includes(error?.sideEffect)
+    ? error.sideEffect
+    : (code === 'AuthorityUnavailable' ? 'unknown' : 'none');
   return {
     schemaVersion: '1.0',
     code,
     message: String(error?.message || 'Console API request failed').slice(0, 500),
     retryable: code === 'AuthorityUnavailable' || code === 'DependencyTimeout',
-    sideEffect: code === 'AuthorityUnavailable' ? 'unknown' : 'none',
+    sideEffect,
     correlationId,
     operationId: error?.operationId || null,
     details: {},
@@ -151,6 +154,16 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           correlationId,
         });
         return send(response, 204, null, { 'set-cookie': clearSessionCookies() });
+      }
+      if (url.pathname === '/api/identity/me/password' && request.method === 'POST') {
+        if (!identitySessionBroker?.requestOwnedPasswordRecoveryLink) {
+          throw Object.assign(new Error('password recovery-link request is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        return send(response, 200, await identitySessionBroker.requestOwnedPasswordRecoveryLink(request, {
+          body: await jsonBody(request),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
+          correlationId,
+        }));
       }
       if (url.pathname === '/api/identity/session/mfa' && request.method === 'POST') {
         if (!identitySessionBroker?.completeMfa) throw Object.assign(new Error('target session MFA is unavailable'), { code: 'AuthorityUnavailable', status: 503 });

@@ -647,6 +647,31 @@ test('PostgreSQL owned-session management binds only proof digests, target and c
   assert.doesNotMatch(JSON.stringify(calls.map(({ values }) => values)), /opaque|credential|password/i);
 });
 
+test('PostgreSQL owned recovery-link preparation binds proof, idempotency, correlation, and reason once', async () => {
+  const calls = [];
+  const prepared = {
+    state: 'prepared', sessionId, subjectId: actorRef,
+    accessTokenCiphertext: 'v1.iv.tag.access',
+    auditEventId: '33333333-3333-4333-8333-333333333333',
+  };
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{ recovery_record: prepared }] };
+    },
+  });
+  const input = {
+    tokenDigest: Buffer.alloc(32, 13),
+    csrfTokenDigest: Buffer.alloc(32, 14),
+    idempotencyKey: 'owned-password-recovery-key-0001',
+    correlationId: 'owned-password-recovery-correlation-0001',
+    reason: 'self-service password change',
+  };
+  assert.equal(await store.prepareOwnedPasswordRecoveryLink(input), prepared);
+  assert.match(calls[0].sql, /console_identity[.]prepare_owned_password_recovery_link/);
+  assert.deepEqual(calls[0].values, Object.values(input));
+});
+
 test('PostgreSQL refresh operations bind only proof, ciphertext CAS and rotated envelopes', async () => {
   const calls = [];
   const store = createPostgresOperationStore({

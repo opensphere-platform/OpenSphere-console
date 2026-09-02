@@ -99,6 +99,8 @@ const body = JSON.stringify({
 const installCatalogRevision = 'sha256:' + 'c'.repeat(64);
 const installDigest = 'sha256:' + 'e'.repeat(64);
 const installImage = 'ghcr.io/opensphere-platform/opensphere-plugin-workspace@' + installDigest;
+const serviceRoleKey = 'integration-service-role-' + 's'.repeat(64);
+let recoveryLinkRequests = 0;
 let registration = null;
 const authorityServer = createServer(async (request, response) => {
   const chunks = [];
@@ -143,12 +145,30 @@ const authorityServer = createServer(async (request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({
       id: loginSubjectId,
+      email: 'operator@opensphere.test',
       user_metadata: { console_session_persistence: sessionPreferenceDuration },
       factors: bearer === 'Bearer ' + mfaAccessToken
         ? [{ id: 'factor-1', factor_type: 'totp', status: 'verified' }]
         : enrollmentBearer && totpEnrollmentState !== 'none'
           ? [{ id: 'factor-enrollment-1', factor_type: 'totp', status: totpEnrollmentState }]
           : [],
+    }));
+    return;
+  }
+  if (request.url === '/admin/generate_link' && request.method === 'POST') {
+    assert.equal(request.headers.authorization, 'Bearer ' + serviceRoleKey);
+    assert.equal(request.headers.apikey, serviceRoleKey);
+    assert.deepEqual(requestBody, {
+      type: 'recovery',
+      email: 'operator@opensphere.test',
+      redirect_to: publicOrigin + '/auth/recovery',
+    });
+    recoveryLinkRequests += 1;
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      id: loginSubjectId,
+      action_link: authorityOrigin + '/verify?token=integration-recovery-link-token&type=recovery&redirect_to='
+        + encodeURIComponent(publicOrigin + '/auth/recovery'),
     }));
     return;
   }
@@ -342,6 +362,7 @@ const child = spawn(process.execPath, ['apps/console-api/src/server.mjs'], {
     CONSOLE_SUPABASE_STORAGE_URL: authorityOrigin,
     CONSOLE_PUBLIC_ORIGIN: publicOrigin,
     CONSOLE_SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+    CONSOLE_SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -580,6 +601,54 @@ try {
   assert.equal(preferenceEvidence.rows[0].event_count, 1);
   assert.match(preferenceEvidence.rows[0].evidence, /"duration":\s*"7d"/);
   assert.doesNotMatch(preferenceEvidence.rows[0].evidence, /integration-signature|supabase-refresh|apikey/i);
+
+  const recoveryLinkHeaders = {
+    cookie: loginCookieHeader,
+    'x-os-csrf-token': loginCsrf,
+    'x-os-idempotency-key': 'integration-owned-password-recovery-key-0001',
+    'x-os-correlation-id': 'integration-owned-password-recovery-correlation-0001',
+    'content-type': 'application/json',
+  };
+  const recoveryLinkResponse = await fetch(origin + '/api/identity/me/password', {
+    method: 'POST', headers: recoveryLinkHeaders,
+    body: JSON.stringify({ reason: 'self-service password change' }),
+  });
+  const recoveryLink = await recoveryLinkResponse.json();
+  assert.equal(recoveryLinkResponse.status, 200, JSON.stringify(recoveryLink));
+  const recoveryLinkUrl = new URL(recoveryLink.resetUrl);
+  assert.equal(recoveryLink.ok, true);
+  assert.equal(recoveryLinkUrl.origin, publicOrigin);
+  assert.equal(recoveryLinkUrl.pathname, '/auth/v1/verify');
+  assert.equal(recoveryLinkUrl.searchParams.get('type'), 'recovery');
+  assert.equal(recoveryLinkUrl.searchParams.get('redirect_to'), publicOrigin + '/auth/recovery');
+  assert.equal(recoveryLinkRequests, 1);
+  const recoveryLinkEvidence = await admin.query(
+    [
+      'SELECT count(*)::int AS event_count,',
+      "COALESCE(string_agg(reason || evidence::text, ''), '') AS evidence",
+      'FROM console_audit.event',
+      "WHERE action = 'console.identity.password.recovery_link.request' AND correlation_id = $1",
+    ].join(' '),
+    ['integration-owned-password-recovery-correlation-0001'],
+  );
+  assert.equal(recoveryLinkEvidence.rows[0].event_count, 1);
+  assert.match(recoveryLinkEvidence.rows[0].evidence, /self-service password change/);
+  assert.doesNotMatch(recoveryLinkEvidence.rows[0].evidence,
+    /integration-owned-password-recovery-key-0001|integration-recovery-link-token|operator@opensphere[.]test|integration-signature/i);
+
+  const recoveryLinkReplay = await fetch(origin + '/api/identity/me/password', {
+    method: 'POST',
+    headers: {
+      ...recoveryLinkHeaders,
+      'x-os-correlation-id': 'integration-owned-password-recovery-correlation-0002',
+    },
+    body: JSON.stringify({ reason: 'self-service password change' }),
+  });
+  assert.equal(recoveryLinkReplay.status, 409);
+  const recoveryLinkReplayBody = await recoveryLinkReplay.json();
+  assert.equal(recoveryLinkReplayBody.code, 'IdempotencyReplayUnavailable');
+  assert.equal(recoveryLinkReplayBody.sideEffect, 'unknown');
+  assert.equal(recoveryLinkRequests, 1);
 
   const sessionHistoryResponse = await fetch(origin + '/api/identity/session/events?limit=2', {
     headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-session-events-read-0001' },
@@ -1506,6 +1575,7 @@ try {
     initialAdministratorBootstrapStatus: true,
     passwordLoginSessionLifecycle: true,
     sessionPreferenceLifecycle: true,
+    ownedPasswordRecoveryLinkLifecycle: true,
     sessionEventHistory: true,
     refreshRotationLifecycle: true,
     activityTouchLifecycle: true,
