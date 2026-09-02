@@ -39,3 +39,41 @@ test('C_EXT proxy closes method, path and resolver authority', async () => {
   await assert.rejects(proxy({ method: 'TRACE', url: new URL('http://owner/api/plugins/sample'), actor }), (error) => error.status === 405);
   await assert.rejects(proxy({ method: 'GET', url: new URL('http://owner/api/plugins/sample'), actor }), (error) => error.status === 403);
 });
+test('C_EXT proxy rejects declared and streamed responses beyond the configured bound', async () => {
+  const target = async ({ serviceId }) => ({ serviceId });
+  const declared = createPluginProxy({
+    resolveTarget: target,
+    responseMaximumBytes: 1024,
+    async fetchImpl() {
+      return new Response('small', { headers: { 'content-length': '1025' } });
+    },
+  });
+  await assert.rejects(declared({
+    method: 'GET', url: new URL('http://owner/api/plugins/sample'), actor,
+  }), (error) => error.status === 502 && /configured limit/u.test(error.message));
+
+  const streamed = createPluginProxy({
+    resolveTarget: target,
+    responseMaximumBytes: 1024,
+    async fetchImpl() {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(700));
+          controller.enqueue(new Uint8Array(700));
+          controller.close();
+        },
+      });
+      return new Response(body, { headers: { 'content-type': 'application/octet-stream' } });
+    },
+  });
+  const result = await streamed({
+    method: 'GET', url: new URL('http://owner/api/plugins/sample'), actor,
+  });
+  await assert.rejects(new Response(result.body).arrayBuffer(), /configured limit/u);
+});
+
+test('C_EXT proxy validates the configured response bound', () => {
+  assert.throws(() => createPluginProxy({
+    async resolveTarget() {}, async fetchImpl() {}, responseMaximumBytes: 1023,
+  }), /response limit/u);
+});
