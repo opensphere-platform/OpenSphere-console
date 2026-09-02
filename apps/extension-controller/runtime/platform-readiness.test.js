@@ -140,9 +140,9 @@ test('Foundation management shell stays accessible while PFS services remain evi
   assert.match(controller, /const pfs = await foundationEstablishmentStatus\(supportReady, foundationReg\)/);
   assert.match(controller, /const domainAdmissionReady = pfs\.established && supportReady/);
   assert.doesNotMatch(controller, /const pfsEstablished = foundationReg\?\.status\?\.phase === 'Activated'/);
-  assert.match(page, /PFS ADMISSION/);
-  assert.match(page, /관리 화면은 항상 접근할 수 있습니다/);
-  assert.match(page, /\/p\/cluster-manager\/hiss\/hiss/);
+  assert.match(page, /Console Backbone 준비 상태/);
+  assert.match(page, /이 화면은 CRD를 만들거나 상태를 Ready로 기록하지 않습니다/);
+  assert.doesNotMatch(page, /PFS ADMISSION|관리 화면은 항상 접근할 수 있습니다|\/p\/cluster-manager\/hiss\/hiss/);
   // Hosted PFS plugins remain bound to a visible lock, while the Foundation
   // management shell itself must never disappear behind that service gate.
   assert.ok((extensions.match(/\[disabled\]="activationLocked\(/g) || []).length >= 5);

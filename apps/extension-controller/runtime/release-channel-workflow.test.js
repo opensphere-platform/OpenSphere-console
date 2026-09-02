@@ -55,13 +55,13 @@ test('Windows local edge publisher is host-native, GHCR-backed, and KST-versione
 test('local edge publisher can rebuild only explicitly affected Console components', () => {
   // No component selector means the governed integrated release. An explicit
   // selector narrows the publication without weakening the full-release default.
-  assert.match(localEdgePublisher, /\[string\[\]\]\$Components = @\('console', 'backend',/);
+  assert.match(localEdgePublisher, /\[string\[\]\]\$Components = @\('console', 'consoleApi',/);
   assert.match(localEdgePublisher, /\$auxiliaryComponentKeys = @\('cliArtifacts', 'osShellControl', 'osShellRuntime'\)/);
-  assert.match(localEdgePublisher, /\$canonicalImages = @\(\$allImages \| Where-Object \{ \$_\.Key -notin \$auxiliaryComponentKeys \}\)/);
+  assert.match(localEdgePublisher, /\$canonicalImages = @\(\$allImages \| Where-Object \{\s*\$_\.Key -notin \$auxiliaryComponentKeys -and \$_\.Key -notin \$blockedLegacyComponentKeys\s*\}\)/);
   assert.match(localEdgePublisher, /\$partialPublication = -not \$integratedPublication/);
   assert.match(localEdgePublisher, /Where-Object \{ \$requestedComponents\.Contains\(\$_.Key\) \}/);
   assert.match(localEdgePublisher, /OpenSphereEdgeComponentPublication/);
-  assert.match(localEdgePublisher, /ValidateSet\('console', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend'/);
+  assert.match(localEdgePublisher, /ValidateSet\('console', 'consoleApi',[\s\S]{0,500}'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend'/);
   assert.match(localEdgePublisher, /Key = 'cliArtifacts'; Image = 'opensphere-os-cli'/);
   assert.match(localEdgePublisher, /\$componentEvidence = \[ordered\]@\{\}/);
   assert.match(localEdgePublisher, /\[string\]\$SetupSourcePath = ''/);
@@ -88,12 +88,12 @@ test('promotion is adjacent, approval-gated, exact-digest and moves the Console 
   assert.match(promoteWorkflow, /Advance target channel with Console anchor last/);
 });
 
-test('candidate C_API uses the target artifact and cannot publish during target migration', () => {
-  assert.match(candidateWorkflow, /- image: opensphere-console-api\s+context: OpenSphere-console\s+file: OpenSphere-console\/apps\/console-api\/Dockerfile/);
+test('candidate C_API uses the target canonical artifact and cannot publish during target migration', () => {
+  assert.match(candidateWorkflow, /- image: opensphere-console-api\s+scope: canonical\s+context: OpenSphere-console\s+file: OpenSphere-console\/apps\/console-api\/Dockerfile/);
   assert.match(candidateWorkflow, /node scripts\/verify-console-contracts[.]mjs --release-ready/);
   assert.doesNotMatch(candidateWorkflow, /opensphere-console-backend/);
   assert.doesNotMatch(candidateWorkflow, /SETUP_REPOSITORY_SSH_KEY|setup-cli=|SETUP_SOURCE_REVISION/);
-  assert.match(candidateWorkflow, /publish:\s+needs: \[test, build-macos-cli\]/);
+  assert.match(candidateWorkflow, /publish:\s+if: \$\{\{ false \}\}\s+needs: \[test, build-macos-cli\]/);
   assert.match(promoteWorkflow, /opensphere-console-api/);
   assert.doesNotMatch(promoteWorkflow, /opensphere-console-backend/);
 });

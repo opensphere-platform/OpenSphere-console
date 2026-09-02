@@ -207,5 +207,6 @@ test('all deployed Supabase JWT consumers use the public Auth issuer', () => {
   assert.match(deploy, /CONSOLE_PUBLIC_URL, value: "https:\/\/localhost:1114"/);
   assert.doesNotMatch(deploy, /localhost:8090/);
   assert.doesNotMatch(notificationDeploy, /SUPABASE_AUTH_ISSUER, value: "https:\/\/localhost:8090\/auth\/v1"/);
-  assert.equal((notificationDeploy.match(/SUPABASE_AUTH_ISSUER, value: "https:\/\/localhost:1114\/auth\/v1"/g) || []).length, 2);
+  assert.equal((notificationDeploy.match(/SUPABASE_AUTH_ISSUER, value: "https:\/\/localhost:1114\/auth\/v1"/g) || []).length, 1);
+  assert.match(notificationDeploy, /replicas: 2/);
 });

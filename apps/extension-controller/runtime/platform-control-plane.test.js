@@ -6,17 +6,19 @@ const path = require('node:path');
 const root = path.join(__dirname, '..', '..', '..');
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
-test('Console management exposes Supabase, Gitea and HISS as distinct authorities', () => {
+test('Console management exposes Supabase, Gitea and Beszel baseline observation as distinct authorities', () => {
   const routes = read('apps', 'console-web', 'src', 'app', 'app.routes.ts');
   const layout = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-layout.ts');
   assert.match(routes, /path: 'platform-control'/);
   assert.match(routes, /path: 'data-identity'/);
   assert.match(routes, /path: 'state-changes'/);
   assert.match(routes, /path: 'change-control', redirectTo: 'state-changes'/);
-  assert.match(routes, /path: 'observability'/);
+  assert.match(routes, /path: 'infrastructure-monitoring'/);
+  assert.match(routes, /path: 'observability', redirectTo: 'infrastructure-monitoring'/);
   assert.match(routes, /path: 'backbone', redirectTo: 'data-identity'/);
   assert.match(layout, /플랫폼 제어/);
-  assert.match(layout, /HISS Observability/);
+  assert.match(layout, /Infrastructure Monitoring/);
+  assert.doesNotMatch(layout, /HISS Observability/);
   assert.match(layout, /route: '\/manage\/state-changes'/);
   assert.doesNotMatch(layout, /route: '\/manage\/change-control'/);
   assert.doesNotMatch(layout, /routerLink="\/manage\/backbone"/);
@@ -64,14 +66,17 @@ test('all Console management surfaces share task context, status and filtering c
   const roles = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-roles.ts');
   const extensions = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-plugins.ts');
   const osaa = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-osaa.ts');
-  const observability = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-observability.ts');
+  const infrastructureMonitoring = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-infrastructure-monitoring.ts');
   const notifications = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-notifications.ts');
   const audit = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-audit.ts');
   assert.match(styles, /\.manage-status-rail/);
   assert.match(styles, /\.manage-toolbar/);
-  for (const source of [catalog, apis, admins, roles, extensions, osaa, observability, notifications, audit]) {
+  for (const source of [catalog, apis, admins, roles, extensions, osaa, notifications, audit]) {
     assert.match(source, /manage-status-rail/);
   }
+  assert.match(infrastructureMonitoring, /<section class="status-rail"/);
+  assert.match(infrastructureMonitoring, /class="os-actions"/);
+  assert.match(infrastructureMonitoring, /\/api\/monitoring\/baseline\/v1\/overview/);
   assert.match(catalog, /Catalog 검색/);
   assert.match(apis, /API 검색/);
   assert.match(notifications, /viewFilter/);
@@ -100,20 +105,22 @@ test('Platform Control presents support readiness, operations, evidence and jour
   const changeControl = read('apps', 'console-web', 'src', 'app', 'pages', 'admin-change-control.ts');
   assert.match(routes, /path: 'platform-readiness', component: AdminPlatformControl, data: \{ controlTab: 'readiness' \}/);
   assert.match(control, />Operations</);
-  assert.match(control, />Support Profile</);
+  assert.match(control, />Backbone</);
   assert.match(control, />Evidence</);
   assert.match(control, />변경 흐름</);
   assert.match(control, /os-admin-platform-readiness \[embedded\]="true"/);
   assert.match(control, /queryParamMap\.get\('tab'\)[\s\S]{0,160}controlTab/);
   assert.match(control, /requestedTab[\s\S]{0,280}'readiness'/);
   assert.match(readiness, /@Input\(\) embedded = false/);
-  assert.match(readiness, /PlatformSupportProfile 사전 점검/);
+  assert.match(readiness, /Console Backbone 준비 상태/);
+  assert.match(readiness, /Supabase \+ Gitea \+ Release Lock \+ Beszel/);
+  assert.match(readiness, /이 화면은 CRD를 만들거나 상태를 Ready로 기록하지 않습니다/);
   assert.match(control, /변경 요청 → 서명된 상태 선언 → Kubernetes 실측 결과/);
-  assert.match(control, /HISS Preflight/);
-  assert.match(control, /opensphere\.his\.readiness-projection\/v1/);
+  assert.match(control, /for \(const component of this\.readiness\(\)\?\.components \|\| \[\]\)/);
+  assert.match(control, /id: 'runtime-backbone-' \+ component\.id/);
   assert.match(control, /PlatformReadinessService/);
   assert.match(control, /this\.readinessService\.status\(\)/);
-  assert.match(control, /this\.readiness\(\)\?\.evidence\?\.\['his'\]/);
+  assert.match(control, /observed: component\.state/);
   assert.doesNotMatch(control, /item\.key === 'his-binding'/);
   assert.match(dataIdentity, /Recovery evidence/);
   assert.match(dataIdentity, /Insufficient evidence/);
