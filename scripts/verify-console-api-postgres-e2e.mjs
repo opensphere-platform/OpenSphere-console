@@ -87,8 +87,8 @@ const policyRevision = 'console-operation-policy-2026-09-02.1';
 const headers = {
   cookie: '__Host-opensphere-session=' + handle,
   'x-os-csrf-token': csrf,
-  'idempotency-key': idempotencyKey,
-  'x-correlation-id': correlationId,
+  'x-os-idempotency-key': idempotencyKey,
+  'x-os-correlation-id': correlationId,
   'content-type': 'application/json',
 };
 const body = JSON.stringify({
@@ -420,8 +420,8 @@ async function createRevocation() {
     method: 'POST',
     headers: {
       ...headers,
-      'idempotency-key': 'integration-revocation-operation-0001',
-      'x-correlation-id': 'integration-correlation-revocation-0001',
+      'x-os-idempotency-key': 'integration-revocation-operation-0001',
+      'x-os-correlation-id': 'integration-correlation-revocation-0001',
     },
     body: JSON.stringify({
       image,
@@ -439,8 +439,8 @@ function approval(operationId, candidateBody, candidateHeaders = {}) {
     headers: {
       cookie: '__Host-opensphere-session=' + approverHandle,
       'x-os-csrf-token': approverCsrf,
-      'idempotency-key': approvalIdempotencyKey,
-      'x-correlation-id': approvalCorrelationId,
+      'x-os-idempotency-key': approvalIdempotencyKey,
+      'x-os-correlation-id': approvalCorrelationId,
       'content-type': 'application/json',
       ...candidateHeaders,
     },
@@ -454,8 +454,8 @@ function verification(operationId, candidateBody, candidateHeaders = {}) {
     headers: {
       cookie: headers.cookie,
       'x-os-csrf-token': csrf,
-      'idempotency-key': 'integration-verification-operation-0001',
-      'x-correlation-id': 'integration-verification-correlation-0001',
+      'x-os-idempotency-key': 'integration-verification-operation-0001',
+      'x-os-correlation-id': 'integration-verification-correlation-0001',
       'content-type': 'application/json',
       ...candidateHeaders,
     },
@@ -473,7 +473,7 @@ try {
     headers: {
       origin: publicOrigin,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-session-login-0001',
+      'x-os-correlation-id': 'integration-session-login-0001',
     },
     body: JSON.stringify({ email: 'operator@opensphere.test', password: 'integration-password' }),
   });
@@ -522,7 +522,7 @@ try {
   assert.doesNotMatch(loginEvidence.rows[0].audit_evidence, new RegExp(loginAccessToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
   const issuedSessionResponse = await fetch(origin + '/api/identity/session', {
-    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-issued-session-read-0001' },
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-issued-session-read-0001' },
   });
   assert.equal(issuedSessionResponse.status, 200);
   assert.equal((await issuedSessionResponse.json()).data.subjectId, loginSubjectId);
@@ -548,7 +548,7 @@ try {
   assert.doesNotMatch(refreshedLoginEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature/i);
 
   const preferenceRead = await fetch(origin + '/api/identity/session/preference', {
-    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-session-preference-read-0001' },
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-session-preference-read-0001' },
   });
   assert.equal(preferenceRead.status, 200);
   assert.deepEqual(await preferenceRead.json(), {
@@ -560,7 +560,7 @@ try {
       cookie: loginCookieHeader,
       'x-os-csrf-token': loginCsrf,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-session-preference-update-0001',
+      'x-os-correlation-id': 'integration-session-preference-update-0001',
     },
     body: JSON.stringify({ duration: '7d' }),
   });
@@ -582,7 +582,7 @@ try {
   assert.doesNotMatch(preferenceEvidence.rows[0].evidence, /integration-signature|supabase-refresh|apikey/i);
 
   const sessionHistoryResponse = await fetch(origin + '/api/identity/session/events?limit=2', {
-    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-session-events-read-0001' },
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-session-events-read-0001' },
   });
   assert.equal(sessionHistoryResponse.status, 200);
   const sessionHistory = await sessionHistoryResponse.json();
@@ -611,7 +611,7 @@ try {
       cookie: loginCookieHeader,
       'x-os-csrf-token': loginCsrf,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-session-activity-touch-0001',
+      'x-os-correlation-id': 'integration-session-activity-touch-0001',
     },
     body: '{}',
   });
@@ -641,7 +641,7 @@ try {
       cookie: loginCookieHeader,
       'x-os-csrf-token': loginCsrf,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-totp-enrollment-begin-0001',
+      'x-os-correlation-id': 'integration-totp-enrollment-begin-0001',
     },
     body: JSON.stringify({ friendlyName: 'OpenSphere Console administrator' }),
   });
@@ -666,7 +666,7 @@ try {
       cookie: loginCookieHeader,
       'x-os-csrf-token': loginCsrf,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-totp-enrollment-verify-0001',
+      'x-os-correlation-id': 'integration-totp-enrollment-verify-0001',
     },
     body: JSON.stringify({ factorId: enrollment.factorId, code: '654321' }),
   });
@@ -695,8 +695,8 @@ try {
     ...headers,
     cookie: loginCookieHeader,
     'x-os-csrf-token': loginCsrf,
-    'idempotency-key': 'integration-step-up-operation-0001',
-    'x-correlation-id': 'integration-step-up-operation-correlation-0001',
+    'x-os-idempotency-key': 'integration-step-up-operation-0001',
+    'x-os-correlation-id': 'integration-step-up-operation-correlation-0001',
   };
   const stalePrivilegedResponse = await mutation(body, staleStepUpHeaders);
   assert.equal(stalePrivilegedResponse.status, 428);
@@ -707,7 +707,7 @@ try {
       cookie: loginCookieHeader,
       'x-os-csrf-token': loginCsrf,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-session-step-up-0001',
+      'x-os-correlation-id': 'integration-session-step-up-0001',
     },
     body: JSON.stringify({ code: '789012' }),
   });
@@ -733,7 +733,7 @@ try {
     headers: {
       origin: publicOrigin,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-session-login-0002',
+      'x-os-correlation-id': 'integration-session-login-0002',
     },
     body: JSON.stringify({ email: 'operator@opensphere.test', password: 'integration-password' }),
   });
@@ -746,7 +746,7 @@ try {
   const secondLoginBody = await secondLoginResponse.json();
 
   const inventoryResponse = await fetch(origin + '/api/identity/sessions', {
-    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-session-inventory-0001' },
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-session-inventory-0001' },
   });
   assert.equal(inventoryResponse.status, 200);
   const inventory = await inventoryResponse.json();
@@ -761,13 +761,13 @@ try {
     headers: {
       cookie: loginCookieHeader,
       'x-os-csrf-token': loginCsrf,
-      'x-correlation-id': 'integration-session-owned-revoke-0001',
+      'x-os-correlation-id': 'integration-session-owned-revoke-0001',
     },
   });
   assert.equal(targetedRevokeResponse.status, 204);
   assert.equal(targetedRevokeResponse.headers.getSetCookie().length, 0);
   const targetedRevokedRead = await fetch(origin + '/api/identity/session', {
-    headers: { cookie: secondCookieHeader, 'x-correlation-id': 'integration-session-owned-revoked-read-0001' },
+    headers: { cookie: secondCookieHeader, 'x-os-correlation-id': 'integration-session-owned-revoked-read-0001' },
   });
   assert.equal(targetedRevokedRead.status, 401);
   const targetedRevokeEvidence = await admin.query(
@@ -787,12 +787,12 @@ try {
     headers: {
       cookie: loginCookieHeader,
       'x-os-csrf-token': loginCsrf,
-      'x-correlation-id': 'integration-issued-session-revoke-0001',
+      'x-os-correlation-id': 'integration-issued-session-revoke-0001',
     },
   });
   assert.equal(issuedLogoutResponse.status, 204);
   const issuedRevokedResponse = await fetch(origin + '/api/identity/session', {
-    headers: { cookie: loginCookieHeader, 'x-correlation-id': 'integration-issued-session-revoked-read-0001' },
+    headers: { cookie: loginCookieHeader, 'x-os-correlation-id': 'integration-issued-session-revoked-read-0001' },
   });
   assert.equal(issuedRevokedResponse.status, 401);
 
@@ -801,7 +801,7 @@ try {
     headers: {
       origin: publicOrigin,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-session-mfa-login-0001',
+      'x-os-correlation-id': 'integration-session-mfa-login-0001',
     },
     body: JSON.stringify({ email: 'mfa@opensphere.test', password: 'integration-password' }),
   });
@@ -837,7 +837,7 @@ try {
       cookie: mfaCookieHeader,
       'x-os-csrf-token': mfaCsrf,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-session-mfa-complete-0001',
+      'x-os-correlation-id': 'integration-session-mfa-complete-0001',
     },
     body: JSON.stringify({ code: '123456' }),
   });
@@ -867,7 +867,7 @@ try {
   assert.notEqual(activeMfaEvidence.rows[0].refresh_token_ciphertext, pendingRefreshCiphertext);
   assert.doesNotMatch(activeMfaEvidence.rows[0].audit_evidence, /supabase-refresh|integration-signature|auth-session-mfa-aal2/i);
   const activeMfaSessionResponse = await fetch(origin + '/api/identity/session', {
-    headers: { cookie: mfaCookieHeader, 'x-correlation-id': 'integration-session-mfa-read-0001' },
+    headers: { cookie: mfaCookieHeader, 'x-os-correlation-id': 'integration-session-mfa-read-0001' },
   });
   assert.equal(activeMfaSessionResponse.status, 200);
   assert.equal((await activeMfaSessionResponse.json()).data.aal, 'aal2');
@@ -876,14 +876,14 @@ try {
     headers: {
       cookie: mfaCookieHeader,
       'x-os-csrf-token': mfaCsrf,
-      'x-correlation-id': 'integration-session-mfa-logout-0001',
+      'x-os-correlation-id': 'integration-session-mfa-logout-0001',
     },
   });
   assert.equal(mfaLogoutResponse.status, 204);
 
   const connectionProjectionResponse = await fetch(
     origin + '/api/admin/extensions/registry-connections/opensphere-ghcr',
-    { headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-registry-read-0001' } },
+    { headers: { cookie: headers.cookie, 'x-os-correlation-id': 'integration-registry-read-0001' } },
   );
   assert.equal(connectionProjectionResponse.status, 200);
   const connectionProjection = await connectionProjectionResponse.json();
@@ -949,8 +949,8 @@ try {
   const selfApproval = await approval(plannedRevocation.operationId, approvalBody, {
     cookie: headers.cookie,
     'x-os-csrf-token': csrf,
-    'idempotency-key': 'integration-self-approval-operation-0001',
-    'x-correlation-id': 'integration-self-approval-correlation-0001',
+    'x-os-idempotency-key': 'integration-self-approval-operation-0001',
+    'x-os-correlation-id': 'integration-self-approval-correlation-0001',
   });
   assert.equal(selfApproval.status, 403);
   assert.equal((await selfApproval.json()).code, 'PermissionDenied');
@@ -1003,7 +1003,7 @@ try {
     ['integration approver revoke', '66666666-6666-4666-8666-666666666666'],
   );
   const revokedApproval = await approval(plannedRevocation.operationId, approvalBody, {
-    'idempotency-key': 'integration-revoked-approval-operation-0001',
+    'x-os-idempotency-key': 'integration-revoked-approval-operation-0001',
   });
   assert.equal(revokedApproval.status, 401);
   assert.equal((await revokedApproval.json()).code, 'AuthenticationRequired');
@@ -1038,7 +1038,7 @@ try {
   const revocationProjectionResponse = await fetch(origin + '/api/admin/extensions/revocations', {
     headers: {
       cookie: headers.cookie,
-      'x-correlation-id': 'integration-revocation-projection-0001',
+      'x-os-correlation-id': 'integration-revocation-projection-0001',
     },
   });
   assert.equal(revocationProjectionResponse.status, 200);
@@ -1092,7 +1092,7 @@ try {
   });
 
   const auditResponse = await fetch(origin + '/api/identity/audit?limit=2', {
-    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-audit-read-page-one' },
+    headers: { cookie: headers.cookie, 'x-os-correlation-id': 'integration-audit-read-page-one' },
   });
   assert.equal(auditResponse.status, 200);
   const auditProjection = await auditResponse.json();
@@ -1104,7 +1104,7 @@ try {
 
   const nextAuditResponse = await fetch(
     origin + '/api/identity/audit?limit=2&cursor=' + auditProjection.data.nextCursor,
-    { headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-audit-read-page-two' } },
+    { headers: { cookie: headers.cookie, 'x-os-correlation-id': 'integration-audit-read-page-two' } },
   );
   assert.equal(nextAuditResponse.status, 200);
   const nextAuditProjection = await nextAuditResponse.json();
@@ -1120,8 +1120,8 @@ try {
       cookie: headers.cookie,
       'x-os-csrf-token': csrf,
       'content-type': 'application/json',
-      'idempotency-key': 'integration-extension-install-0001',
-      'x-correlation-id': 'integration-extension-install-correlation-0001',
+      'x-os-idempotency-key': 'integration-extension-install-0001',
+      'x-os-correlation-id': 'integration-extension-install-correlation-0001',
     },
     body: JSON.stringify({
       descriptorId: 'extension.workspace',
@@ -1159,8 +1159,8 @@ try {
     expectedStateVersion: 0,
     confirmation: null,
   }, {
-    'idempotency-key': 'integration-extension-install-approval-0001',
-    'x-correlation-id': 'integration-extension-install-approval-correlation-0001',
+    'x-os-idempotency-key': 'integration-extension-install-approval-0001',
+    'x-os-correlation-id': 'integration-extension-install-approval-correlation-0001',
   });
   assert.equal(approvedInstall.status, 202);
   assert.equal((await approvedInstall.json()).state, 'Authorized');
@@ -1194,8 +1194,8 @@ try {
     installReceipt.operationId,
     { expectedStateVersion: 4 },
     {
-      'idempotency-key': 'integration-install-verification-operation-0001',
-      'x-correlation-id': 'integration-install-verification-correlation-0001',
+      'x-os-idempotency-key': 'integration-install-verification-operation-0001',
+      'x-os-correlation-id': 'integration-install-verification-correlation-0001',
     },
   );
   assert.equal(verifiedInstall.status, 200);
@@ -1224,8 +1224,8 @@ try {
       cookie: headers.cookie,
       'x-os-csrf-token': csrf,
       'content-type': 'application/json',
-      'idempotency-key': 'integration-extension-remove-0001',
-      'x-correlation-id': 'integration-extension-remove-correlation-0001',
+      'x-os-idempotency-key': 'integration-extension-remove-0001',
+      'x-os-correlation-id': 'integration-extension-remove-correlation-0001',
     },
     body: JSON.stringify({
       descriptorId: 'extension.workspace',
@@ -1245,8 +1245,8 @@ try {
     expectedStateVersion: 0,
     confirmation: null,
   }, {
-    'idempotency-key': 'integration-extension-remove-approval-0001',
-    'x-correlation-id': 'integration-extension-remove-approval-correlation-0001',
+    'x-os-idempotency-key': 'integration-extension-remove-approval-0001',
+    'x-os-correlation-id': 'integration-extension-remove-approval-correlation-0001',
   });
   assert.equal(approvedRemove.status, 202);
   assert.equal((await approvedRemove.json()).state, 'Authorized');
@@ -1278,8 +1278,8 @@ try {
     removeReceipt.operationId,
     { expectedStateVersion: 4 },
     {
-      'idempotency-key': 'integration-remove-verification-operation-0001',
-      'x-correlation-id': 'integration-remove-verification-correlation-0001',
+      'x-os-idempotency-key': 'integration-remove-verification-operation-0001',
+      'x-os-correlation-id': 'integration-remove-verification-correlation-0001',
     },
   );
   assert.equal(verifiedRemove.status, 200);
@@ -1302,7 +1302,7 @@ try {
   });
 
   const supabaseStatusResponse = await fetch(origin + '/api/identity/supabase/status', {
-    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-supabase-status-0001' },
+    headers: { cookie: headers.cookie, 'x-os-correlation-id': 'integration-supabase-status-0001' },
   });
   assert.equal(supabaseStatusResponse.status, 200);
   const supabaseStatus = await supabaseStatusResponse.json();
@@ -1319,7 +1319,7 @@ try {
   assert.equal(supabaseStatus.data.components.find(({ component }) => component === 'rls').state, 'Ready');
 
   const sessionProjectionResponse = await fetch(origin + '/api/identity/session', {
-    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-session-read-0001' },
+    headers: { cookie: headers.cookie, 'x-os-correlation-id': 'integration-session-read-0001' },
   });
   assert.equal(sessionProjectionResponse.status, 200);
   const sessionProjection = await sessionProjectionResponse.json();
@@ -1328,7 +1328,7 @@ try {
   assert.equal(sessionProjection.data.subjectId, '11111111-1111-4111-8111-111111111111');
 
   const actorProjectionResponse = await fetch(origin + '/api/identity/me', {
-    headers: { cookie: headers.cookie, 'x-correlation-id': 'integration-actor-read-0001' },
+    headers: { cookie: headers.cookie, 'x-os-correlation-id': 'integration-actor-read-0001' },
   });
   assert.equal(actorProjectionResponse.status, 200);
   const actorProjection = await actorProjectionResponse.json();
@@ -1341,7 +1341,7 @@ try {
     headers: {
       cookie: headers.cookie,
       'x-os-csrf-token': csrf,
-      'x-correlation-id': 'integration-session-revoke-0001',
+      'x-os-correlation-id': 'integration-session-revoke-0001',
     },
   });
   assert.equal(logoutResponse.status, 204);
@@ -1350,14 +1350,14 @@ try {
   assert.match(expiredCookies[0], /^__Host-opensphere-session=;/);
   assert.match(expiredCookies[1], /^__Host-opensphere_csrf=;/);
   assert.ok(expiredCookies.every((cookie) => cookie.includes('Max-Age=0')));
-  const revoked = await mutation(body, { ...headers, 'idempotency-key': 'integration-registry-operation-0002' });
+  const revoked = await mutation(body, { ...headers, 'x-os-idempotency-key': 'integration-registry-operation-0002' });
   assert.equal(revoked.status, 401);
   assert.equal((await revoked.json()).code, 'AuthenticationRequired');
 
   const bulkLogin = async (correlation) => {
     const response = await fetch(origin + '/api/identity/session/login', {
       method: 'POST',
-      headers: { origin: publicOrigin, 'content-type': 'application/json', 'x-correlation-id': correlation },
+      headers: { origin: publicOrigin, 'content-type': 'application/json', 'x-os-correlation-id': correlation },
       body: JSON.stringify({ email: 'operator@opensphere.test', password: 'integration-password' }),
     });
     assert.equal(response.status, 200);
@@ -1375,14 +1375,14 @@ try {
     headers: {
       cookie: bulkCurrent.cookie,
       'x-os-csrf-token': bulkCurrent.csrf,
-      'x-correlation-id': 'integration-session-owned-revoke-all-0001',
+      'x-os-correlation-id': 'integration-session-owned-revoke-all-0001',
     },
   });
   assert.equal(bulkRevokeResponse.status, 204);
   assert.equal(bulkRevokeResponse.headers.getSetCookie().length, 2);
   for (const cookie of [bulkCurrent.cookie, bulkOther.cookie]) {
     const response = await fetch(origin + '/api/identity/session', {
-      headers: { cookie, 'x-correlation-id': 'integration-session-bulk-revoked-read-0001' },
+      headers: { cookie, 'x-os-correlation-id': 'integration-session-bulk-revoked-read-0001' },
     });
     assert.equal(response.status, 401);
   }
@@ -1408,7 +1408,7 @@ try {
     headers: {
       origin: publicOrigin,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-password-recovery-ordinary-token-0001',
+      'x-os-correlation-id': 'integration-password-recovery-ordinary-token-0001',
     },
     body: JSON.stringify({
       recoveryAccessToken: rotatedLoginAccessToken,
@@ -1437,7 +1437,7 @@ try {
     headers: {
       origin: publicOrigin,
       'content-type': 'application/json',
-      'x-correlation-id': 'integration-password-recovery-complete-0001',
+      'x-os-correlation-id': 'integration-password-recovery-complete-0001',
     },
     body: JSON.stringify({
       recoveryAccessToken,
@@ -1477,7 +1477,7 @@ try {
     /recovered-integration-password|recoveryAccessToken|integration-signature|operator@opensphere[.]test/i);
   for (const cookie of [recoverySessionOne.cookie, recoverySessionTwo.cookie]) {
     const response = await fetch(origin + '/api/identity/session', {
-      headers: { cookie, 'x-correlation-id': 'integration-password-recovery-revoked-read-0001' },
+      headers: { cookie, 'x-os-correlation-id': 'integration-password-recovery-revoked-read-0001' },
     });
     assert.equal(response.status, 401);
   }

@@ -76,7 +76,7 @@ function errorEnvelope(error, correlationId) {
 export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, identitySessionBroker, dataIdentityOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
-    const requestedCorrelation = String(request.headers['x-correlation-id'] || '').trim();
+    const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
     const correlationId = requestedCorrelation.length >= 8 && requestedCorrelation.length <= 128
       ? requestedCorrelation
       : randomUUID();
@@ -246,7 +246,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           session,
           operationId: approvalMatch[1],
           request: await jsonBody(request),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 202, result.receipt, {
@@ -261,7 +261,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           session,
           operationId: verificationMatch[1],
           request: await jsonBody(request),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 200, result.receipt, {
@@ -274,7 +274,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const result = await operationService.accept({
           session,
           request: await jsonBody(request),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 202, result.receipt, {
@@ -291,7 +291,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const result = await registryOperations.replaceCredential({
           session,
           body: await jsonBody(request),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 202, result.receipt, {
@@ -305,7 +305,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           session,
           reason: header(request, 'x-opensphere-reason', 3),
           confirmation: header(request, 'x-opensphere-confirmation'),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 202, result.receipt, {
@@ -318,7 +318,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const result = await registryOperations.createRevocation({
           session,
           body: await jsonBody(request),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 202, result.receipt, {
@@ -343,7 +343,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const result = await registryOperations.installCandidate({
           session,
           body: await jsonBody(request),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 202, result.receipt, {
@@ -356,7 +356,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         const result = await registryOperations.removeExtension({
           session,
           body: await jsonBody(request),
-          idempotencyKey: header(request, 'idempotency-key', 8),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
           correlationId,
         });
         return send(response, 202, result.receipt, {

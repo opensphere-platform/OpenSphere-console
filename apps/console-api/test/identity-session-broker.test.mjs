@@ -1165,7 +1165,7 @@ test('HTTP login forwards exact Origin and returns both Secure cookies', async (
     headers: {
       origin: 'https://console.example.test',
       'content-type': 'application/json',
-      'x-correlation-id': 'session-login-http-0001',
+      'x-os-correlation-id': 'session-login-http-0001',
     },
     body: JSON.stringify({ email: 'operator@example.test', password: 'valid-password' }),
   });
@@ -1191,7 +1191,7 @@ test('HTTP password recovery uses the target C_API route and clears stale Consol
     headers: {
       origin: 'https://console.example.test',
       'content-type': 'application/json',
-      'x-correlation-id': 'password-recovery-http-0001',
+      'x-os-correlation-id': 'password-recovery-http-0001',
     },
     body: JSON.stringify({ recoveryAccessToken: token({ amr: ['recovery'] }), password: 'new-password-value' }),
   });
@@ -1226,7 +1226,7 @@ test('HTTP initial administrator routes expose safe status and forward only the 
     method: 'POST',
     headers: {
       origin: 'https://console.example.test', 'content-type': 'application/json',
-      'x-correlation-id': 'initial-administrator-http-0001',
+      'x-os-correlation-id': 'initial-administrator-http-0001',
     },
     body: JSON.stringify(body),
   });
@@ -1254,7 +1254,7 @@ test('HTTP session preference routes preserve the current opaque session and CSR
   const headers = {
     cookie: '__Host-opensphere-session=opaque-session-preference',
     'x-os-csrf-token': 'csrf-session-preference-proof',
-    'x-correlation-id': 'session-preference-http-0001',
+    'x-os-correlation-id': 'session-preference-http-0001',
   };
   const read = await fetch(endpoint, { headers: { cookie: headers.cookie } });
   assert.equal(read.status, 200);
@@ -1268,7 +1268,7 @@ test('HTTP session preference routes preserve the current opaque session and CSR
   assert.equal(calls[0][1].headers.cookie, headers.cookie);
   assert.equal(calls[1][1].headers['x-os-csrf-token'], headers['x-os-csrf-token']);
   assert.deepEqual(calls[1][2].body, { duration: '7d' });
-  assert.equal(calls[1][2].correlationId, headers['x-correlation-id']);
+  assert.equal(calls[1][2].correlationId, headers['x-os-correlation-id']);
 });
 
 test('HTTP session event history forwards one bounded query and rejects query ambiguity', async (t) => {
@@ -1288,13 +1288,13 @@ test('HTTP session event history forwards one bounded query and rejects query am
   const endpoint = 'http://127.0.0.1:' + server.address().port + '/api/identity/session/events';
   const headers = {
     cookie: '__Host-opensphere-session=opaque-session-events',
-    'x-correlation-id': 'session-events-http-0001',
+    'x-os-correlation-id': 'session-events-http-0001',
   };
   const response = await fetch(endpoint + '?limit=50', { headers });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), projection);
   assert.equal(calls[0][0].headers.cookie, headers.cookie);
-  assert.deepEqual(calls[0][1], { limit: '50', correlationId: headers['x-correlation-id'] });
+  assert.deepEqual(calls[0][1], { limit: '50', correlationId: headers['x-os-correlation-id'] });
   assert.equal((await fetch(endpoint + '?limit=10&limit=20', { headers })).status, 400);
   assert.equal((await fetch(endpoint + '?cursor=1', { headers })).status, 400);
   assert.equal(calls.length, 1);
@@ -1323,7 +1323,7 @@ test('HTTP MFA completion preserves the request proof and returns refreshed cook
       cookie: '__Host-opensphere-session=opaque',
       'x-os-csrf-token': 'csrf-proof-for-mfa-completion',
       'content-type': 'application/json',
-      'x-correlation-id': 'session-mfa-http-0001',
+      'x-os-correlation-id': 'session-mfa-http-0001',
     },
     body: JSON.stringify({ code: '123456' }),
   });
@@ -1356,7 +1356,7 @@ test('HTTP TOTP enrollment routes preserve exact Web paths, bodies, CSRF proof, 
     cookie: '__Host-opensphere-session=opaque',
     'x-os-csrf-token': 'csrf-proof-for-totp-enrollment',
     'content-type': 'application/json',
-    'x-correlation-id': 'totp-enrollment-http-0001',
+    'x-os-correlation-id': 'totp-enrollment-http-0001',
   };
   const enrollment = await fetch(base + '/enrollment', {
     method: 'POST', headers, body: JSON.stringify({ friendlyName: 'OpenSphere Console' }),
@@ -1437,7 +1437,7 @@ test('HTTP owned-session routes preserve the CSRF boundary and clear cookies onl
   const proofHeaders = {
     cookie: '__Host-opensphere-session=opaque',
     'x-os-csrf-token': 'csrf-proof-for-owned-session-revocation',
-    'x-correlation-id': 'owned-session-http-correlation-0001',
+    'x-os-correlation-id': 'owned-session-http-correlation-0001',
   };
 
   const inventory = await fetch(base, { headers: { cookie: proofHeaders.cookie } });

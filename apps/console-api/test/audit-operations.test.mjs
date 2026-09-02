@@ -126,7 +126,7 @@ test('HTTP audit route is read-only and preserves bounded pagination', async (t)
   const address = server.address();
   const response = await fetch(
     'http://127.0.0.1:' + address.port + '/api/identity/audit?cursor=42&limit=25',
-    { headers: { 'x-correlation-id': 'http-audit-correlation-0001' } },
+    { headers: { 'x-os-correlation-id': 'http-audit-correlation-0001' } },
   );
   const body = await response.json();
   assert.equal(response.status, 200);

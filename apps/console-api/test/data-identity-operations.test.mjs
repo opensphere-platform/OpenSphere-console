@@ -174,7 +174,7 @@ test('HTTP Supabase status is a session-revalidated read', async (t) => {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/identity/supabase/status', {
-    headers: { 'x-correlation-id': 'supabase-status-http-0001' },
+    headers: { 'x-os-correlation-id': 'supabase-status-http-0001' },
   });
   assert.equal(response.status, 200);
   const projection = await response.json();

@@ -763,12 +763,25 @@ test('HTTP Registry mutation returns a durable operation URL and no submitted cr
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   const credential = 'http-candidate-token-never-returned';
+  const legacyAliasResponse = await fetch('http://127.0.0.1:' + address.port + '/api/admin/extensions/registry-connections/opensphere-ghcr', {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': 'retired-header-alias-0001',
+      'x-os-correlation-id': 'http-correlation-retired-alias-0001',
+      'x-os-csrf-token': 'validated-by-session-resolver',
+    },
+    body: JSON.stringify({ username: 'opensphere-platform', credential, reason: 'reject retired header alias' }),
+  });
+  assert.equal(legacyAliasResponse.status, 400);
+  assert.equal((await legacyAliasResponse.json()).code, 'ValidationFailed');
+
   const response = await fetch('http://127.0.0.1:' + address.port + '/api/admin/extensions/registry-connections/opensphere-ghcr', {
     method: 'PUT',
     headers: {
       'content-type': 'application/json',
-      'idempotency-key': 'http-registry-operation-0001',
-      'x-correlation-id': 'http-correlation-registry-0001',
+      'x-os-idempotency-key': 'http-registry-operation-0001',
+      'x-os-correlation-id': 'http-correlation-registry-0001',
       'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({ username: 'opensphere-platform', credential, reason: 'rotate registry credential' }),
@@ -794,8 +807,8 @@ test('HTTP Extension install returns only a Planned exact-revision operation', a
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'idempotency-key': 'http-extension-install-0001',
-      'x-correlation-id': 'http-extension-install-correlation-0001',
+      'x-os-idempotency-key': 'http-extension-install-0001',
+      'x-os-correlation-id': 'http-extension-install-correlation-0001',
       'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({
@@ -827,8 +840,8 @@ test('HTTP Extension removal returns only a Planned typed operation', async (t) 
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'idempotency-key': 'http-extension-remove-0001',
-      'x-correlation-id': 'http-extension-remove-correlation-0001',
+      'x-os-idempotency-key': 'http-extension-remove-0001',
+      'x-os-correlation-id': 'http-extension-remove-correlation-0001',
       'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({
@@ -859,7 +872,7 @@ test('HTTP Extension inspection returns only current C_REG evidence and requires
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-correlation-id': 'http-extension-inspect-correlation-0001',
+      'x-os-correlation-id': 'http-extension-inspect-correlation-0001',
       'x-os-csrf-token': 'validated-by-session-resolver',
     },
     body: JSON.stringify({ descriptorId: 'extension.workspace', catalogRevision }),
@@ -893,7 +906,7 @@ test('HTTP Registry connection read is session-revalidated and no-secret', async
   const address = server.address();
   const response = await fetch(
     'http://127.0.0.1:' + address.port + '/api/admin/extensions/registry-connections/opensphere-ghcr',
-    { headers: { 'x-correlation-id': 'http-registry-connection-read-0001' } },
+    { headers: { 'x-os-correlation-id': 'http-registry-connection-read-0001' } },
   );
   const envelope = await response.json();
   assert.equal(response.status, 200);
@@ -931,8 +944,8 @@ test('HTTP approval route requires CSRF and returns the Authorized receipt', asy
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'idempotency-key': 'http-approval-operation-0001',
-        'x-correlation-id': 'http-approval-correlation-0001',
+        'x-os-idempotency-key': 'http-approval-operation-0001',
+        'x-os-correlation-id': 'http-approval-correlation-0001',
         'x-os-csrf-token': 'validated-by-session-resolver',
       },
       body: JSON.stringify({
@@ -977,8 +990,8 @@ test('HTTP verification route requires CSRF and returns the Verified receipt', a
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'idempotency-key': 'http-verification-operation-0001',
-        'x-correlation-id': 'http-verification-correlation-0001',
+        'x-os-idempotency-key': 'http-verification-operation-0001',
+        'x-os-correlation-id': 'http-verification-correlation-0001',
         'x-os-csrf-token': 'validated-by-session-resolver',
       },
       body: JSON.stringify({ expectedStateVersion: 4 }),
@@ -1008,7 +1021,7 @@ test('HTTP revocation projection is a session-revalidated authority-aware read',
   const address = server.address();
   const response = await fetch(
     'http://127.0.0.1:' + address.port + '/api/admin/extensions/revocations',
-    { headers: { 'x-correlation-id': 'http-revocation-read-correlation-0001' } },
+    { headers: { 'x-os-correlation-id': 'http-revocation-read-correlation-0001' } },
   );
   const envelope = await response.json();
   assert.equal(response.status, 200);

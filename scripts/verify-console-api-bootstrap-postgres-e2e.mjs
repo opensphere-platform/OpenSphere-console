@@ -99,7 +99,7 @@ function bootstrap(email) {
   const username = email.split('@')[0];
   return fetch(origin + '/api/identity/bootstrap', {
     method: 'POST',
-    headers: { origin: publicOrigin, 'content-type': 'application/json', 'x-correlation-id': `bootstrap-${username}-0001` },
+    headers: { origin: publicOrigin, 'content-type': 'application/json', 'x-os-correlation-id': `bootstrap-${username}-0001` },
     body: JSON.stringify({
       username,
       displayName: `${username} administrator`,

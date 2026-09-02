@@ -167,13 +167,21 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   assert(openapi.openapi === '3.1.0', 'Console OpenAPI must use 3.1.0');
   assert(openapi.info?.['x-opensphere-status'] === denominator.status, 'OpenAPI and denominator status differ');
   assert(openapi.components?.parameters?.CsrfToken?.name === 'X-OS-CSRF-Token', 'OpenAPI CSRF header differs from the Console Web contract');
+  assert(openapi.components?.parameters?.IdempotencyKey?.name === 'X-OS-Idempotency-Key', 'OpenAPI idempotency header differs from the Console Web contract');
 
   const sessionResolverSource = await readFile(resolve(root, 'apps', 'console-api', 'src', 'session-resolver.mjs'), 'utf8');
+  const httpHandlerSource = await readFile(resolve(root, 'apps', 'console-api', 'src', 'http-handler.mjs'), 'utf8');
   const webHttpSource = await readFile(resolve(root, 'src', 'app', 'core', 'http.service.ts'), 'utf8');
   const webAuthSource = await readFile(resolve(root, 'src', 'app', 'core', 'auth.service.ts'), 'utf8');
   assert(/request\?*[.]headers\?*[.]\['x-os-csrf-token'\]/.test(sessionResolverSource), 'C_API does not consume the Console Web CSRF header');
   assert(webHttpSource.includes("headers.set('X-OS-CSRF-Token'"), 'Console Web shared HTTP client lost the canonical CSRF header');
   assert(webAuthSource.includes("headers.set('X-OS-CSRF-Token'"), 'Console Web identity client lost the canonical CSRF header');
+  assert(httpHandlerSource.includes("request.headers['x-os-correlation-id']"), 'C_API does not consume the Console Web correlation header');
+  assert(httpHandlerSource.includes("header(request, 'x-os-idempotency-key'"), 'C_API does not consume the Console Web idempotency header');
+  assert(!httpHandlerSource.includes("request.headers['x-correlation-id']")
+    && !httpHandlerSource.includes("header(request, 'idempotency-key'"), 'C_API retained a conflicting legacy header alias');
+  assert(webHttpSource.includes("headers.set('X-OS-Correlation-ID'"), 'Console Web shared HTTP client lost the canonical correlation header');
+  assert(webHttpSource.includes("headers.set('X-OS-Idempotency-Key'"), 'Console Web shared HTTP client lost the canonical idempotency header');
 
   const entries = operationEntries(openapi);
   const operationIds = entries.map(({ operation }) => operation.operationId);

@@ -103,13 +103,13 @@ test('HTTP identity routes separate read CSRF policy from revoke mutation', asyn
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const origin = 'http://127.0.0.1:' + server.address().port;
   const sessionResponse = await fetch(origin + '/api/identity/session', {
-    headers: { 'x-correlation-id': 'http-identity-session-read-0001' },
+    headers: { 'x-os-correlation-id': 'http-identity-session-read-0001' },
   });
   const meResponse = await fetch(origin + '/api/identity/me', {
-    headers: { 'x-correlation-id': 'http-identity-actor-read-0001' },
+    headers: { 'x-os-correlation-id': 'http-identity-actor-read-0001' },
   });
   const revokeResponse = await fetch(origin + '/api/identity/session', {
-    method: 'DELETE', headers: { 'x-correlation-id': 'http-identity-session-revoke-0001' },
+    method: 'DELETE', headers: { 'x-os-correlation-id': 'http-identity-session-revoke-0001' },
   });
   assert.equal(sessionResponse.status, 200);
   assert.equal((await sessionResponse.json()).data.state, 'Active');

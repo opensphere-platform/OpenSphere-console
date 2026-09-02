@@ -847,7 +847,7 @@ components:
       required: true
       schema: { type: string, minLength: 16, maxLength: 512 }
     IdempotencyKey:
-      name: Idempotency-Key
+      name: X-OS-Idempotency-Key
       in: header
       required: true
       schema: { type: string, minLength: 8, maxLength: 256 }
