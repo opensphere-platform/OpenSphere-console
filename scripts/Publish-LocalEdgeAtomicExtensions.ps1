@@ -255,8 +255,8 @@ try {
       '--build-arg', "CLI_UPDATE_TRUST_PUBLIC=$CliUpdateSigningPublicKey",
       '--secret', "id=cli_update_signing_key,src=$resolvedCliKey"
     ) + $labels + @(
-      '--file', (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile'),
-      (Join-Path $consoleCheckout 'backend\os-cli')
+      '--file', (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile'),
+      (Join-Path $consoleCheckout 'cmd\os-cli')
     )
     Invoke-Checked docker @cliArgs | Out-Null
     $digests.cliArtifacts = [string](Get-Content -Raw $cliMetadata | ConvertFrom-Json).'containerimage.digest'

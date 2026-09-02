@@ -4,8 +4,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 export const runtimeInputPaths = Object.freeze([
-  'backend/os-cli/Dockerfile.runtime',
-  'backend/os-cli/manifest.test.mjs',
+  'cmd/os-cli/Dockerfile.runtime',
+  'cmd/os-cli/manifest.test.mjs',
 ]);
 
 export const backendOverridePaths = Object.freeze([
@@ -63,7 +63,7 @@ export const deploymentToolingPaths = Object.freeze([
 ]);
 
 export function isRuntimeInputPath(path) {
-  return path.startsWith('backend/os-cli/cmd/os-shell-runtime/') || runtimeInputPaths.includes(path);
+  return path.startsWith('cmd/os-cli/cmd/os-shell-runtime/') || runtimeInputPaths.includes(path);
 }
 
 export function assertRuntimeOverridePaths(paths) {
@@ -137,7 +137,7 @@ function changedPaths(repository, from, to) {
 
 function runtimePathsAtRevision(repository, revision) {
   const output = execFileSync('git', ['-C', repository, 'ls-tree', '-r', '--name-only', '-z', revision, '--',
-    'backend/os-cli/cmd/os-shell-runtime', ...runtimeInputPaths], { encoding: 'buffer', windowsHide: true });
+    'cmd/os-cli/cmd/os-shell-runtime', ...runtimeInputPaths], { encoding: 'buffer', windowsHide: true });
   return output.length ? output.toString('utf8').split('\0').filter(Boolean).sort() : [];
 }
 

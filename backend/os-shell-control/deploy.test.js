@@ -349,7 +349,7 @@ test('local-edge deploy binds every component-only override through exact source
   const declaredToolingPaths = [...toolingBlock.matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
   assert.deepEqual(declaredToolingPaths, [...boundary.deploymentToolingPaths].sort());
   assert.ok(declaredToolingPaths.includes('scripts/Invoke-OsShellFeatureOperation.ps1'));
-  const runtimePaths = ['backend/os-cli/cmd/os-shell-runtime/agent.go', 'backend/os-cli/Dockerfile.runtime'];
+  const runtimePaths = ['cmd/os-cli/cmd/os-shell-runtime/agent.go', 'cmd/os-cli/Dockerfile.runtime'];
   const backendPaths = [...boundary.backendOverridePaths];
   const consolePaths = [...boundary.consoleOverridePaths];
   const controlPaths = [...boundary.controlOverridePaths];
@@ -357,7 +357,7 @@ test('local-edge deploy binds every component-only override through exact source
   assert.doesNotThrow(() => boundary.assertBackendOverridePaths(backendPaths));
   assert.doesNotThrow(() => boundary.assertConsoleOverridePaths(consolePaths));
   assert.doesNotThrow(() => boundary.assertControlOverridePaths(controlPaths));
-  for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'backend/os-cli/cmd/os/operator.go', 'backend/os-cli/cmd/os/web_shell_agent.go']) {
+  for (const privilegedPath of ['backend/supabase/migrate-only.ps1', 'backend/os-shell-control/deploy.yaml', 'cmd/os-cli/cmd/os/operator.go', 'cmd/os-cli/cmd/os/web_shell_agent.go']) {
     assert.throws(() => boundary.assertRuntimeOverridePaths([...runtimePaths, privilegedPath]), /non-runtime authority/);
     assert.throws(() => boundary.assertBackendOverridePaths([...backendPaths, privilegedPath]), /exact closed set/);
     assert.throws(() => boundary.assertConsoleOverridePaths([...consolePaths, privilegedPath]), /exact closed set/);

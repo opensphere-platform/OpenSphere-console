@@ -48,8 +48,8 @@ Thumbs.db
 /.codex-tmp/
 /Dockerfile.local
 /Dockerfile.local.dockerignore
-/backend/os-cli/*.exe
-/backend/os-cli/release/
+/cmd/os-cli/*.exe
+/cmd/os-cli/release/
 /audit-evidence/
 /visual-qa/
 /public/assets/carbon-icons/

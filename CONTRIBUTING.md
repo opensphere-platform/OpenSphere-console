@@ -13,6 +13,6 @@ npm test
 npm run build -- --configuration production
 ```
 
-Run `go test ./...` in `backend/os-cli` and `backend/registry` when those components change. Pull requests do not publish images or move channels. Publication and deployment require their dedicated protected workflows and approvals.
+Run `go test ./...` in `cmd/os-cli` and `backend/registry` when those components change. Pull requests do not publish images or move channels. Publication and deployment require their dedicated protected workflows and approvals.
 
 Do not import sibling repository source paths. Cross-repository behavior is consumed through a versioned contract, immutable artifact, or conformance fixture. Archived `_DOCS_` content is historical evidence and cannot authorize implementation behavior.

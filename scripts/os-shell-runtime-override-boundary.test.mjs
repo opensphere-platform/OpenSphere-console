@@ -11,10 +11,10 @@ import {
 } from './os-shell-runtime-override-boundary.mjs';
 
 const validRuntime = [
-  'backend/os-cli/cmd/os-shell-runtime/agent.go',
-  'backend/os-cli/cmd/os-shell-runtime/runtime_directory.go',
-  'backend/os-cli/Dockerfile.runtime',
-  'backend/os-cli/manifest.test.mjs',
+  'cmd/os-cli/cmd/os-shell-runtime/agent.go',
+  'cmd/os-cli/cmd/os-shell-runtime/runtime_directory.go',
+  'cmd/os-cli/Dockerfile.runtime',
+  'cmd/os-cli/manifest.test.mjs',
 ];
 
 test('runtime override is closed over runtime source and its dedicated build overlay only', () => {
@@ -22,9 +22,9 @@ test('runtime override is closed over runtime source and its dedicated build ove
   for (const path of [
     'backend/supabase/migrate-only.ps1',
     'backend/os-shell-control/deploy.yaml',
-    'backend/os-cli/cmd/os/operator.go',
-    'backend/os-cli/cmd/os/web_shell_agent.go',
-    'backend/os-cli/go.mod',
+    'cmd/os-cli/cmd/os/operator.go',
+    'cmd/os-cli/cmd/os/web_shell_agent.go',
+    'cmd/os-cli/go.mod',
   ]) {
     assert.throws(() => assertRuntimeOverridePaths([...validRuntime, path]), /non-runtime authority/);
   }
@@ -38,7 +38,7 @@ test('deployment HEAD is limited to exact runtime evidence plus closed deploymen
     /unbound source/,
   );
   assert.throws(
-    () => assertHeadPaths([...validRuntime, 'backend/os-cli/cmd/os/operator.go'], validRuntime),
+    () => assertHeadPaths([...validRuntime, 'cmd/os-cli/cmd/os/operator.go'], validRuntime),
     /unbound source/,
   );
 });

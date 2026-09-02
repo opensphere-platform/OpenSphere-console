@@ -96,12 +96,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: backend/os-cli/go.mod
+          go-version-file: cmd/os-cli/go.mod
           cache-dependency-path: |
-            backend/os-cli/go.sum
+            cmd/os-cli/go.sum
             backend/registry/go.sum
       - name: Test native CLI and Shell runtime
-        working-directory: backend/os-cli
+        working-directory: cmd/os-cli
         run: go test ./...
       - name: Test Registry
         working-directory: backend/registry

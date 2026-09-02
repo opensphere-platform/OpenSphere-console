@@ -71,9 +71,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: OpenSphere-console/backend/os-cli/go.mod
+          go-version-file: OpenSphere-console/cmd/os-cli/go.mod
       - name: Keychain round-trip and macOS CLI build
-        working-directory: OpenSphere-console/backend/os-cli
+        working-directory: OpenSphere-console/cmd/os-cli
         env:
           CLI_UPDATE_TRUST_ID: ${{ vars.CLI_UPDATE_SIGNING_KEY_ID }}
           CLI_UPDATE_TRUST_PUBLIC: ${{ vars.CLI_UPDATE_SIGNING_PUBLIC_KEY }}
@@ -92,7 +92,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: opensphere-cli-darwin
-          path: OpenSphere-console/backend/os-cli/opensphere-cli-darwin-*
+          path: OpenSphere-console/cmd/os-cli/opensphere-cli-darwin-*
           if-no-files-found: error
           retention-days: 1
 
@@ -108,8 +108,8 @@ jobs:
             context: OpenSphere-console
             file: OpenSphere-console/Dockerfile
           - image: opensphere-os-cli
-            context: OpenSphere-console/backend/os-cli
-            file: OpenSphere-console/backend/os-cli/Dockerfile
+            context: OpenSphere-console/cmd/os-cli
+            file: OpenSphere-console/cmd/os-cli/Dockerfile
           - image: opensphere-console-api
             context: OpenSphere-console
             file: OpenSphere-console/apps/console-api/Dockerfile

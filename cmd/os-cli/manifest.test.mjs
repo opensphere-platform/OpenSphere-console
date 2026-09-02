@@ -78,8 +78,8 @@ test('CLI publication authority requires the independent GitHub code owner', asy
     '/scripts/Publish-LocalEdge.ps1',
     '/backend/release/policies/build-authority-policy.json',
     '/backend/dupa-control/release-build-authority-policy.test.js',
-    '/backend/os-cli/Dockerfile',
-    '/backend/os-cli/manifest.test.mjs',
+    '/cmd/os-cli/Dockerfile',
+    '/cmd/os-cli/manifest.test.mjs',
   ]) {
     assert.match(
       codeowners,
@@ -114,7 +114,7 @@ test('the macOS CLI is an optional build input that a release turns back into a 
   assert.match(workflow, /CLI_REQUIRE_DARWIN=true/);
 
   // The local edge publisher no longer recycles darwin binaries out of the
-  // previous image, so an unrelated backend/os-cli commit cannot block it.
+  // previous image, so an unrelated cmd/os-cli commit cannot block it.
   // Console contracts are repository-local. The only named source context
   // retained is the clean Setup checkout consumed by the Backend executor.
   assert.doesNotMatch(publisher, /--build-context[^\r\n]*darwin/i);

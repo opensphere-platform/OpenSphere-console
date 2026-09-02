@@ -20,7 +20,7 @@ CLIDownload 또는 다른 Binding으로 설치·활성화하지 않는다.
 docker build \
   --build-context macos-cli=/path/to/native-macos-cli-artifacts \
   -t os-cli:console-native-v0.8.2 \
-  backend/os-cli
+  cmd/os-cli
 ```
 
 Multi-stage build는 Go 테스트와 현재 `index.json`에 공개된 Linux amd64·Windows amd64

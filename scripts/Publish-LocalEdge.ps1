@@ -267,7 +267,7 @@ Write-Host '[step 02/06] Declare the CLI platforms this host can build'
 # The macOS CLI reaches the Keychain through cgo against Security.framework, so it
 # is compiled natively by the GA workflow and no Windows host can produce it.
 # Recycling the darwin binaries out of the previous edge image made every Console
-# change depend on backend/os-cli being untouched, and an unrelated CLI commit
+# change depend on cmd/os-cli being untouched, and an unrelated CLI commit
 # blocked a frontend fix from reaching docker-desktop. Edge now builds the
 # platforms this host owns and the generated CLI manifest names the ones it
 # omitted, so nothing claims a macOS artifact that was never rebuilt.
@@ -296,11 +296,11 @@ $allImages = @(
   # CLI artifacts are a Console-native auxiliary workload with an independent
   # build and rollout. They are intentionally not added to the 14-component
   # Platform Release lock merely to decouple an Angular UI build.
-  [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile') },
+  [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'cmd\os-cli'); File = (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile') },
   # CBSS OS Shell images are auxiliary component workloads. Selecting one may
   # never expand a local edge change into the 14-image integrated release.
   [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\os-shell-control\Dockerfile') },
-  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = (Join-Path $consoleCheckout 'backend\os-cli'); File = (Join-Path $consoleCheckout 'backend\os-cli\Dockerfile.runtime') },
+  [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = (Join-Path $consoleCheckout 'cmd\os-cli'); File = (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile.runtime') },
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = (Join-Path $consoleCheckout 'backend'); File = (Join-Path $consoleCheckout 'backend\opensphere-console-backend\Dockerfile'); SetupContext = $setupCheckout },
   [ordered]@{ Key = 'dupaController'; Image = 'opensphere-console-dupa-controller'; Context = (Join-Path $consoleCheckout 'backend\dupa-control'); File = (Join-Path $consoleCheckout 'backend\dupa-control\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },

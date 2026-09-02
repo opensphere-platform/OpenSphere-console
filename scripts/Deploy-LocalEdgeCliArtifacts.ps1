@@ -18,7 +18,7 @@ if ($LASTEXITCODE -ne 0 -or -not ($remote -match "Digest:\s+$([regex]::Escape($d
   throw "The exact CLI artifact image is not readable from GHCR: $Image"
 }
 
-$manifestPath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path 'backend\os-cli\deploy.yaml'
+$manifestPath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path 'cmd\os-cli\deploy.yaml'
 $source = Get-Content -Raw -LiteralPath $manifestPath
 if (($source.Split('__OPENSPHERE_OS_CLI_IMAGE__').Count - 1) -ne 1) {
   throw 'CLI artifact manifest must contain exactly one closed image placeholder.'
