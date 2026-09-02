@@ -527,8 +527,8 @@ type coreServiceMetadata struct {
 
 var coreServices = map[string]coreServiceMetadata{
 	"console":                {"cbss.opensphere-console", "OpenSphere Console", "console", "cbss.console", "/api/health", []string{"main-shell", "administration"}},
-	"backend":                {"cbss.opensphere-osce", "OpenSphere Control Engine", "control", "cbss.osce", "/api/admin/platform-control", []string{"plan", "policy-gate", "durable-operation", "postcondition"}},
-	"dupaController":         {"cbss.opensphere-dupa-controller", "DUPA Controller", "extensions", "cbss.dupa", "/api/admin/extensions/status", []string{"extension-reconcile", "signature-verification"}},
+	"consoleApi":             {"cbss.opensphere-console-api", "OpenSphere Console API", "control", "cbss.console-api", "/healthz", []string{"identity", "policy-gate", "durable-operation", "owner-admission"}},
+	"extensionController":    {"cbss.opensphere-extension-controller", "OpenSphere Extension Controller", "extensions", "cbss.extensions", "/healthz", []string{"extension-reconcile", "signature-verification", "workload-lifecycle"}},
 	"registry":               {"cbss.opensphere-registry", "OpenSphere Registry & Catalog Service", "catalog", "cbss.registry", "/api/v1/registry", []string{"discovery", "normalization", "revision", "resolve"}},
 	"osaaGateway":            {"cbss.opensphere-osaa-gateway", "OSAA Gateway", "agent", "cbss.osaa", "/api/osaa/health", []string{"dialogue", "tool-routing"}},
 	"osdst":                  {"cbss.opensphere-osdst", "OpenSphere Dialogue State Tracker", "agent", "cbss.osdst", "/api/osdst/v1/status", []string{"dialogue-state", "typed-projection", "deterministic-rendering"}},
@@ -541,6 +541,9 @@ var coreServices = map[string]coreServiceMetadata{
 	"supabaseStorage":        {"cbss.opensphere-supabase-storage", "CBSS Supabase Storage", "console-data", "cbss.supabase", "/api/health", []string{"console-object-storage"}},
 	"giteaPostgres":          {"cbss.opensphere-gitea-postgres", "CBSS Gitea PostgreSQL", "source-control", "cbss.gitea", "/api/health", []string{"gitea-data"}},
 	"recovery":               {"cbss.opensphere-recovery", "OpenSphere Recovery", "recovery", "cbss.recovery", "/api/admin/recovery/status", []string{"backup", "restore", "recovery-evidence"}},
+	"beszelHub":              {"cbss.opensphere-beszel-hub", "Beszel Hub", "monitoring", "cbss.monitoring", "/api/monitoring/baseline/v1/data-health", []string{"node-telemetry", "alerts"}},
+	"beszelAgent":            {"cbss.opensphere-beszel-agent", "Beszel Agent", "monitoring", "cbss.monitoring", "/api/monitoring/baseline/v1/nodes", []string{"node-observation"}},
+	"beszelBootstrap":        {"cbss.opensphere-beszel-bootstrap", "Beszel Bootstrap", "monitoring", "cbss.monitoring", "/api/monitoring/baseline/v1/data-health", []string{"reader-bootstrap", "agent-enrollment"}},
 }
 
 func imageDigest(image string) string {
@@ -607,7 +610,7 @@ func buildInventory(input Input, candidates []ExtensionCandidate, candidateRejec
 			Owner:        catalog.Owner{ID: "opensphere-console", LifecycleAPI: "/api/admin/extensions/registrations/" + candidate.ID},
 			Source:       catalog.Source{Kind: "UIPluginPackage", Name: candidate.ID},
 			Release:      catalog.Release{Version: candidate.CompatibilityVersion, ImageDigest: candidate.Digest},
-			Capabilities: candidate.Capabilities, Installation: catalog.Installation{Mode: "dupa", Eligible: true},
+			Capabilities: candidate.Capabilities, Installation: catalog.Installation{Mode: "extension-controller", Eligible: true},
 			Evidence: catalog.Evidence{ObservedGeneration: candidate.PackageGeneration, SourceRevision: candidate.SourceRevision},
 		})
 	}

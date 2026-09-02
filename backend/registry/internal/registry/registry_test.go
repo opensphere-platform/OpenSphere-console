@@ -88,6 +88,29 @@ func TestInventoryPublishesRequiredCoreServicesAndRejectsNonExactFoundationArtif
 	t.Fatal("DigestMissing rejection was not published")
 }
 
+func TestCoreServiceMetadataMatchesCanonicalConsoleRelease(t *testing.T) {
+	want := []string{
+		"beszelAgent", "beszelBootstrap", "beszelHub", "console", "consoleApi",
+		"extensionController", "gitea", "giteaPostgres", "notificationDispatcher",
+		"osaaGateway", "osaaGovernedAdapter", "osdst", "recovery", "registry",
+		"supabaseAuth", "supabasePostgres", "supabaseRest", "supabaseStorage",
+	}
+	if len(coreServices) != len(want) {
+		t.Fatalf("core service metadata count differs from canonical release: got %d want %d", len(coreServices), len(want))
+	}
+	for _, component := range want {
+		metadata, ok := coreServices[component]
+		if !ok || metadata.ID == "" || metadata.DisplayName == "" || metadata.OwnerID == "" || metadata.LifecycleAPI == "" || len(metadata.Capabilities) == 0 {
+			t.Fatalf("canonical release component lacks complete Registry metadata: %s %#v", component, metadata)
+		}
+	}
+	for _, removed := range []string{"backend", "dupaController"} {
+		if _, ok := coreServices[removed]; ok {
+			t.Fatalf("legacy release component remains in Registry metadata: %s", removed)
+		}
+	}
+}
+
 func TestModuleDescriptorCannotPublishPfssRuntimeConfiguration(t *testing.T) {
 	input := fixtureInput()
 	input.Descriptors.Items[0] = object("data", map[string]interface{}{

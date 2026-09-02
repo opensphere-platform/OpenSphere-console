@@ -11,9 +11,9 @@
     "components": {
       "type": "object",
       "minProperties": 1,
-      "maxProperties": 15,
+      "maxProperties": 18,
       "propertyNames": {
-        "enum": ["console", "backend", "dupaController", "registry", "osaaGateway", "osdst", "osaaGovernedAdapter", "notificationDispatcher", "gitea", "supabasePostgres", "supabaseAuth", "supabaseRest", "supabaseStorage", "giteaPostgres", "recovery"]
+        "enum": ["console", "consoleApi", "extensionController", "registry", "osaaGateway", "osdst", "osaaGovernedAdapter", "notificationDispatcher", "gitea", "supabasePostgres", "supabaseAuth", "supabaseRest", "supabaseStorage", "giteaPostgres", "recovery", "beszelHub", "beszelAgent", "beszelBootstrap"]
       },
       "additionalProperties": {
         "type": "object",
