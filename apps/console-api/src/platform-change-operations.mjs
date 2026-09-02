@@ -133,7 +133,8 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
   if (!operationService?.accept || !operationService?.approve || !operationService?.assertApprovalAuthority) {
     throw new TypeError('operation service is required');
   }
-  if (!projectionStore?.getGiteaOperationForApproval || !projectionStore?.recordGiteaMerge) {
+  if (!projectionStore?.getGiteaOperationForApproval || !projectionStore?.recordGiteaProposal
+      || !projectionStore?.recordGiteaMerge) {
     throw new TypeError('Gitea operation projection store is required');
   }
   if (!giteaClient?.supplyChainStatus || !giteaClient?.ensureProposal || !giteaClient?.approveAndMerge) {
@@ -200,9 +201,23 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
           desiredState: proposal.desiredState,
           submittedAt,
         });
+        let proposalReceipt;
+        try {
+          proposalReceipt = await projectionStore.recordGiteaProposal({
+            operationId: accepted.receipt.operationId,
+            desiredRevision: git.desiredRevision,
+            branch: git.branch,
+            pullNumber: git.pullRequest.number,
+            correlationId,
+          });
+        } catch (error) {
+          error.operationId = accepted.receipt.operationId;
+          error.sideEffect = 'present';
+          throw error;
+        }
         return Object.freeze({
           accepted: true,
-          duplicate: Boolean(accepted.replayed || git.replayed),
+          duplicate: Boolean(accepted.replayed || git.replayed || proposalReceipt.replayed),
           requestId: accepted.receipt.operationId,
           operation: accepted.receipt,
           status: 'authorized',
@@ -256,6 +271,19 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
           desiredState: plan.desiredState,
           submittedAt: plan.submittedAt,
         });
+        try {
+          await projectionStore.recordGiteaProposal({
+            operationId,
+            desiredRevision: proposal.desiredRevision,
+            branch: proposal.branch,
+            pullNumber: proposal.pullRequest.number,
+            correlationId,
+          });
+        } catch (error) {
+          error.operationId = operationId;
+          error.sideEffect = 'present';
+          throw error;
+        }
         const merged = await giteaClient.approveAndMerge({
           operationId,
           branch: proposal.branch,

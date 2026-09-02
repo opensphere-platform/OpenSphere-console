@@ -256,15 +256,15 @@ export function createGiteaChangeClient({
     if (!Number.isSafeInteger(pullNumber) || pullNumber < 1) {
       throw failure('AuthorityUnavailable', 'Gitea did not return a pull request number', 503, 'unknown');
     }
-    if (desiredRevision && !SHA.test(desiredRevision)) {
-      throw failure('AuthorityUnavailable', 'Gitea returned an invalid desired revision', 503, 'unknown');
+    if (!SHA.test(desiredRevision)) {
+      throw failure('AuthorityUnavailable', 'Gitea did not return a valid desired revision', 503, 'unknown');
     }
     return Object.freeze({
       repository: `${organizationName}/${repositoryName}`,
       defaultBranch: branchName,
       branch,
       filePath,
-      desiredRevision: desiredRevision || null,
+      desiredRevision,
       pullRequest: Object.freeze({ number: pullNumber, url: String(pull?.html_url || '') || null }),
       replayed: Boolean(existingBranch),
     });

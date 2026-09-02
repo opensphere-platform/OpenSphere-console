@@ -36,6 +36,13 @@ const RECORD_GITEA_MERGE_SQL = [
   ')',
 ].join(' ');
 
+const RECORD_GITEA_PROPOSAL_SQL = [
+  'SELECT proposal_record, replayed',
+  'FROM console_operation.record_gitea_proposal(',
+  '$1::uuid, $2::text, $3::text, $4::integer, $5::text',
+  ')',
+].join(' ');
+
 const GET_GITEA_OPERATION_FOR_APPROVAL_SQL = [
   'SELECT console_operation.get_gitea_operation_for_approval(',
   '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid',
@@ -1070,6 +1077,23 @@ export function createPostgresOperationStore({ query }) {
         const row = result?.rows?.[0];
         if (!row?.operation_record) throw new Error('record_gitea_merge returned no receipt');
         return { operationRecord: row.operation_record, replayed: row.replayed };
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async recordGiteaProposal(input) {
+      try {
+        const result = await query(RECORD_GITEA_PROPOSAL_SQL, [
+          input.operationId,
+          input.desiredRevision,
+          input.branch,
+          input.pullNumber,
+          input.correlationId,
+        ]);
+        const row = result?.rows?.[0];
+        if (!row?.proposal_record) throw new Error('record_gitea_proposal returned no receipt');
+        return { proposalRecord: row.proposal_record, replayed: row.replayed };
       } catch (error) {
         throw databaseError(error);
       }

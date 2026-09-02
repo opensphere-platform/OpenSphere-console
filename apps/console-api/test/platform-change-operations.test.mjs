@@ -62,11 +62,13 @@ function record(input) {
   };
 }
 
-function fixture({ rejectIntent = false, rejectGitea = false, rejectMergeBinding = false, giteaReady = true } = {}) {
+function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBinding = false,
+  rejectMergeBinding = false, giteaReady = true } = {}) {
   const order = [];
   const accepted = [];
   const proposed = [];
   const approvals = [];
+  const proposalBindings = [];
   const mergeBindings = [];
   let operationRecord = null;
   const store = {
@@ -88,6 +90,20 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectMergeBinding
     async getGiteaOperationForApproval() {
       order.push('approval-read');
       return operationRecord;
+    },
+    async recordGiteaProposal(input) {
+      order.push('proposal-binding');
+      proposalBindings.push(input);
+      if (rejectProposalBinding) throw Object.assign(new Error('database unavailable'), {
+        code: 'AuthorityUnavailable', status: 503,
+      });
+      return {
+        proposalRecord: {
+          repository: 'opensphere/platform-declarations', branch: input.branch,
+          pullNumber: input.pullNumber, desiredRevision: input.desiredRevision,
+        },
+        replayed: proposalBindings.length > 1,
+      };
     },
     async recordGiteaMerge(input) {
       order.push('merge-binding');
@@ -148,7 +164,7 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectMergeBinding
   const operations = createPlatformChangeOperations({
     operationService, policyRevision: policyCatalog.policyRevision, projectionStore: store, giteaClient, clock: () => current,
   });
-  return { operations, order, accepted, proposed, approvals, mergeBindings };
+  return { operations, order, accepted, proposed, approvals, proposalBindings, mergeBindings };
 }
 
 function request() {
@@ -214,13 +230,28 @@ test('Platform change persists authorized intent before the first Gitea call', a
     idempotencyKey: 'platform-change-proposal-0001',
     correlationId: 'platform-change-correlation-0001',
   });
-  assert.deepEqual(order, ['preflight', 'intent', 'gitea']);
+  assert.deepEqual(order, ['preflight', 'intent', 'gitea', 'proposal-binding']);
   assert.equal(result.requestId, operationId);
   assert.equal(result.pullRequest.number, 17);
   assert.equal(result.operation.state, 'Planned');
   assert.equal(accepted[0].requiredPermission, 'console.git.change');
   assert.equal(accepted[0].ownerRef, 'API_GIT');
   assert.deepEqual(proposed[0].desiredState, { replicas: 2 });
+});
+
+test('Database failure after proposal creation reports a present side effect for safe replay', async () => {
+  const state = fixture({ rejectProposalBinding: true });
+  await assert.rejects(state.operations.propose({
+    session,
+    body: request(),
+    idempotencyKey: 'platform-change-proposal-receipt-0001',
+    correlationId: 'platform-change-proposal-receipt-correlation-0001',
+  }), (error) => {
+    assert.equal(error.operationId, operationId);
+    assert.equal(error.sideEffect, 'present');
+    return true;
+  });
+  assert.deepEqual(state.order, ['preflight', 'intent', 'gitea', 'proposal-binding']);
 });
 
 test('Rejected Supabase intent causes zero Gitea calls', async () => {
@@ -333,7 +364,7 @@ test('Platform change approval records independent approval before protected mer
     idempotencyKey: 'platform-change-approval-0001',
     correlationId: 'platform-change-approval-correlation-0001',
   });
-  assert.deepEqual(order, ['approval-read', 'approval', 'gitea', 'gitea-merge', 'merge-binding']);
+  assert.deepEqual(order, ['approval-read', 'approval', 'gitea', 'proposal-binding', 'gitea-merge', 'merge-binding']);
   assert.equal(approvals[0].actorRef, approverSession.subjectId);
   assert.equal(approvals[0].expectedStateVersion, 0);
   assert.equal(mergeBindings[0].sourceRevision, 'b'.repeat(40));
@@ -371,7 +402,7 @@ test('Database failure after observed merge reports sideEffect present and retai
     idempotencyKey: 'platform-change-approval-0003',
     correlationId: 'platform-change-approval-correlation-0003',
   }), (error) => error.operationId === operationId && error.sideEffect === 'present');
-  assert.deepEqual(fixtureState.order, ['approval-read', 'approval', 'gitea', 'gitea-merge', 'merge-binding']);
+  assert.deepEqual(fixtureState.order, ['approval-read', 'approval', 'gitea', 'proposal-binding', 'gitea-merge', 'merge-binding']);
   assert.equal(fixtureState.mergeBindings[0].sourceRevision, 'b'.repeat(40));
 });
 

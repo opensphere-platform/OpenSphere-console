@@ -7,7 +7,7 @@ const operationId = '33333333-3333-4333-8333-333333333333';
 const desiredRevision = 'a'.repeat(40);
 const mergeRevision = 'b'.repeat(40);
 
-async function withGitea(run, { protectedBranch = true, privateRepository = true } = {}) {
+async function withGitea(run, { protectedBranch = true, privateRepository = true, omitDesiredRevision = false } = {}) {
   const calls = [];
   let branchExists = false;
   let pullExists = false;
@@ -38,7 +38,9 @@ async function withGitea(run, { protectedBranch = true, privateRepository = true
       }] : []);
     }
     if (request.url === `/api/v1/repos/opensphere/platform-declarations/branches/control%2F${operationId}`) {
-      return branchExists ? send(200, { name: `control/${operationId}`, commit: { id: desiredRevision } }) : send(404, { message: 'not found' });
+      return branchExists ? send(200, {
+        name: `control/${operationId}`, commit: { id: omitDesiredRevision ? null : desiredRevision },
+      }) : send(404, { message: 'not found' });
     }
     if (request.url?.startsWith('/api/v1/repos/opensphere/platform-declarations/pulls?')) {
       return send(200, pullExists ? [{
@@ -49,7 +51,7 @@ async function withGitea(run, { protectedBranch = true, privateRepository = true
     }
     if (request.method === 'POST' && request.url?.includes('/contents/')) {
       branchExists = true;
-      return send(201, { commit: { sha: desiredRevision } });
+      return send(201, { commit: { sha: omitDesiredRevision ? null : desiredRevision } });
     }
     if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere/platform-declarations/pulls') {
       pullExists = true;
@@ -115,6 +117,20 @@ test('Gitea proposal checks branch policy before mutation and resumes without du
     assert.equal(calls.filter((call) => call.method === 'POST').length, mutationCount);
     assert.doesNotMatch(JSON.stringify(first), /control-token-secret|review-token-secret/u);
   });
+});
+
+test('Gitea proposal rejects a missing desired revision after an ambiguous mutation', async () => {
+  await withGitea(async ({ client }) => {
+    await assert.rejects(client.ensureProposal({
+      operationId,
+      consumerId: 'opensphere-console',
+      action: 'configure',
+      target: 'console/settings',
+      reason: 'apply reviewed settings declaration',
+      desiredState: { replicas: 2 },
+      submittedAt: '2026-09-02T00:00:00.000Z',
+    }), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'unknown' });
+  }, { omitDesiredRevision: true });
 });
 
 test('Gitea status binds the fixed repository identity and safe metadata', async () => {
