@@ -14,7 +14,11 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$ConsoleUrl,
   [string]$StorageClass = '',
-  [string]$KubeContext = ''
+  [string]$KubeContext = '',
+  [switch]$VerifiedMaterializedRelease,
+  [string]$ExpectedMigrationManifestSha256 = '',
+  [string]$ExpectedMigrationSetDigest = '',
+  [string]$ExpectedMigrationLatestGlobalId = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,6 +77,27 @@ if ($migrationManifest.schemaVersion -ne 1 -or
     [int]$migrationManifest.migrationCount -lt 1 -or
     @($migrationManifest.migrations).Count -ne [int]$migrationManifest.migrationCount) {
   throw 'Fresh migration manifest identity is invalid'
+}
+
+$expectedMaterializedEvidence = @(
+  $ExpectedMigrationManifestSha256,
+  $ExpectedMigrationSetDigest,
+  $ExpectedMigrationLatestGlobalId
+)
+if ($VerifiedMaterializedRelease) {
+  if ($ExpectedMigrationManifestSha256 -notmatch '^sha256:[a-f0-9]{64}$' -or
+      $ExpectedMigrationSetDigest -notmatch '^sha256:[a-f0-9]{64}$' -or
+      $ExpectedMigrationLatestGlobalId -notmatch '^opensphere-console/[0-9]{8}/[0-9]{4}$') {
+    throw 'VerifiedMaterializedRelease requires the signed BOM migration manifest digest, set digest, and latest global ID'
+  }
+  $actualManifestSha256 = 'sha256:' + (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualManifestSha256 -ne $ExpectedMigrationManifestSha256 -or
+      [string]$migrationManifest.setDigest -ne $ExpectedMigrationSetDigest -or
+      [string]$migrationManifest.latestGlobalId -ne $ExpectedMigrationLatestGlobalId) {
+    throw 'Materialized migration evidence differs from the verified signed Release BOM'
+  }
+} elseif (@($expectedMaterializedEvidence | Where-Object { $_ }).Count -gt 0) {
+  throw 'Signed BOM migration evidence requires VerifiedMaterializedRelease'
 }
 
 $kubectlArgs = @()
@@ -510,7 +535,9 @@ if ($ledgerExists[0] -eq 'present') {
 $migrationTool = Join-Path $PSScriptRoot 'console-migrations.mjs'
 for ($migrationIndex = $appliedMigrationCount; $migrationIndex -lt [int]$migrationManifest.migrationCount; $migrationIndex++) {
   $migration = @($migrationManifest.migrations)[$migrationIndex]
-  $migrationSql = (& node $migrationTool render ([string]$migration.globalId) | Out-String)
+  $migrationRenderArguments = @('render', [string]$migration.globalId)
+  if ($VerifiedMaterializedRelease) { $migrationRenderArguments += '--verified-materialized-release' }
+  $migrationSql = (& node $migrationTool @migrationRenderArguments | Out-String)
   if ($LASTEXITCODE -ne 0 -or -not $migrationSql.Trim()) { throw "Fresh migration renderer failed: $($migration.globalId)" }
   Invoke-OwnerMigrationSql $migrationSql
   $migrationSql = $null

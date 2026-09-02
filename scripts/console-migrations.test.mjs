@@ -223,6 +223,27 @@ test('migration renderer emits only a manifest-bound transaction body', () => {
   assert.throws(() => renderMigration({ root, globalId: '../untrusted.sql' }), /globalId is invalid/);
 });
 
+test('materialized release rendering keeps byte and lineage verification without requiring Git history', (t) => {
+  const temporaryRoot = mkdtempSync(join(tmpdir(), 'opensphere-console-materialized-test-'));
+  t.after(() => rmSync(temporaryRoot, { recursive: true, force: true }));
+  cpSync(join(root, 'migrations'), join(temporaryRoot, 'migrations'), { recursive: true });
+  const sql = renderMigration({
+    root: temporaryRoot,
+    manifestPath: join(temporaryRoot, 'migrations', 'manifest.json'),
+    globalId: 'opensphere-console/20260902/0001',
+    verifySourceRevision: false,
+  });
+  assert.match(sql, /CREATE SCHEMA console_migration/);
+  const migration = join(temporaryRoot, 'migrations', 'baseline', '0001_console_authority.sql');
+  writeFileSync(migration, readFileSync(migration, 'utf8') + '\nSELECT 1;\n');
+  assert.throws(() => renderMigration({
+    root: temporaryRoot,
+    manifestPath: join(temporaryRoot, 'migrations', 'manifest.json'),
+    globalId: 'opensphere-console/20260902/0001',
+    verifySourceRevision: false,
+  }), /file digest mismatch/);
+});
+
 test('migration verification rejects SQL content drift before database access', (t) => {
   const temporaryRoot = mkdtempSync(join(tmpdir(), 'opensphere-console-migration-test-'));
   t.after(() => rmSync(temporaryRoot, { recursive: true, force: true }));

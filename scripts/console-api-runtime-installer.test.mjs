@@ -64,6 +64,10 @@ test('C_API runtime login remains a one-role one-secret fresh-lineage boundary',
   assert.match(source, /migrationCount -lt 1/);
   assert.match(source, /migrations\)[.]Count -ne \[int\]\$migrationManifest[.]migrationCount/);
   assert.match(source, /requires the exact fresh migration prefix/);
+  assert.match(source, /VerifiedMaterializedRelease requires the signed BOM migration manifest digest/);
+  assert.match(source, /Materialized migration evidence differs from the verified signed Release BOM/);
+  assert.match(source, /Get-FileHash -LiteralPath \$manifestPath -Algorithm SHA256/);
+  assert.match(source, /--verified-materialized-release/);
   assert.match(source, /\$roleName = 'opensphere_console_api_runtime'/);
   assert.match(source, /CREATE ROLE \$roleName LOGIN PASSWORD/);
   assert.match(source, /NOSUPERUSER INHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 20/);
@@ -124,7 +128,7 @@ test('single target installer closes data bootstrap before fresh C_API runtime',
   assert.match(source, /console-migrations[.]mjs/);
   assert.match(source, /Get-AppliedMigrationCount/);
   assert.match(source, /for \(\$migrationIndex = \$appliedMigrationCount; \$migrationIndex -lt \[int\]\$migrationManifest[.]migrationCount; \$migrationIndex\+\+\)/);
-  assert.match(source, /render \(\[string\]\$migration[.]globalId\)/);
+  assert.match(source, /\$migrationRenderArguments = @\('render', \[string\]\$migration[.]globalId\)/);
   assert.match(source, /--single-transaction/);
   assert.match(source, /deployment\/opensphere-console-api/);
   assert.match(source, /Installed C_API image differs from the requested exact digest/);

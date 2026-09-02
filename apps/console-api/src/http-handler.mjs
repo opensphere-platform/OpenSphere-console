@@ -92,7 +92,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformChangeTemplateOperations, platformReleaseOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformChangeTemplateOperations, platformReleaseOperations, baselineMonitoringOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -676,6 +676,42 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           body: await jsonBody(request),
           correlationId,
         }));
+      }
+      if (url.pathname === '/api/monitoring/baseline/v1/overview' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!baselineMonitoringOperations?.overview) throw Object.assign(new Error('baseline monitoring is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        if (!session.permissions?.includes('console.data_identity.read')) throw Object.assign(new Error('monitoring read permission is required'), { code: 'PermissionDenied', status: 403 });
+        return send(response, 200, await baselineMonitoringOperations.overview());
+      }
+      if (url.pathname === '/api/monitoring/baseline/v1/nodes' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!baselineMonitoringOperations?.nodes) throw Object.assign(new Error('baseline monitoring is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        if (!session.permissions?.includes('console.data_identity.read')) throw Object.assign(new Error('monitoring read permission is required'), { code: 'PermissionDenied', status: 403 });
+        return send(response, 200, await baselineMonitoringOperations.nodes());
+      }
+      const monitoringSeriesMatch = url.pathname.match(/^\/api\/monitoring\/baseline\/v1\/nodes\/([A-Za-z0-9_-]{1,64})\/series$/u);
+      if (monitoringSeriesMatch && request.method === 'GET') {
+        if (!baselineMonitoringOperations?.series) throw Object.assign(new Error('baseline monitoring is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const range = onlyQueryParameter(url, 'range') || '24h';
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        if (!session.permissions?.includes('console.data_identity.read')) throw Object.assign(new Error('monitoring read permission is required'), { code: 'PermissionDenied', status: 403 });
+        return send(response, 200, await baselineMonitoringOperations.series(monitoringSeriesMatch[1], range));
+      }
+      if (url.pathname === '/api/monitoring/baseline/v1/alerts' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!baselineMonitoringOperations?.alerts) throw Object.assign(new Error('baseline monitoring is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        if (!session.permissions?.includes('console.data_identity.read')) throw Object.assign(new Error('monitoring read permission is required'), { code: 'PermissionDenied', status: 403 });
+        return send(response, 200, await baselineMonitoringOperations.alerts());
+      }
+      if (url.pathname === '/api/monitoring/baseline/v1/data-health' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!baselineMonitoringOperations?.dataHealth) throw Object.assign(new Error('baseline monitoring is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        if (!session.permissions?.includes('console.data_identity.read')) throw Object.assign(new Error('monitoring read permission is required'), { code: 'PermissionDenied', status: 403 });
+        return send(response, 200, await baselineMonitoringOperations.dataHealth());
       }
       return send(response, 404, errorEnvelope(Object.assign(new Error('route was not found'), { code: 'NotFound' }), correlationId));
     } catch (error) {

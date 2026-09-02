@@ -196,8 +196,8 @@ export function migrationTransactionSql(root, entry) {
   ].join('\n');
 }
 
-export function renderMigration({ root = repositoryRoot, manifestPath = defaultManifestPath, globalId } = {}) {
-  const manifest = verifyMigrationManifest({ root, manifestPath });
+export function renderMigration({ root = repositoryRoot, manifestPath = defaultManifestPath, globalId, verifySourceRevision = true } = {}) {
+  const manifest = verifyMigrationManifest({ root, manifestPath, verifySourceRevision });
   if (!globalIdPattern.test(String(globalId || ''))) throw new Error('render globalId is invalid');
   const entry = manifest.migrations.find((migration) => migration.globalId === globalId);
   if (!entry) throw new Error('render globalId is absent from the verified manifest');
@@ -222,7 +222,9 @@ export function applyMigrations({ root = repositoryRoot, manifestPath = defaultM
 function main() {
   const mode = process.argv[2];
   if (mode === 'verify') {
-    const manifest = verifyMigrationManifest();
+    const materializedRelease = process.argv[3] === '--verified-materialized-release';
+    if (process.argv.length !== (materializedRelease ? 4 : 3)) throw new Error('verify accepts only --verified-materialized-release');
+    const manifest = verifyMigrationManifest({ verifySourceRevision: !materializedRelease });
     process.stdout.write(JSON.stringify({ status: 'passed', migrationCount: manifest.migrationCount, latestGlobalId: manifest.latestGlobalId, setDigest: manifest.setDigest }, null, 2) + '\n');
     return;
   }
@@ -231,11 +233,12 @@ function main() {
     return;
   }
   if (mode === 'render') {
-    if (process.argv.length !== 4) throw new Error('render requires exactly one globalId');
-    process.stdout.write(renderMigration({ globalId: process.argv[3] }));
+    const materializedRelease = process.argv[4] === '--verified-materialized-release';
+    if (process.argv.length !== (materializedRelease ? 5 : 4)) throw new Error('render requires one globalId and optional --verified-materialized-release');
+    process.stdout.write(renderMigration({ globalId: process.argv[3], verifySourceRevision: !materializedRelease }));
     return;
   }
-  throw new Error('usage: node scripts/console-migrations.mjs <verify|apply|render globalId>');
+  throw new Error('usage: node scripts/console-migrations.mjs <verify [--verified-materialized-release]|apply|render globalId [--verified-materialized-release]>');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -90,6 +90,18 @@ spec:
               value: http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000
             - name: CONSOLE_GITEA_URL
               value: http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000
+            - name: CONSOLE_BESZEL_URL
+              value: http://beszel-hub.opensphere-monitoring.svc.cluster.local:8090
+            - name: CONSOLE_BESZEL_READER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-baseline-monitoring-reader
+                  key: email
+            - name: CONSOLE_BESZEL_READER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-baseline-monitoring-reader
+                  key: password
             - name: CONSOLE_GITEA_ORGANIZATION
               value: opensphere
             - name: CONSOLE_GITEA_REPOSITORY
@@ -220,3 +232,12 @@ spec:
               app: opensphere-gitea
       ports:
         - { protocol: TCP, port: 3000 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opensphere-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: beszel-hub
+      ports:
+        - { protocol: TCP, port: 8090 }

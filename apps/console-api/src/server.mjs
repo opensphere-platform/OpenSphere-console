@@ -20,6 +20,7 @@ import { createCatalogOperations } from './catalog-operations.mjs';
 import { createOwnerAdmissionOperations } from './owner-admission-operations.mjs';
 import { createFileInstallationReleaseStore, createPlatformReleaseOperations } from './platform-release-operations.mjs';
 import { createPlatformChangeTemplateOperations } from './platform-change-template-operations.mjs';
+import { createBaselineMonitoringOperations } from './baseline-monitoring-operations.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -121,6 +122,13 @@ const platformReleaseOperations = createPlatformReleaseOperations({
   }),
 });
 const platformChangeTemplateOperations = createPlatformChangeTemplateOperations();
+const baselineMonitoringOperations = createBaselineMonitoringOperations({
+  baseUrl: String(process.env.CONSOLE_BESZEL_URL || ''),
+  email: String(process.env.CONSOLE_BESZEL_READER_EMAIL || ''),
+  password: String(process.env.CONSOLE_BESZEL_READER_PASSWORD || ''),
+  timeoutMs: positiveInteger('CONSOLE_BESZEL_TIMEOUT_MS', 5000, 30000),
+  maximumResponseBytes: positiveInteger('CONSOLE_BESZEL_MAX_RESPONSE_BYTES', 524288, 1048576),
+});
 const handler = createConsoleApiHandler({
   resolveSession: identitySessionBroker.resolveSession,
   operationService,
@@ -135,6 +143,7 @@ const handler = createConsoleApiHandler({
   platformChangeOperations,
   platformChangeTemplateOperations,
   platformReleaseOperations,
+  baselineMonitoringOperations,
   health: () => store.health(),
 });
 const server = createServer(handler);
