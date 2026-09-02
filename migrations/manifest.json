@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "repository": "OpenSphere-Console",
-  "latestGlobalId": "opensphere-console/20260902/0021",
-  "migrationCount": 21,
-  "setDigest": "sha256:94b1e617d3b3394c45579acf850d34b40a42b78aaf743c1a3aaf18086b92ab3c",
+  "latestGlobalId": "opensphere-console/20260902/0022",
+  "migrationCount": 22,
+  "setDigest": "sha256:bd89096ec40194d751595dd11d221c2b4256854cd8de3166298c39e9a431c5e2",
   "migrations": [
     {
       "globalId": "opensphere-console/20260902/0001",
@@ -214,6 +214,16 @@
       "sourceRevision": "5968b497331baada94508442192411207bb8296e",
       "setDigest": "sha256:94b1e617d3b3394c45579acf850d34b40a42b78aaf743c1a3aaf18086b92ab3c",
       "setSize": 21
+    },
+    {
+      "globalId": "opensphere-console/20260902/0022",
+      "semanticKey": "console.operation.gitea_merge_receipt",
+      "predecessorGlobalId": "opensphere-console/20260902/0021",
+      "path": "migrations/versions/0022_gitea_merge_receipt.sql",
+      "sha256": "be79240ef8075f4ef6da780b9c1af1b0ec0b774fd1f3921b4cb26fa4268db3da",
+      "sourceRevision": "ecba08066cd93807f9127fd8f1d6b87cd5764a6c",
+      "setDigest": "sha256:bd89096ec40194d751595dd11d221c2b4256854cd8de3166298c39e9a431c5e2",
+      "setSize": 22
     }
   ]
 }
