@@ -6,13 +6,13 @@ CLIDownload 또는 다른 Binding으로 설치·활성화하지 않는다.
 ## 고정 경계
 
 - 다운로드와 manifest: `/api/cli/*`
-- 인증: Supabase Console Identity 장치 승인(P-256) + 15분 CLI 세션. 자동화 API 토큰은 비대화형 작업 전용
+- 인증: Supabase Console Identity 장치 승인(P-256) + 15분 CLI 세션
 - 권한과 감사: Console과 동일한 Registry, API, RBAC, audit path
 - core 프로파일: `admin`
 - 소스·테스트·cross-build·배포 manifest: 이 디렉터리가 단일 원천
 
-향후 workforce 인증·권한·명령은 별도의 승인된 CLI Binding과 `workforce` 프로파일로 추가한다.
-workforce token을 `admin` PAT 필드에 저장하거나 admin 명령에 전달해서는 안 된다.
+현재 native CLI는 `admin` 사람 device flow만 제공한다. 자동화 credential은 실제 소비자,
+최소 scope, TTL, rotation과 폐기 요구가 승인되기 전에는 제공하지 않으며 사람 session을 재사용하지 않는다.
 
 ## 빌드
 
@@ -41,7 +41,6 @@ os doctor [-o table|json|yaml] [--strict]
 os describe platform|supabase|storage|gitea|observability|contracts|extensions
 os events [--limit 100]
 os get consumercontracts
-os token create --label ci-reader --scope read --ttl 24h --reason "read-only CI inventory"
 os context save local-admin        # 현재 context의 비활성 사본 생성
 os context use local-admin         # 명시적으로 전환
 os context list
@@ -95,7 +94,7 @@ os rollback <request-id> --consumer manual --target manual \
 Gitea PR → 2인 승인 → reconciler receipt 경로에만 제출한다. `rollback`도 즉시 변경하지 않고
 원본 request ID를 연결한 새 plan을 만든다.
 
-Context 파일은 URL·profile·device ID만 저장하고 `OS_PAT`는 절대로 기록하지 않는다.
+Context 파일은 URL·profile·device ID만 저장하고 bearer credential은 기록하지 않는다.
 `context save`는 현재 설정의 사본만 만들고 활성 context를 바꾸지 않으며, 전환은 `context use`로만 한다.
 Context 삭제는 로컬 별칭만 제거하며 서버 장치 신뢰는 변경하지 않으므로 `--yes`를 요구한다.
 Support bundle은 credential-like 필드를 재귀적으로 `[REDACTED]` 처리하고 기존 파일을

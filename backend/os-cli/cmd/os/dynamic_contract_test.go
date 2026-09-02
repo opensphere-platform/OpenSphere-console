@@ -11,7 +11,26 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func configureRunDeviceAuthentication(t *testing.T, identityURL string) {
+	t.Helper()
+	privateKey, _, err := generateDeviceKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalKeyLoad := deviceKeyLoad
+	deviceKeyLoad = func(string) ([]byte, error) { return append([]byte(nil), privateKey...), nil }
+	t.Cleanup(func() { deviceKeyLoad = originalKeyLoad })
+	cfg := defaults()
+	cfg.DeviceID = "22222222-2222-4222-8222-222222222222"
+	cfg.DeviceLabel = "dynamic-contract-test"
+	cfg.IdentityURL = identityURL
+	if err := saveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestDynamicManifestPreservesAdditiveOwnerFieldsWithoutInventingMissingValues(t *testing.T) {
 	raw := []byte(`{
@@ -219,7 +238,7 @@ func TestDynamicOperationWatchPollsUntilFreshReady(t *testing.T) {
 	}))
 	defer server.Close()
 	var out bytes.Buffer
-	err := watchDynamicOperation(context.Background(), Config{PAT: "test", Output: "json"}, Tool{ID: "owner.operation.watch"}, server.URL, map[string]string{"interval": "10ms", "timeout": "1s"}, &out)
+	err := watchDynamicOperation(context.Background(), Config{testBearer: "test", Output: "json"}, Tool{ID: "owner.operation.watch"}, server.URL, map[string]string{"interval": "10ms", "timeout": "1s"}, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +279,7 @@ func TestDynamicOperationWatchStableNegativeStates(t *testing.T) {
 				cancel()
 				ctx = cancelled
 			}
-			err := watchDynamicOperation(ctx, Config{PAT: "test", Output: "json"}, Tool{ID: "owner.operation.watch"}, server.URL, map[string]string{"interval": "10ms", "timeout": "1s"}, &bytes.Buffer{})
+			err := watchDynamicOperation(ctx, Config{testBearer: "test", Output: "json"}, Tool{ID: "owner.operation.watch"}, server.URL, map[string]string{"interval": "10ms", "timeout": "1s"}, &bytes.Buffer{})
 			var cliErr *CLIError
 			if !errors.As(err, &cliErr) || cliErr.Code != test.wantCode || exitCode(err) != test.wantExit {
 				t.Fatalf("got %T %#v exit=%d want code=%s exit=%d", err, cliErr, exitCode(err), test.wantCode, test.wantExit)
@@ -332,7 +351,7 @@ func TestDynamicOperationWatchTimeoutIsStable(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"stage": "Reconciling", "stale": false})
 	}))
 	defer server.Close()
-	err := watchDynamicOperation(context.Background(), Config{PAT: "test", Output: "json"}, Tool{ID: "owner.operation.watch"}, server.URL, map[string]string{"interval": "10ms", "timeout": "35ms"}, &bytes.Buffer{})
+	err := watchDynamicOperation(context.Background(), Config{testBearer: "test", Output: "json"}, Tool{ID: "owner.operation.watch"}, server.URL, map[string]string{"interval": "10ms", "timeout": "35ms"}, &bytes.Buffer{})
 	var cliErr *CLIError
 	if !errors.As(err, &cliErr) || cliErr.Code != "OperationTimeout" || exitCode(err) != 7 {
 		t.Fatalf("timeout must be stable: %T %#v exit=%d", err, cliErr, exitCode(err))
@@ -363,6 +382,10 @@ func TestDynamicOperationWatchDispatchesPollingFromManifest(t *testing.T) {
 				operation = foundationCompletionFixture("op-1")
 			}
 			_ = json.NewEncoder(w).Encode(operation)
+		case "/identity/challenge":
+			_ = json.NewEncoder(w).Encode(map[string]any{"challengeId": "11111111-1111-4111-8111-111111111111", "nonce": "dynamic-device-nonce", "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
+		case "/identity/session":
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "dynamic-device-session", "expiresIn": 900})
 		default:
 			http.NotFound(w, r)
 		}
@@ -371,7 +394,7 @@ func TestDynamicOperationWatchDispatchesPollingFromManifest(t *testing.T) {
 	t.Setenv("OS_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
 	t.Setenv("OS_CONSOLE", server.URL)
 	t.Setenv("OS_REGISTRY", server.URL+"/registry")
-	t.Setenv("OS_PAT", "test")
+	configureRunDeviceAuthentication(t, server.URL+"/identity")
 	var out bytes.Buffer
 	err := run([]string{"owner", "operation", "watch", "op-1", "--interval", "10ms", "--timeout", "1s", "--output", "json"}, strings.NewReader(""), &out, &bytes.Buffer{})
 	if err != nil {
@@ -398,6 +421,10 @@ func TestDynamicNamespaceHelpUsesOwnerManifest(t *testing.T) {
 			}}})
 		case "/owner/manifest":
 			_ = json.NewEncoder(w).Encode(manifest)
+		case "/identity/challenge":
+			_ = json.NewEncoder(w).Encode(map[string]any{"challengeId": "11111111-1111-4111-8111-111111111111", "nonce": "dynamic-help-nonce", "expiresAt": time.Now().Add(time.Minute).UTC().Format(time.RFC3339)})
+		case "/identity/session":
+			_ = json.NewEncoder(w).Encode(map[string]any{"accessToken": "dynamic-help-session", "expiresIn": 900})
 		default:
 			http.NotFound(w, r)
 		}
@@ -406,7 +433,7 @@ func TestDynamicNamespaceHelpUsesOwnerManifest(t *testing.T) {
 	t.Setenv("OS_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
 	t.Setenv("OS_CONSOLE", server.URL)
 	t.Setenv("OS_REGISTRY", server.URL+"/registry")
-	t.Setenv("OS_PAT", "test")
+	configureRunDeviceAuthentication(t, server.URL+"/identity")
 	var namespaceHelp bytes.Buffer
 	if err := run([]string{"foundation", "--help"}, strings.NewReader(""), &namespaceHelp, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)

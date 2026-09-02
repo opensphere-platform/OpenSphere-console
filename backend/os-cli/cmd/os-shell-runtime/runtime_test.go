@@ -1001,8 +1001,8 @@ func TestReleasedOSWhoamiCrossesRuntimeAgentContract(t *testing.T) {
 	}()
 
 	command := exec.Command(binaryPath, "whoami")
-	command.Env = append(withoutEnvironment(os.Environ(), "OS_CONSOLE", "OS_IDENTITY", "OS_CONFIG", "OS_PAT"),
-		"OS_CONSOLE="+fixedConsoleAPIURL, "OS_CONFIG="+filepath.Join(temporary, "missing-config.json"), "OS_PAT=")
+	command.Env = append(withoutEnvironment(os.Environ(), "OS_CONSOLE", "OS_IDENTITY", "OS_CONFIG"),
+		"OS_CONSOLE="+fixedConsoleAPIURL, "OS_CONFIG="+filepath.Join(temporary, "missing-config.json"))
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("released os whoami rejected the Runtime contract: %v\n%s", err, output)

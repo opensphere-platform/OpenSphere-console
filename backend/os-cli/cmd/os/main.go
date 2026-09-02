@@ -36,7 +36,6 @@ var version = "0.8.2"
 type Config struct {
 	Context     string `json:"context,omitempty"`
 	Profile     string `json:"profile"`
-	PAT         string `json:"-"` // process-memory only: OS_PAT automation token
 	DeviceID    string `json:"deviceId,omitempty"`
 	DeviceLabel string `json:"deviceLabel,omitempty"`
 	RegistryURL string `json:"registryUrl"`
@@ -45,6 +44,7 @@ type Config struct {
 	ConsoleURL  string `json:"consoleUrl"`
 	Output      string `json:"-"`
 	Command     string `json:"-"`
+	testBearer  string // direct unit-test transport seam; production config never populates it
 }
 
 type CLIContribution struct {
@@ -152,7 +152,6 @@ func defaults() Config {
 	return Config{
 		Context:     "default",
 		Profile:     "admin",
-		PAT:         os.Getenv("OS_PAT"),
 		RegistryURL: env("OS_REGISTRY", console+"/api/v1/registry"),
 		APIURL:      env("OS_API", console+"/api/proxy"),
 		IdentityURL: env("OS_IDENTITY", console+"/api/identity/cli"),
@@ -380,8 +379,8 @@ func credentialToken(cfg Config) (string, error) {
 		// raw request is transported through the Unix agent socket instead.
 		return webShellAgentTransport, nil
 	}
-	if strings.TrimSpace(cfg.PAT) != "" {
-		return strings.TrimSpace(cfg.PAT), nil
+	if strings.TrimSpace(cfg.testBearer) != "" {
+		return strings.TrimSpace(cfg.testBearer), nil
 	}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -526,6 +525,14 @@ func runContext(ctx context.Context, args []string, in io.Reader, out, errOut io
 	if args[0] == "help" {
 		return printCommandHelp(out, args[1:])
 	}
+	if args[0] == "token" {
+		return &CLIError{
+			Status:  http.StatusNotImplemented,
+			Code:    "AutomationCredentialUnavailable",
+			Message: "현재 Console은 자동화 API token을 발급하지 않습니다",
+			Hint:    "구체적인 자동화 소비자, 최소 scope, TTL, rotation과 폐기 요구가 승인될 때 별도 구현 단위로 심사합니다.",
+		}
+	}
 	if len(args) > 1 && hasHelpFlag(args[1:]) {
 		if _, native := nativeCommandDefinition(strings.ToLower(args[0])); native {
 			return printCommandHelp(out, args)
@@ -570,8 +577,6 @@ func runContext(ctx context.Context, args []string, in io.Reader, out, errOut io
 		return getResource(cfg, args[1:], out)
 	case "role":
 		return role(cfg, args[1:], out)
-	case "token":
-		return tokens(cfg, args[1:], out)
 	case "admin":
 		return admins(cfg, args[1:], out)
 	case "backbone":
@@ -634,7 +639,7 @@ func logout(cfg Config, out io.Writer) error {
 	if err := deviceKeyDelete(cfg.DeviceID); err != nil {
 		return err
 	}
-	cfg.DeviceID, cfg.DeviceLabel, cfg.PAT = "", "", ""
+	cfg.DeviceID, cfg.DeviceLabel = "", ""
 	if err := saveConfig(cfg); err != nil {
 		return err
 	}
@@ -1037,46 +1042,6 @@ func jsonCall(cfg Config, method, rawURL string, payload any, out io.Writer) err
 		return fmt.Errorf("서버가 JSON 대신 %s 응답을 반환했습니다: %s", responseContentType, rawURL)
 	}
 	return renderOutput(cfg, out, b)
-}
-
-func tokens(cfg Config, args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return usageError("사용법: os token list | create --label <이름> --reason <사유> | revoke <jti> --reason <사유>")
-	}
-	switch args[0] {
-	case "list":
-		return jsonCall(cfg, http.MethodGet, join(cfg.IdentityURL, "/tokens"), nil, out)
-	case "create":
-		flags := parseLongFlags(args[1:])
-		label, reason := strings.TrimSpace(flags["label"]), strings.TrimSpace(flags["reason"])
-		scope := strings.ToLower(strings.TrimSpace(flags["scope"]))
-		if scope == "" {
-			scope = "read"
-		}
-		if scope != "read" && scope != "change" && scope != "admin" {
-			return usageError("--scope는 read, change, admin 중 하나여야 합니다")
-		}
-		ttl := strings.TrimSpace(flags["ttl"])
-		if ttl == "" {
-			ttl = "24h"
-		}
-		duration, err := time.ParseDuration(ttl)
-		if err != nil || duration < 5*time.Minute || duration > 30*24*time.Hour {
-			return usageError("--ttl은 5m 이상 720h 이하의 duration이어야 합니다")
-		}
-		if label == "" || len(reason) < 8 {
-			return usageError("token create에는 --label과 8자 이상의 --reason이 필요합니다")
-		}
-		return jsonCall(cfg, http.MethodPost, join(cfg.IdentityURL, "/tokens"), map[string]any{"label": label, "reason": reason, "scope": scope, "ttlSeconds": int64(duration / time.Second)}, out)
-	case "revoke":
-		reason := strings.TrimSpace(parseLongFlags(args[2:])["reason"])
-		if len(args) < 2 || len(reason) < 8 {
-			return usageError("사용법: os token revoke <jti> --reason <8자 이상 사유>")
-		}
-		return jsonCall(cfg, http.MethodDelete, join(cfg.IdentityURL, "/tokens/"+url.PathEscape(args[1])), map[string]string{"reason": reason}, out)
-	default:
-		return usageErrorf("알 수 없는 token 동작: %s", args[0])
-	}
 }
 
 func admins(cfg Config, args []string, out io.Writer) error {

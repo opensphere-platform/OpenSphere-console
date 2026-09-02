@@ -239,8 +239,8 @@ func TestPLAN011OSRejectsLocalAndExternalToolsInAttestedRuntime(t *testing.T) {
 	for _, fixture := range commands {
 		t.Run(fixture.name, func(t *testing.T) {
 			command := exec.Command(binaryPath, fixture.args...)
-			command.Env = append(withoutEnvironment(os.Environ(), "OS_CONFIG", "OS_PAT"),
-				"OS_CONFIG="+filepath.Join(temporary, "missing-config.json"), "OS_PAT=")
+			command.Env = append(withoutEnvironment(os.Environ(), "OS_CONFIG"),
+				"OS_CONFIG="+filepath.Join(temporary, "missing-config.json"))
 			output, runErr := command.CombinedOutput()
 			if runErr == nil || command.ProcessState.ExitCode() != 2 {
 				t.Fatalf("%s command must fail RC=2: err=%v output=%s", fixture.name, runErr, output)

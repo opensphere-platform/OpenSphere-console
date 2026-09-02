@@ -41,7 +41,6 @@ func TestNativeCommandContractRejectsUnknownFlagsAndUnexpectedArguments(t *testi
 		{"whoami", "--nonsense-flag", "value"},
 		{"whoami", "unexpected"},
 		{"status", "--strict"},
-		{"token", "create", "unexpected", "--label", "test", "--reason", "eight chars"},
 		{"events", "--limit", "0"},
 		{"events", "--filter", "missing-equals"},
 		{"operation", "watch", "request-id", "--timeout", "never"},
@@ -68,7 +67,7 @@ func TestRegistryCommandContractAcceptsCommonDescriptorKinds(t *testing.T) {
 }
 
 func TestSubcommandHelpIsLocalAndCompletionUsesSameCatalog(t *testing.T) {
-	for _, command := range []string{"status", "get", "token", "update"} {
+	for _, command := range []string{"status", "get", "update"} {
 		var out bytes.Buffer
 		if err := run([]string{command, "--help"}, strings.NewReader(""), &out, &bytes.Buffer{}); err != nil {
 			t.Fatalf("%s --help failed: %v", command, err)
@@ -197,7 +196,7 @@ func TestJSONCallRejectsSuccessfulHTMLFallback(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT = "test-token"
+	cfg.testBearer = "test-token"
 	var out bytes.Buffer
 	err := jsonCall(cfg, http.MethodGet, server.URL+"/api/catalog/entities", nil, &out)
 	if err == nil || !strings.Contains(err.Error(), "JSON 대신 text/html") {
@@ -252,7 +251,7 @@ func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T)
 	sleepFn = func(delay time.Duration) { sleeps = append(sleeps, delay) }
 	defer func() { sleepFn = originalSleep }()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
+	cfg.testBearer, cfg.ConsoleURL = "test-token", server.URL
 	var out bytes.Buffer
 	if err := extensions(cfg, []string{"install", "opensphere-shell-template:edge", "--reason", "approved extension install"}, &out); err != nil {
 		t.Fatal(err)
@@ -321,7 +320,7 @@ func TestRegistryCredentialAcceptedTransitionPollsStatusWithoutReplayingMutation
 	sleepFn = func(delay time.Duration) { sleeps = append(sleeps, delay) }
 	defer func() { sleepFn = originalSleep }()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
+	cfg.testBearer, cfg.ConsoleURL = "test-token", server.URL
 	body, status, err := waitForRegistryCredentialTransition(cfg, true)
 	if err != nil || status != http.StatusOK || requests != 2 || len(sleeps) != 1 {
 		t.Fatalf("credential status polling failed: status=%d requests=%d sleeps=%v err=%v", status, requests, sleeps, err)
@@ -396,7 +395,7 @@ func TestBackboneCompatibilityAliasUsesCurrentAuthorities(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
+	cfg.testBearer, cfg.ConsoleURL = "test-token", server.URL
 	var out, errOut bytes.Buffer
 	if err := backbone(cfg, []string{"status"}, &out, &errOut); err != nil {
 		t.Fatal(err)
@@ -439,7 +438,7 @@ func TestDoctorReportsOptionalMissingCRDsWithoutHidingThem(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL, cfg.IdentityURL, cfg.RegistryURL, cfg.APIURL = "test-token", server.URL, server.URL+"/api/identity/cli", server.URL+"/api/v1/registry", server.URL+"/api/proxy"
+	cfg.testBearer, cfg.ConsoleURL, cfg.IdentityURL, cfg.RegistryURL, cfg.APIURL = "test-token", server.URL, server.URL+"/api/identity/cli", server.URL+"/api/v1/registry", server.URL+"/api/proxy"
 	var out bytes.Buffer
 	if err := doctor(cfg, nil, &out); err != nil {
 		t.Fatal(err)
@@ -485,7 +484,7 @@ func TestGovernedPlanIsTamperEvidentAndApplyIsIdempotent(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
+	cfg.testBearer, cfg.ConsoleURL = "test-token", server.URL
 	plan, path, err := createPlan(cfg, []string{"--consumer", "console.core", "--action", "configure", "--target", "console", "--file", desiredPath, "--reason", "scale console safely", "--offline"}, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -540,7 +539,7 @@ func TestGovernedPlanPreflightRejectsUnknownConsumerUnlessOffline(t *testing.T) 
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL = "test-token", server.URL
+	cfg.testBearer, cfg.ConsoleURL = "test-token", server.URL
 	base := []string{"--consumer", "bogus-eval", "--file", desiredPath, "--reason", "validate consumer contract"}
 	if _, _, err := createPlan(cfg, base, "", ""); err == nil || !strings.Contains(err.Error(), "consumer contract") {
 		t.Fatalf("unknown online consumer must fail during planning: %v", err)
@@ -627,7 +626,7 @@ func TestOperationWatchReusesSessionAndStopsAtApplied(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL = "one-process-session", server.URL
+	cfg.testBearer, cfg.ConsoleURL = "one-process-session", server.URL
 	originalSleep := sleepFn
 	sleepFn = func(time.Duration) {}
 	defer func() { sleepFn = originalSleep }()
@@ -670,7 +669,7 @@ func TestNamedContextsPersistNoAutomationSecret(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("OS_CONFIG", filepath.Join(dir, "config.json"))
 	cfg := defaults()
-	cfg.PAT = "process-only-token"
+	cfg.testBearer = "process-only-token"
 	var out bytes.Buffer
 	if err := contexts(cfg, []string{"save", "local-admin"}, &out); err != nil {
 		t.Fatal(err)
@@ -728,7 +727,7 @@ func TestSupportBundleRedactsCredentialLikeFieldsAndRefusesOverwrite(t *testing.
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT, cfg.ConsoleURL, cfg.RegistryURL, cfg.APIURL, cfg.IdentityURL = "process-only", server.URL, server.URL+"/registry", server.URL+"/proxy", server.URL+"/identity"
+	cfg.testBearer, cfg.ConsoleURL, cfg.RegistryURL, cfg.APIURL, cfg.IdentityURL = "process-only", server.URL, server.URL+"/registry", server.URL+"/proxy", server.URL+"/identity"
 	path := filepath.Join(t.TempDir(), "support.json")
 	var out bytes.Buffer
 	if err := supportBundle(cfg, []string{"--file", path}, &out); err != nil {
@@ -953,7 +952,7 @@ func TestRegistryDiscoveryRejectsHTMLAndInvalidSchema(t *testing.T) {
 			_, _ = w.Write([]byte(response.body))
 		}))
 		cfg := defaults()
-		cfg.PAT, cfg.RegistryURL = "test-token", server.URL
+		cfg.testBearer, cfg.RegistryURL = "test-token", server.URL
 		var out bytes.Buffer
 		if err := registry(cfg, nil, &out); err == nil {
 			t.Fatalf("registry discovery must fail closed for %s", response.contentType)
@@ -966,6 +965,15 @@ func TestLoginRejectsRetiredBootstrapFlags(t *testing.T) {
 	err := run([]string{"login", "--pat-stdin"}, strings.NewReader("token\n"), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil {
 		t.Fatal("retired PAT bootstrap must not be accepted")
+	}
+}
+
+func TestAutomationTokenCommandsAreUnavailableWithoutNetwork(t *testing.T) {
+	t.Setenv("OS_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
+	err := run([]string{"token", "create", "--label", "automation", "--reason", "automation consumer request"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+	var cliErr *CLIError
+	if !errors.As(err, &cliErr) || cliErr.Code != "AutomationCredentialUnavailable" || cliErr.Status != http.StatusNotImplemented {
+		t.Fatalf("automation token command must fail locally as unavailable, got %T %#v", err, cliErr)
 	}
 }
 
@@ -1036,7 +1044,7 @@ func TestConfigExcludesSecretsAndUsesUnixPrivateMode(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("OS_CONFIG", p)
 	cfg := defaults()
-	cfg.PAT = "not-a-real-secret"
+	cfg.testBearer = "not-a-real-secret"
 	if err := saveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -1070,7 +1078,7 @@ func TestConfigExcludesSecretsAndUsesUnixPrivateMode(t *testing.T) {
 func TestLoadConfigScrubsLegacyBearerFields(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("OS_CONFIG", p)
-	t.Setenv("OS_PAT", "")
+	t.Setenv("OS_PAT", "retired-environment-secret-must-be-ignored")
 	legacy := `{"profile":"admin","pat":"legacy-secret","idToken":"legacy-id","registryUrl":"https://localhost:8090/api/v1/registry","apiUrl":"https://localhost:8090/api/proxy","bffUrl":"https://localhost:8090","consoleUrl":"https://localhost:8090"}`
 	if err := os.WriteFile(p, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
@@ -1079,8 +1087,8 @@ func TestLoadConfigScrubsLegacyBearerFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PAT != "" {
-		t.Fatal("legacy bearer values must never be loaded")
+	if cfg.testBearer != "" {
+		t.Fatal("legacy config and retired environment bearer values must never be loaded")
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -1127,7 +1135,6 @@ func TestSensitiveNativeMutationsRequireReasonBeforeNetwork(t *testing.T) {
 	t.Setenv("OS_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	for _, args := range [][]string{
 		{"role", "grant", "alice", "opensphere-console-admins"},
-		{"token", "create", "--label", "automation"},
 		{"admin", "disable", "00000000-0000-0000-0000-000000000000"},
 		{"device", "revoke", "00000000000000000000000000000000"},
 	} {
@@ -1149,7 +1156,7 @@ func TestGetResourceRejectsSPAHTMLAndUsesConsoleNamespace(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := defaults()
-	cfg.PAT = "test-only-token"
+	cfg.testBearer = "test-only-token"
 	cfg.APIURL = server.URL + "/api/proxy"
 	err := getResource(cfg, []string{"uipluginpackage"}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "instead of JSON") {

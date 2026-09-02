@@ -1331,7 +1331,6 @@ func contexts(cfg Config, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
-		stored.PAT = os.Getenv("OS_PAT")
 		stored.Output = cfg.Output
 		if err := saveConfig(stored); err != nil {
 			return err
@@ -1363,7 +1362,7 @@ func publicContext(cfg Config) map[string]any {
 	return map[string]any{
 		"name": cfg.Context, "active": true, "profile": cfg.Profile, "consoleUrl": cfg.ConsoleURL,
 		"registryUrl": cfg.RegistryURL, "apiUrl": cfg.APIURL, "identityUrl": cfg.IdentityURL,
-		"deviceId": cfg.DeviceID, "deviceLabel": cfg.DeviceLabel, "automationTokenPresent": strings.TrimSpace(cfg.PAT) != "",
+		"deviceId": cfg.DeviceID, "deviceLabel": cfg.DeviceLabel,
 	}
 }
 
@@ -1398,7 +1397,6 @@ func saveContext(cfg Config) error {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
 	}
-	cfg.PAT = ""
 	encoded, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
