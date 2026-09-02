@@ -72,6 +72,7 @@ function errorEnvelope(error, correlationId) {
   const unavailableAuthority = {
     RuntimeObservationOwnerUnconfigured: 'KubernetesRuntimeObservation',
     PlatformStatusOwnerUnconfigured: 'PlatformStatusObservation',
+    HissObservabilityBindingOwnerUnconfigured: 'HISSObservabilityBinding',
   }[error?.reasonCode];
   const code = {
     SessionInvalid: 'AuthenticationRequired',
@@ -578,6 +579,19 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         return send(response, 200, result, {
           location: '/api/platform/operations/' + result.requestId,
           'x-idempotent-replay': String(result.duplicate),
+        });
+      }
+      if (url.pathname === '/api/admin/observability/status' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        if (!session.permissions?.includes('console.data_identity.read')) {
+          throw Object.assign(new Error('observability read permission is required'), { code: 'PermissionDenied', status: 403 });
+        }
+        throw Object.assign(new Error('HISS ObservabilityBinding owner is not configured'), {
+          code: 'AuthorityUnavailable',
+          status: 503,
+          reasonCode: 'HissObservabilityBindingOwnerUnconfigured',
+          authority: 'HISSObservabilityBinding',
         });
       }
       if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'GET') {

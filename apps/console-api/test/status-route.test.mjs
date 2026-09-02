@@ -49,3 +49,43 @@ test('target platform status rejects query input before resolving a session', as
   assert.equal((await response.json()).code, 'ValidationFailed');
   assert.equal(sessionCalls, 0);
 });
+test('target HISS ObservabilityBinding status fails closed without a configured owner', async (t) => {
+  const sessions = [];
+  const base = await start(t, async (_request, input) => {
+    sessions.push(input);
+    return { subjectId: 'operator-1', permissions: ['console.data_identity.read'] };
+  });
+  const response = await fetch(base + '/api/admin/observability/status', {
+    headers: { 'x-os-correlation-id': 'hiss-observability-correlation-0001' },
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    schemaVersion: '1.0',
+    code: 'AuthorityUnavailable',
+    message: 'HISS ObservabilityBinding owner is not configured',
+    retryable: true,
+    sideEffect: 'unknown',
+    correlationId: 'hiss-observability-correlation-0001',
+    operationId: null,
+    details: {
+      reasonCode: 'HissObservabilityBindingOwnerUnconfigured',
+      authority: 'HISSObservabilityBinding',
+    },
+  });
+  assert.deepEqual(sessions, [{ requireCsrf: false, correlationId: 'hiss-observability-correlation-0001' }]);
+});
+
+test('target HISS status rejects query and missing permission without an owner read', async (t) => {
+  let sessionCalls = 0;
+  const base = await start(t, async () => {
+    sessionCalls += 1;
+    return { subjectId: 'operator-1', permissions: [] };
+  });
+  const expanded = await fetch(base + '/api/admin/observability/status?legacy=true');
+  assert.equal(expanded.status, 400);
+  assert.equal(sessionCalls, 0);
+  const denied = await fetch(base + '/api/admin/observability/status');
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).code, 'PermissionDenied');
+  assert.equal(sessionCalls, 1);
+});
