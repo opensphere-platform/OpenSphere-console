@@ -135,8 +135,8 @@ jobs:
             context: OpenSphere-console/apps/notification-dispatcher
             file: OpenSphere-console/apps/notification-dispatcher/Dockerfile
           - image: opensphere-console-recovery
-            context: OpenSphere-console/backend/recovery
-            file: OpenSphere-console/backend/recovery/Dockerfile
+            context: OpenSphere-console/apps/recovery-owner
+            file: OpenSphere-console/apps/recovery-owner/Dockerfile
           - image: opensphere-console-gitea
             context: OpenSphere-console/backend/gitea/image
             file: OpenSphere-console/backend/gitea/image/Dockerfile

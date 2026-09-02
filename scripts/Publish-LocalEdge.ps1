@@ -308,7 +308,7 @@ $allImages = @(
   [ordered]@{ Key = 'osdst'; Image = 'opensphere-osdst'; Context = (Join-Path $consoleCheckout 'apps\osdst'); File = (Join-Path $consoleCheckout 'apps\osdst\Dockerfile') },
   [ordered]@{ Key = 'osaaGovernedAdapter'; Image = 'opensphere-osaa-governed-adapter'; Context = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter'); File = (Join-Path $consoleCheckout 'backend\osaa-governed-adapter\Dockerfile') },
   [ordered]@{ Key = 'notificationDispatcher'; Image = 'opensphere-console-notification-dispatcher'; Context = (Join-Path $consoleCheckout 'apps\notification-dispatcher'); File = (Join-Path $consoleCheckout 'apps\notification-dispatcher\Dockerfile') },
-  [ordered]@{ Key = 'recovery'; Image = 'opensphere-console-recovery'; Context = (Join-Path $consoleCheckout 'backend\recovery'); File = (Join-Path $consoleCheckout 'backend\recovery\Dockerfile') },
+  [ordered]@{ Key = 'recovery'; Image = 'opensphere-console-recovery'; Context = (Join-Path $consoleCheckout 'apps\recovery-owner'); File = (Join-Path $consoleCheckout 'apps\recovery-owner\Dockerfile') },
   [ordered]@{ Key = 'gitea'; Image = 'opensphere-console-gitea'; Context = (Join-Path $consoleCheckout 'backend\gitea\image'); File = (Join-Path $consoleCheckout 'backend\gitea\image\Dockerfile') },
   [ordered]@{ Key = 'supabasePostgres'; Image = 'opensphere-console-supabase-postgres'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\postgres'); File = (Join-Path $consoleCheckout 'backend\supabase\images\postgres\Dockerfile') },
   [ordered]@{ Key = 'supabaseAuth'; Image = 'opensphere-console-supabase-auth'; Context = (Join-Path $consoleCheckout 'backend\supabase\images\auth'); File = (Join-Path $consoleCheckout 'backend\supabase\images\auth\Dockerfile') },

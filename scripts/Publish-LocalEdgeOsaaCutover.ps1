@@ -115,7 +115,7 @@ $profile = @(
   [ordered]@{ Key='dupaController'; BaseRevision=[string]$installedLock.components.dupaController.sourceRevision; Image='opensphere-console-dupa-controller'; Context='OpenSphere-console\backend\dupa-control'; File='OpenSphere-console\backend\dupa-control\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='osaaGateway'; BaseRevision=[string]$legacyGateway[0].Value.sourceRevision; Image='opensphere-console-osaa-gateway'; Context='OpenSphere-console\backend\opensphere-console-osaa-gateway'; File='OpenSphere-console\backend\opensphere-console-osaa-gateway\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='osaaGovernedAdapter'; BaseRevision=[string]$legacyAdapter[0].Value.sourceRevision; Image='opensphere-osaa-governed-adapter'; Context='OpenSphere-console\backend\osaa-governed-adapter'; File='OpenSphere-console\backend\osaa-governed-adapter\Dockerfile'; Sdk=$false },
-  [ordered]@{ Key='recovery'; BaseRevision=[string]$installedLock.components.recovery.sourceRevision; Image='opensphere-console-recovery'; Context='OpenSphere-console\backend\recovery'; File='OpenSphere-console\backend\recovery\Dockerfile'; Sdk=$false },
+  [ordered]@{ Key='recovery'; BaseRevision=[string]$installedLock.components.recovery.sourceRevision; Image='opensphere-console-recovery'; Context='OpenSphere-console\apps\recovery-owner'; File='OpenSphere-console\apps\recovery-owner\Dockerfile'; Sdk=$false },
   [ordered]@{ Key='supabasePostgres'; BaseRevision=[string]$installedLock.components.supabasePostgres.sourceRevision; Image='opensphere-console-supabase-postgres'; Context='OpenSphere-console\backend\supabase\images\postgres'; File='OpenSphere-console\backend\supabase\images\postgres\Dockerfile'; Sdk=$false }
 )
 
