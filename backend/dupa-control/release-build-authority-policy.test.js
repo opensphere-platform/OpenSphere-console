@@ -109,3 +109,16 @@ test('local edge promotion has one fail-closed OCI metadata preflight before any
     'opensphere.io/release-class', 'opensphere.io/ga-eligible',
   ]) assert.match(publisher, new RegExp(label.replaceAll('.', '\\.')));
 });
+
+test('published notification dispatcher uses an exact base-image digest', () => {
+  const dockerfile = fs.readFileSync(path.join(
+    __dirname,
+    '..',
+    'notification-dispatcher',
+    'Dockerfile',
+  ), 'utf8');
+  assert.match(
+    dockerfile,
+    /^FROM docker\.io\/library\/node:22-alpine@sha256:[0-9a-f]{64}$/m,
+  );
+});
