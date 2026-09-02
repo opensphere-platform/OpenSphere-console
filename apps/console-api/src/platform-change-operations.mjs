@@ -63,6 +63,59 @@ function validateApproval(body) {
   return Object.freeze({ reason: text(body.reason, 'reason', 8, 500) });
 }
 
+function assertStatusAuthority(session) {
+  const permissionRevision = Number(session?.permissionRevision);
+  const revokeEpoch = Number(session?.revokeEpoch);
+  if (!session?.sessionId || !session?.subjectId || session.authorityFresh !== true
+      || !Number.isSafeInteger(permissionRevision) || permissionRevision < 0
+      || !Number.isSafeInteger(revokeEpoch) || revokeEpoch < 0) {
+    throw Object.assign(new Error('active current Console session is required'), {
+      code: 'AuthenticationRequired', status: 401, sideEffect: 'none',
+    });
+  }
+  if (!Array.isArray(session.permissions) || !session.permissions.includes('console.git.change')) {
+    throw Object.assign(new Error('console.git.change permission is required'), {
+      code: 'PermissionDenied', status: 403, sideEffect: 'none',
+    });
+  }
+}
+
+function statusProjection(status, giteaClient) {
+  const repository = status.repositoryMetadata ? [status.repositoryMetadata] : [];
+  const policyObserved = ['protected', 'requiredApprovals', 'directPushEnabled', 'signedCommitsRequired', 'blockRejectedReviews']
+    .every((field) => Object.hasOwn(status, field));
+  return Object.freeze({
+    meta: Object.freeze({
+      source: 'gitea',
+      checkedAt: status.checkedAt,
+      organization: giteaClient.organization,
+      tokenConfigured: status.configured === true,
+    }),
+    configured: status.configured === true,
+    ready: status.ready === true,
+    version: String(status.version || ''),
+    repositoryCount: repository.length || null,
+    repositories: Object.freeze(repository),
+    contracts: Object.freeze([]),
+    receipts: Object.freeze([]),
+    changes: Object.freeze([]),
+    byStatus: Object.freeze({ intent: 0, authorized: 0, committed: 0, applied: 0, failed: 0, unknown: 0 }),
+    reason: status.ready
+      ? 'Gitea proposal and protected merge are ready; post-merge owner reconciliation is not configured'
+      : String(status.reason || 'Gitea status is unavailable'),
+    managementReady: false,
+    supplyChain: policyObserved ? Object.freeze({
+      repository: status.repository,
+      defaultBranch: status.defaultBranch,
+      protected: status.protected === true,
+      requiredApprovals: Number(status.requiredApprovals || 0),
+      directPushEnabled: status.directPushEnabled === true,
+      signedCommitsRequired: status.signedCommitsRequired === true,
+      blockRejectedReviews: status.blockRejectedReviews === true,
+    }) : null,
+  });
+}
+
 function approvalPlan(record, giteaClient) {
   const plan = record?.execution_plan;
   if (!plan || plan.schemaVersion !== '1.0' || plan.authority !== 'Gitea'
@@ -89,6 +142,11 @@ export function createPlatformChangeOperations({ operationService, policyRevisio
   const planRevision = text(policyRevision, 'policyRevision', 1, 128);
 
   return Object.freeze({
+    async status({ session }) {
+      assertStatusAuthority(session);
+      return statusProjection(await giteaClient.supplyChainStatus(), giteaClient);
+    },
+
     async propose({ session, body, idempotencyKey, correlationId }) {
       const proposal = validateProposal(body);
       const supplyChain = await giteaClient.supplyChainStatus();

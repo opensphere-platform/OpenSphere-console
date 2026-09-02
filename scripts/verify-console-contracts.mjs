@@ -332,6 +332,11 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
   const supabaseStatus = entries.find(({ operation }) => operation.operationId === 'getSupabaseStatus')?.operation;
   assert(supabaseStatus?.['x-opensphere-authority'] === 'Supabase', 'getSupabaseStatus must declare Supabase authority');
   assert(supabaseStatus?.['x-opensphere-permission'] === 'console.data_identity.read', 'getSupabaseStatus must declare its read permission');
+  const giteaStatus = entries.find(({ operation }) => operation.operationId === 'getGiteaStatus')?.operation;
+  assert(giteaStatus?.['x-opensphere-authority'] === 'Gitea', 'getGiteaStatus must declare Gitea authority');
+  assert(giteaStatus?.['x-opensphere-permission'] === 'console.git.change', 'getGiteaStatus must declare its read permission');
+  assert(giteaStatus?.responses?.['200']?.content?.['application/json']?.schema?.$ref
+    === '../schemas/gitea-status-response.schema.json', 'getGiteaStatus must use the closed status schema');
   const installOperation = entries.find(({ operation }) => operation.operationId === 'installExtensionCandidate')?.operation;
   assert(
     installOperation?.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/extension-install-request.schema.json',

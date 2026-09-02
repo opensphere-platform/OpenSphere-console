@@ -7,7 +7,7 @@ const operationId = '33333333-3333-4333-8333-333333333333';
 const desiredRevision = 'a'.repeat(40);
 const mergeRevision = 'b'.repeat(40);
 
-async function withGitea(run, { protectedBranch = true } = {}) {
+async function withGitea(run, { protectedBranch = true, privateRepository = true } = {}) {
   const calls = [];
   let branchExists = false;
   let pullExists = false;
@@ -24,6 +24,13 @@ async function withGitea(run, { protectedBranch = true } = {}) {
       response.end(payload);
     };
     if (request.url === '/api/v1/version') return send(200, { version: '1.24.0' });
+    if (request.url === '/api/v1/repos/opensphere-platform/platform-declarations') {
+      return send(200, {
+        name: 'platform-declarations', full_name: 'opensphere-platform/platform-declarations',
+        private: privateRepository, archived: false, empty: false, default_branch: 'main',
+        updated_at: '2026-09-02T00:00:00.000Z', size: 42,
+      });
+    }
     if (request.url === '/api/v1/repos/opensphere-platform/platform-declarations/branch_protections') {
       return send(200, protectedBranch ? [{
         branch_name: 'main', required_approvals: 1, enable_push: false,
@@ -110,6 +117,18 @@ test('Gitea proposal checks branch policy before mutation and resumes without du
   });
 });
 
+test('Gitea status binds the fixed repository identity and safe metadata', async () => {
+  await withGitea(async ({ client }) => {
+    const status = await client.supplyChainStatus();
+    assert.equal(status.ready, true);
+    assert.equal(status.repository, 'opensphere-platform/platform-declarations');
+    assert.deepEqual(status.repositoryMetadata, {
+      name: 'platform-declarations', private: true, archived: false, empty: false,
+      defaultBranch: 'main', updatedAt: '2026-09-02T00:00:00.000Z', sizeKiB: 42,
+    });
+  });
+});
+
 test('Gitea proposal performs no mutation when the protected branch policy is insufficient', async () => {
   await withGitea(async ({ client, calls }) => {
     await assert.rejects(client.ensureProposal(proposalInput()), {
@@ -117,6 +136,18 @@ test('Gitea proposal performs no mutation when the protected branch policy is in
     });
     assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
   }, { protectedBranch: false });
+});
+
+test('Gitea public declaration repository is observable but never ready for governed mutation', async () => {
+  await withGitea(async ({ client, calls }) => {
+    const status = await client.supplyChainStatus();
+    assert.equal(status.ready, false);
+    assert.equal(status.repositoryMetadata.private, false);
+    await assert.rejects(client.ensureProposal(proposalInput()), {
+      code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
+    });
+    assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
+  }, { privateRepository: false });
 });
 
 test('Gitea approval uses the distinct review credential and observes the merged revision', async () => {
@@ -159,6 +190,13 @@ test('Gitea mutation transport failure is reported as an ambiguous side effect',
     }
     const path = new URL(_url).pathname;
     if (path === '/api/v1/version') return new Response(JSON.stringify({ version: '1.24.0' }));
+    if (path === '/api/v1/repos/opensphere-platform/platform-declarations') {
+      return new Response(JSON.stringify({
+        name: 'platform-declarations', full_name: 'opensphere-platform/platform-declarations',
+        private: true, archived: false, empty: false, default_branch: 'main',
+        updated_at: '2026-09-02T00:00:00.000Z', size: 42,
+      }));
+    }
     if (path.endsWith('/branch_protections')) return new Response(JSON.stringify([{
       branch_name: 'main', required_approvals: 1, enable_push: false,
       require_signed_commits: true, block_on_rejected_reviews: true,

@@ -462,6 +462,14 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           'x-idempotent-replay': String(result.replayed),
         });
       }
+      if (url.pathname === '/api/platform/gitea/status' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!platformChangeOperations?.status) {
+          throw Object.assign(new Error('Gitea status authority is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });
+        }
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        return send(response, 200, await platformChangeOperations.status({ session, correlationId }));
+      }
       if (url.pathname === '/api/platform/changes' && request.method === 'POST') {
         if (!platformChangeOperations?.propose) {
           throw Object.assign(new Error('Gitea change authority is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });

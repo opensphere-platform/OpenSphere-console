@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:gitea-status-response:v1",
+  "title": "Gitea Status Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meta", "configured", "ready", "version", "repositoryCount", "repositories", "contracts", "receipts", "changes", "byStatus", "reason", "managementReady", "supplyChain"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "checkedAt", "organization", "tokenConfigured"],
+      "properties": {
+        "source": { "const": "gitea" },
+        "checkedAt": { "type": "string", "format": "date-time" },
+        "organization": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "tokenConfigured": { "type": "boolean" }
+      }
+    },
+    "configured": { "type": "boolean" },
+    "ready": { "type": "boolean" },
+    "version": { "type": "string", "maxLength": 128 },
+    "repositoryCount": { "type": ["integer", "null"], "minimum": 0, "maximum": 1 },
+    "repositories": {
+      "type": "array",
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "private", "archived", "empty", "defaultBranch", "updatedAt", "sizeKiB"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "private": { "type": "boolean" },
+          "archived": { "type": "boolean" },
+          "empty": { "type": "boolean" },
+          "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "updatedAt": { "type": ["string", "null"], "format": "date-time" },
+          "sizeKiB": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "contracts": { "type": "array", "maxItems": 0 },
+    "receipts": { "type": "array", "maxItems": 0 },
+    "changes": { "type": "array", "maxItems": 0 },
+    "byStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent", "authorized", "committed", "applied", "failed", "unknown"],
+      "properties": {
+        "intent": { "const": 0 },
+        "authorized": { "const": 0 },
+        "committed": { "const": 0 },
+        "applied": { "const": 0 },
+        "failed": { "const": 0 },
+        "unknown": { "const": 0 }
+      }
+    },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "managementReady": { "const": false },
+    "supplyChain": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["repository", "defaultBranch", "protected", "requiredApprovals", "directPushEnabled", "signedCommitsRequired", "blockRejectedReviews"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+        "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "protected": { "type": "boolean" },
+        "requiredApprovals": { "type": "integer", "minimum": 0 },
+        "directPushEnabled": { "type": "boolean" },
+        "signedCommitsRequired": { "type": "boolean" },
+        "blockRejectedReviews": { "type": "boolean" }
+      }
+    }
+  }
+}

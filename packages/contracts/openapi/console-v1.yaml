@@ -1125,6 +1125,26 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
+  /api/platform/gitea/status:
+    get:
+      operationId: getGiteaStatus
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-authority: Gitea
+      x-opensphere-permission: console.git.change
+      responses:
+        "200":
+          description: Current fixed declaration repository and protected-branch evidence; managementReady remains false until a typed post-merge owner exists
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/gitea-status-response.schema.json"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/PermissionDenied"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/platform/changes:
     post:
       operationId: proposePlatformChange

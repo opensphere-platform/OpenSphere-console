@@ -129,10 +129,20 @@ export function createGiteaChangeClient({
       });
     }
     try {
-      const [version, protections] = await Promise.all([
+      const [version, repositoryStatus, protections] = await Promise.all([
         request('/api/v1/version'),
+        request(repoPath),
         request(`${repoPath}/branch_protections`),
       ]);
+      const repositoryBody = repositoryStatus.body && typeof repositoryStatus.body === 'object'
+        ? repositoryStatus.body : {};
+      const expectedFullName = `${organizationName}/${repositoryName}`;
+      const repositoryValid = String(repositoryBody.full_name || '') === expectedFullName
+        && String(repositoryBody.name || '') === repositoryName
+        && String(repositoryBody.default_branch || '') === branchName
+        && repositoryBody.private === true
+        && repositoryBody.archived !== true
+        && repositoryBody.empty !== true;
       const protection = (Array.isArray(protections.body) ? protections.body : [])
         .find((item) => item?.branch_name === branchName) || null;
       const gates = {
@@ -142,8 +152,10 @@ export function createGiteaChangeClient({
         signedCommitsRequired: protection?.require_signed_commits === true,
         blockRejectedReviews: protection?.block_on_rejected_reviews === true,
       };
-      const ready = gates.protected && gates.requiredApprovals >= 1
+      const ready = repositoryValid && gates.protected && gates.requiredApprovals >= 1
         && !gates.directPushEnabled && gates.signedCommitsRequired && gates.blockRejectedReviews;
+      const updatedAt = String(repositoryBody.updated_at || '');
+      const sizeKiB = Number(repositoryBody.size);
       return Object.freeze({
         configured: true,
         ready,
@@ -151,8 +163,19 @@ export function createGiteaChangeClient({
         version: String(version.body?.version || ''),
         repository: `${organizationName}/${repositoryName}`,
         defaultBranch: branchName,
+        repositoryMetadata: Object.freeze({
+          name: repositoryName,
+          private: repositoryBody.private === true,
+          archived: repositoryBody.archived === true,
+          empty: repositoryBody.empty === true,
+          defaultBranch: String(repositoryBody.default_branch || ''),
+          updatedAt: Number.isFinite(Date.parse(updatedAt)) ? new Date(updatedAt).toISOString() : null,
+          sizeKiB: Number.isSafeInteger(sizeKiB) && sizeKiB >= 0 ? sizeKiB : 0,
+        }),
         ...gates,
-        reason: ready ? '' : 'Gitea branch protection does not satisfy the Console change policy',
+        reason: ready ? '' : (repositoryValid
+          ? 'Gitea branch protection does not satisfy the Console change policy'
+          : 'Gitea declaration repository identity or default branch does not satisfy the Console change policy'),
       });
     } catch (error) {
       return Object.freeze({
@@ -287,6 +310,7 @@ export function createGiteaChangeClient({
     ensureProposal,
     approveAndMerge,
     repository: `${organizationName}/${repositoryName}`,
+    organization: organizationName,
     defaultBranch: branchName,
   });
 }

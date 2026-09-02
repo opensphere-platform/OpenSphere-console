@@ -101,10 +101,28 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectMergeBinding
   const operationService = createOperationService({ store, policyCatalog, clock: () => current });
   const giteaClient = {
     repository: 'opensphere-platform/platform-declarations',
+    organization: 'opensphere-platform',
     defaultBranch: 'main',
     async supplyChainStatus() {
       order.push('preflight');
-      return { ready: giteaReady, reason: giteaReady ? '' : 'branch protection is incomplete' };
+      return {
+        configured: true,
+        ready: giteaReady,
+        checkedAt: current.toISOString(),
+        version: '1.24.0',
+        repository: 'opensphere-platform/platform-declarations',
+        defaultBranch: 'main',
+        repositoryMetadata: {
+          name: 'platform-declarations', private: true, archived: false, empty: false,
+          defaultBranch: 'main', updatedAt: current.toISOString(), sizeKiB: 42,
+        },
+        protected: giteaReady,
+        requiredApprovals: giteaReady ? 1 : 0,
+        directPushEnabled: false,
+        signedCommitsRequired: giteaReady,
+        blockRejectedReviews: giteaReady,
+        reason: giteaReady ? '' : 'branch protection is incomplete',
+      };
     },
     async ensureProposal(input) {
       order.push('gitea');
@@ -142,6 +160,51 @@ function request() {
     desiredState: { replicas: 2 },
   };
 }
+
+test('Gitea status is current-session permission gated and keeps owner readiness false', async () => {
+  const { operations, order } = fixture();
+  await assert.rejects(operations.status({ session: { ...session, permissions: [] } }), {
+    code: 'PermissionDenied', status: 403, sideEffect: 'none',
+  });
+  assert.deepEqual(order, []);
+
+  const result = await operations.status({ session });
+  assert.deepEqual(order, ['preflight']);
+  assert.equal(result.ready, true);
+  assert.equal(result.managementReady, false);
+  assert.equal(result.repositoryCount, 1);
+  assert.equal(result.repositories[0].name, 'platform-declarations');
+  assert.deepEqual(result.contracts, []);
+  assert.match(result.reason, /post-merge owner reconciliation is not configured/u);
+});
+
+test('HTTP Gitea status is a CSRF-free authenticated read with no query surface', async () => {
+  const { operations } = fixture();
+  const sessionChecks = [];
+  const handler = createConsoleApiHandler({
+    resolveSession: async (_request, options) => { sessionChecks.push(options); return session; },
+    platformChangeOperations: operations,
+  });
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/platform/gitea/status`, {
+      headers: { 'x-os-correlation-id': 'gitea-status-http-correlation-0001' },
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.meta.source, 'gitea');
+    assert.equal(body.managementReady, false);
+    assert.deepEqual(sessionChecks, [{ requireCsrf: false, correlationId: 'gitea-status-http-correlation-0001' }]);
+
+    const invalid = await fetch(`http://127.0.0.1:${address.port}/api/platform/gitea/status?detail=secret`);
+    assert.equal(invalid.status, 400);
+    assert.equal(sessionChecks.length, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 
 test('Platform change persists authorized intent before the first Gitea call', async () => {
   const { operations, order, accepted, proposed } = fixture();
