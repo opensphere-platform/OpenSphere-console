@@ -224,7 +224,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     assert(['R0', 'R1', 'R2', 'R3'].includes(policy.risk), `${policy.actionId} has invalid risk`);
     assert(typeof policy.approvalRequired === 'boolean', `${policy.actionId} has no approval rule`);
     assert(
-      ['fenced-outbox', 'credential-broker-required'].includes(policy.dispatchMode),
+      ['fenced-outbox', 'credential-broker-required', 'gitea-reviewed-declaration'].includes(policy.dispatchMode),
       `${policy.actionId} has no closed dispatch mode`,
     );
     assert(policy.ownerRef, `${policy.actionId} has no owner`);

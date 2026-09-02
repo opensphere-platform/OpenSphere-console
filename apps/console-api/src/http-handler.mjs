@@ -87,7 +87,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -460,6 +460,22 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
         return send(response, 202, result.receipt, {
           location: '/api/platform/operations/' + result.receipt.operationId,
           'x-idempotent-replay': String(result.replayed),
+        });
+      }
+      if (url.pathname === '/api/platform/changes' && request.method === 'POST') {
+        if (!platformChangeOperations?.propose) {
+          throw Object.assign(new Error('Gitea change authority is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });
+        }
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
+        const result = await platformChangeOperations.propose({
+          session,
+          body: await jsonBody(request),
+          idempotencyKey: header(request, 'x-os-idempotency-key', 8),
+          correlationId,
+        });
+        return send(response, 201, result, {
+          location: '/api/platform/operations/' + result.requestId,
+          'x-idempotent-replay': String(result.duplicate),
         });
       }
       if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr' && request.method === 'GET') {

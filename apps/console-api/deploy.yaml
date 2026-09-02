@@ -66,6 +66,18 @@ spec:
                 secretKeyRef:
                   name: opensphere-console-api-runtime
                   key: supabase-service-role-key
+            - name: CONSOLE_GITEA_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-gitea-control-plane
+                  key: token
+                  optional: true
+            - name: CONSOLE_GITEA_REVIEW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-gitea-control-plane
+                  key: review-token
+                  optional: true
             - name: CONSOLE_PUBLIC_ORIGIN
               value: __OPENSPHERE_CONSOLE_URL__
             - name: CONSOLE_REGISTRY_URL
@@ -76,6 +88,14 @@ spec:
               value: http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000
             - name: CONSOLE_SUPABASE_STORAGE_URL
               value: http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000
+            - name: CONSOLE_GITEA_URL
+              value: http://opensphere-gitea.opensphere-console-change.svc.cluster.local:3000
+            - name: CONSOLE_GITEA_ORGANIZATION
+              value: opensphere
+            - name: CONSOLE_GITEA_REPOSITORY
+              value: platform-declarations
+            - name: CONSOLE_GITEA_DEFAULT_BRANCH
+              value: main
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 2
@@ -171,3 +191,12 @@ spec:
               app.kubernetes.io/name: opensphere-registry
       ports:
         - { protocol: TCP, port: 8080 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opensphere-console-change
+          podSelector:
+            matchLabels:
+              app: opensphere-gitea
+      ports:
+        - { protocol: TCP, port: 3000 }

@@ -48,6 +48,7 @@
     "getMe",
     "getSupabaseStatus",
     "listAuditEvents",
+    "proposePlatformChange",
     "createOperation",
     "getOperation",
     "approveOperation",
@@ -72,6 +73,7 @@
     "revokeCliDevice"
   ],
   "requiredActionPolicies": [
+    "console.platform.change.propose@1.0",
     "console.registry.connection.replace@1.0",
     "console.registry.connection.remove@1.0",
     "console.extension.revocation.create@1.0",
@@ -79,6 +81,8 @@
     "console.extension.remove@1.0"
   ],
   "requiredSchemas": [
+    "platform-change-proposal-request.schema.json",
+    "platform-change-proposal-response.schema.json",
     "initial-administrator-bootstrap-request.schema.json",
     "initial-administrator-bootstrap-response.schema.json",
     "session-preference-request.schema.json",

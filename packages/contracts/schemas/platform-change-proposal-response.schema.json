@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:platform-change-proposal-response:v1",
+  "title": "Platform Change Proposal Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["accepted", "duplicate", "requestId", "operation", "status", "branch", "pullRequest", "desiredRevision"],
+  "properties": {
+    "accepted": { "const": true },
+    "duplicate": { "type": "boolean" },
+    "requestId": { "type": "string", "format": "uuid" },
+    "operation": { "$ref": "./operation-receipt.schema.json" },
+    "status": { "const": "authorized" },
+    "branch": { "type": "string", "pattern": "^control/[0-9a-f-]{36}$" },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "url"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "url": { "type": ["string", "null"], "format": "uri" }
+      }
+    },
+    "desiredRevision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" }
+  }
+}

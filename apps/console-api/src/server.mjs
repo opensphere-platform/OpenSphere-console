@@ -14,6 +14,8 @@ import { createSessionCredentialCipher } from './session-credential-cipher.mjs';
 import { createSupabaseAuthClient } from './supabase-auth-client.mjs';
 import { createSupabaseStorageClient } from './supabase-storage-client.mjs';
 import { createCliIdentityBroker } from './cli-identity-broker.mjs';
+import { createGiteaChangeClient } from './gitea-change-client.mjs';
+import { createPlatformChangeOperations } from './platform-change-operations.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -91,6 +93,21 @@ const registryOperations = createRegistryOperations({
   projectionStore: store,
   registryResolver,
 });
+const giteaChangeClient = createGiteaChangeClient({
+  baseUrl: String(process.env.CONSOLE_GITEA_URL || ''),
+  controlToken: String(process.env.CONSOLE_GITEA_CONTROL_TOKEN || ''),
+  reviewToken: String(process.env.CONSOLE_GITEA_REVIEW_TOKEN || ''),
+  organization: String(process.env.CONSOLE_GITEA_ORGANIZATION || 'opensphere'),
+  repository: String(process.env.CONSOLE_GITEA_REPOSITORY || 'platform-declarations'),
+  defaultBranch: String(process.env.CONSOLE_GITEA_DEFAULT_BRANCH || 'main'),
+  timeoutMs: positiveInteger('CONSOLE_GITEA_TIMEOUT_MS', 5000, 30000),
+  maximumResponseBytes: positiveInteger('CONSOLE_GITEA_MAX_RESPONSE_BYTES', 262144, 1048576),
+});
+const platformChangeOperations = createPlatformChangeOperations({
+  operationService,
+  policyRevision: policyCatalog.policyRevision,
+  giteaClient: giteaChangeClient,
+});
 const handler = createConsoleApiHandler({
   resolveSession: identitySessionBroker.resolveSession,
   operationService,
@@ -100,6 +117,7 @@ const handler = createConsoleApiHandler({
   identitySessionBroker,
   cliIdentityBroker,
   dataIdentityOperations,
+  platformChangeOperations,
   health: () => store.health(),
 });
 const server = createServer(handler);

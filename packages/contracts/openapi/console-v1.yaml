@@ -1125,6 +1125,41 @@ paths:
           $ref: "#/components/responses/AuthenticationRequired"
         "403":
           $ref: "#/components/responses/PermissionDenied"
+  /api/platform/changes:
+    post:
+      operationId: proposePlatformChange
+      tags: [Operations]
+      x-opensphere-requirement: CON-FR-010
+      x-opensphere-risk: R2
+      x-opensphere-idempotency: required
+      x-opensphere-authority: SupabaseIntentThenGiteaProposal
+      x-opensphere-action: console.platform.change.propose@1.0
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "../schemas/platform-change-proposal-request.schema.json"
+      responses:
+        "201":
+          description: Durable intent and reviewable Gitea proposal both exist; runtime application is not implied
+          headers:
+            Location:
+              required: true
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: "../schemas/platform-change-proposal-response.schema.json"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/PolicyRejected"
+        "503":
+          $ref: "#/components/responses/AuthorityUnavailable"
   /api/platform/operations:
     post:
       operationId: createOperation

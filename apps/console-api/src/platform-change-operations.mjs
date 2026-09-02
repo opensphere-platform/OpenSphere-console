@@ -46,12 +46,18 @@ function validateProposal(body) {
 
 export function createPlatformChangeOperations({ operationService, policyRevision, giteaClient, clock = () => new Date() }) {
   if (!operationService?.accept) throw new TypeError('operation service is required');
-  if (!giteaClient?.ensureProposal) throw new TypeError('Gitea change client is required');
+  if (!giteaClient?.supplyChainStatus || !giteaClient?.ensureProposal) throw new TypeError('Gitea change client is required');
   const planRevision = text(policyRevision, 'policyRevision', 1, 128);
 
   return Object.freeze({
     async propose({ session, body, idempotencyKey, correlationId }) {
       const proposal = validateProposal(body);
+      const supplyChain = await giteaClient.supplyChainStatus();
+      if (!supplyChain.ready) {
+        throw Object.assign(new Error(supplyChain.reason || 'Gitea change authority is unavailable'), {
+          code: 'AuthorityUnavailable', status: 503, sideEffect: 'none', details: { supplyChain },
+        });
+      }
       const submittedAt = clock().toISOString();
       const executionPlan = {
         schemaVersion: '1.0',

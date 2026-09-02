@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import test from 'node:test';
 import { createOperationService } from '../src/operation-service.mjs';
 import { createPlatformChangeOperations } from '../src/platform-change-operations.mjs';
+import { createConsoleApiHandler } from '../src/http-handler.mjs';
 
 const actorRef = '11111111-1111-4111-8111-111111111111';
 const operationId = '33333333-3333-4333-8333-333333333333';
@@ -54,7 +56,7 @@ function record(input) {
   };
 }
 
-function fixture({ rejectIntent = false, rejectGitea = false } = {}) {
+function fixture({ rejectIntent = false, rejectGitea = false, giteaReady = true } = {}) {
   const order = [];
   const accepted = [];
   const proposed = [];
@@ -73,6 +75,10 @@ function fixture({ rejectIntent = false, rejectGitea = false } = {}) {
   const giteaClient = {
     repository: 'opensphere-platform/platform-declarations',
     defaultBranch: 'main',
+    async supplyChainStatus() {
+      order.push('preflight');
+      return { ready: giteaReady, reason: giteaReady ? '' : 'branch protection is incomplete' };
+    },
     async ensureProposal(input) {
       order.push('gitea');
       proposed.push(input);
@@ -111,7 +117,7 @@ test('Platform change persists authorized intent before the first Gitea call', a
     idempotencyKey: 'platform-change-proposal-0001',
     correlationId: 'platform-change-correlation-0001',
   });
-  assert.deepEqual(order, ['intent', 'gitea']);
+  assert.deepEqual(order, ['preflight', 'intent', 'gitea']);
   assert.equal(result.requestId, operationId);
   assert.equal(result.pullRequest.number, 17);
   assert.equal(result.operation.state, 'Planned');
@@ -128,7 +134,20 @@ test('Rejected Supabase intent causes zero Gitea calls', async () => {
     idempotencyKey: 'platform-change-proposal-0002',
     correlationId: 'platform-change-correlation-0002',
   }), { code: 'PolicyRejected' });
-  assert.deepEqual(order, ['intent']);
+  assert.deepEqual(order, ['preflight', 'intent']);
+  assert.equal(proposed.length, 0);
+});
+
+test('Unavailable Gitea policy gate causes zero durable intent and zero mutation', async () => {
+  const { operations, order, accepted, proposed } = fixture({ giteaReady: false });
+  await assert.rejects(operations.propose({
+    session,
+    body: request(),
+    idempotencyKey: 'platform-change-proposal-0006',
+    correlationId: 'platform-change-correlation-0006',
+  }), { code: 'AuthorityUnavailable', sideEffect: 'none' });
+  assert.deepEqual(order, ['preflight']);
+  assert.equal(accepted.length, 0);
   assert.equal(proposed.length, 0);
 });
 
@@ -145,7 +164,7 @@ test('Ambiguous Gitea failure retains the durable operation identity for safe re
     assert.equal(error.operationId, operationId);
     return true;
   });
-  assert.deepEqual(order, ['intent', 'gitea']);
+  assert.deepEqual(order, ['preflight', 'intent', 'gitea']);
   assert.equal(accepted.length, 1);
 });
 
@@ -164,4 +183,35 @@ test('Platform change validation rejects unknown fields and oversized desired st
     correlationId: 'platform-change-correlation-0005',
   }), { code: 'ValidationFailed' });
   assert.deepEqual(order, []);
+});
+
+test('HTTP platform change route requires the shared CSRF and idempotency boundary', async () => {
+  const { operations } = fixture();
+  const sessionChecks = [];
+  const handler = createConsoleApiHandler({
+    resolveSession: async (_request, options) => { sessionChecks.push(options); return session; },
+    platformChangeOperations: operations,
+  });
+  const server = createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/platform/changes`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-os-csrf-token': 'csrf-proof-for-platform-change',
+        'x-os-idempotency-key': 'platform-change-http-0001',
+        'x-os-correlation-id': 'platform-change-http-correlation-0001',
+      },
+      body: JSON.stringify(request()),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(response.headers.get('location'), `/api/platform/operations/${operationId}`);
+    assert.equal(body.requestId, operationId);
+    assert.deepEqual(sessionChecks, [{ requireCsrf: true, correlationId: 'platform-change-http-correlation-0001' }]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
