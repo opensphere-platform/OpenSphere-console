@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
 import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
 import { createExtensionController } from './controller.mjs';
 import { createKubernetesRegistrationWriter } from './kubernetes-registration-writer.mjs';
+import { createConsoleOwnerAdmission } from './owner-admission.mjs';
+import { createPluginProxy } from './plugin-proxy.mjs';
 import { createExtensionPostgresStore } from './postgres-store.mjs';
 
 const { Pool } = pg;
@@ -49,6 +53,59 @@ const registrationWriter = kubernetesToken ? createKubernetesRegistrationWriter(
 const controller = createExtensionController({
   store, registryResolver, registrationWriter, workerId, leaseSeconds, maxObservationAttempts,
 });
+const ownerAdmission = createConsoleOwnerAdmission({
+  baseUrl: String(process.env.CONSOLE_OWNER_AUTHORITY_URL || ''),
+  timeoutMs: integer('CONSOLE_OWNER_AUTHORITY_TIMEOUT_MS', 8000, 100, 30000),
+});
+const pluginProxy = createPluginProxy({
+  pluginNamespace: String(process.env.CONSOLE_EXTENSION_NAMESPACE || namespaceFromFile || 'opensphere-console'),
+  timeoutMs: integer('CONSOLE_PLUGIN_PROXY_TIMEOUT_MS', 30000, 100, 120000),
+  async resolveTarget(input) {
+    if (!registrationWriter) {
+      throw Object.assign(new Error('Kubernetes registration authority is unavailable'), { status: 503 });
+    }
+    return registrationWriter.resolvePluginProxyTarget(input);
+  },
+});
+const pluginRequestMaximumBytes = integer('CONSOLE_PLUGIN_REQUEST_MAX_BYTES', 1048576, 1024, 16 * 1024 * 1024);
+
+async function boundedRequestBody(request) {
+  const declared = Number(request.headers['content-length']);
+  if (Number.isFinite(declared) && declared > pluginRequestMaximumBytes) {
+    throw Object.assign(new Error('plugin request body exceeds the configured limit'), { status: 413 });
+  }
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of request) {
+    const value = Buffer.from(chunk);
+    length += value.length;
+    if (length > pluginRequestMaximumBytes) {
+      throw Object.assign(new Error('plugin request body exceeds the configured limit'), { status: 413 });
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, length);
+}
+
+async function handlePluginRequest(request, response, url) {
+  const actor = await ownerAdmission(request);
+  const method = String(request.method || '').toUpperCase();
+  const body = ['GET', 'HEAD'].includes(method) ? undefined : await boundedRequestBody(request);
+  const upstream = await pluginProxy({ method, url, headers: request.headers, body, actor });
+  response.writeHead(upstream.status, upstream.headers);
+  if (method === 'HEAD' || !upstream.body) return response.end();
+  await pipeline(Readable.fromWeb(upstream.body), response);
+}
+
+function writeOwnerError(response, error) {
+  const knownStatus = Number(error?.status || (typeof error?.code === 'number' ? error.code : 0));
+  const status = knownStatus >= 400 && knownStatus <= 599 ? knownStatus
+    : ['OwnerRejected', 'PolicyRejected'].includes(error?.code) ? 403
+      : ['ResourceNotFound'].includes(error?.code) ? 404
+        : ['StaleAuthorityRevision'].includes(error?.code) ? 409 : 503;
+  response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  response.end(JSON.stringify({ error: error?.code || 'OwnerUnavailable', message: error?.message || 'C_EXT request failed' }));
+}
 
 let stopping = false;
 let lastError = null;
@@ -68,12 +125,18 @@ async function cycle() {
 }
 
 const healthServer = createServer(async (request, response) => {
-  if (request.url === '/livez') {
+  const url = new URL(request.url || '/', `http://${request.headers.host || 'extension.local'}`);
+  if (url.pathname.startsWith('/api/plugins/')) {
+    try { await handlePluginRequest(request, response, url); }
+    catch (error) { if (!response.headersSent) writeOwnerError(response, error); else response.destroy(error); }
+    return;
+  }
+  if (url.pathname === '/livez') {
     response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     response.end(JSON.stringify({ state: 'Alive', workerId }));
     return;
   }
-  if (request.url !== '/healthz') {
+  if (url.pathname !== '/healthz') {
     response.writeHead(404).end();
     return;
   }

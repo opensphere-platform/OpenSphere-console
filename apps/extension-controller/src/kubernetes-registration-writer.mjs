@@ -177,6 +177,61 @@ export function createKubernetesRegistrationWriter({
     return withStatus ? Object.freeze({ status: response.status, value }) : value;
   }
   return Object.freeze({
+    async resolvePluginProxyTarget({ serviceId }) {
+      if (!EXTENSION_ID.test(String(serviceId || '')) || serviceId === 'os-cli') {
+        throw fault('plugin proxy target is invalid', 'OwnerRejected');
+      }
+      let registration;
+      try {
+        registration = await request('GET', `${collection}/${serviceId}`);
+      } catch (error) {
+        if (error?.code !== 'ResourceNotFound') throw error;
+        const listed = await request('GET', collection);
+        registration = Array.isArray(listed?.items)
+          ? listed.items.find((item) => item?.status?.serving?.artifactServiceId === serviceId)
+          : null;
+      }
+      const metadata = registration?.metadata || {};
+      const spec = registration?.spec || {};
+      const status = registration?.status || {};
+      const serving = status.serving || {};
+      const packageId = String(spec.packageRef?.name || '');
+      if (!EXTENSION_ID.test(packageId) || metadata.name !== packageId || spec.desiredState !== 'Enabled'
+          || status.phase !== 'Activated' || status.workload?.phase !== 'Ready'
+          || status.verification?.manifest !== 'Verified' || status.verification?.signature !== 'Verified'
+          || status.verification?.entryDigest !== 'Verified' || status.verification?.permissions !== 'Approved'
+          || !['Current', 'LastKnownGood'].includes(serving.phase)
+          || !/^sha256:[a-f0-9]{64}$/u.test(String(status.currentDigest || ''))
+          || !/^[a-f0-9]{64}$/u.test(String(status.currentManifestSha256 || ''))
+          || serving.digest !== status.currentDigest || serving.manifestSha256 !== status.currentManifestSha256
+          || !EXTENSION_ID.test(String(serving.artifactServiceId || ''))
+          || ![packageId, serving.artifactServiceId].includes(serviceId)) {
+        throw fault('plugin proxy target is not active and verified', 'OwnerRejected');
+      }
+      const pkg = await request('GET', `${packages}/${packageId}`);
+      if (pkg?.metadata?.name !== packageId) {
+        throw fault('plugin package identity is inconsistent', 'AuthorityContractViolation');
+      }
+      if (serving.phase === 'Current'
+          && (pkg?.spec?.image?.digest !== status.currentDigest
+            || pkg?.spec?.manifest?.sha256 !== status.currentManifestSha256
+            || status.revalidation?.phase !== 'Passed')) {
+        throw fault('plugin current serving revision is stale', 'StaleAuthorityRevision');
+      }
+      if (serviceId === packageId
+          && (pkg?.spec?.contributions?.api?.enabled !== true
+            || String(pkg?.spec?.contributions?.api?.basePath || '') !== `/api/plugins/${packageId}`)) {
+        throw fault('plugin does not publish a canonical runtime API', 'OwnerRejected');
+      }
+      return Object.freeze({
+        serviceId,
+        packageId,
+        servingMode: serving.phase,
+        digest: String(serving.digest),
+        manifestSha256: String(serving.manifestSha256),
+      });
+    },
+
     async applyInstall({ candidate, operationId, requestedBy, reason }) {
       if (!EXTENSION_ID.test(String(candidate?.id || '')) || !RESOURCE_VERSION.test(String(candidate?.packageResourceVersion || ''))
           || !Number.isSafeInteger(candidate?.packageGeneration) || candidate.packageGeneration < 1) {

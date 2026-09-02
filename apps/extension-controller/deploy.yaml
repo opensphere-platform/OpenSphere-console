@@ -20,7 +20,7 @@ rules:
     verbs: [get]
   - apiGroups: [plugins.opensphere.io]
     resources: [uipluginregistrations]
-    verbs: [get, create, patch]
+    verbs: [get, list, create, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -81,17 +81,19 @@ spec:
               value: http://opensphere-registry.opensphere-console.svc.cluster.local:8080
             - name: CONSOLE_EXTENSION_NAMESPACE
               value: opensphere-console
+            - name: CONSOLE_OWNER_AUTHORITY_URL
+              value: http://opensphere-console-api.opensphere-console.svc.cluster.local:8080
           ports:
-            - name: health
+            - name: http
               containerPort: 8080
           readinessProbe:
-            httpGet: { path: /healthz, port: health }
+            httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 2
             timeoutSeconds: 3
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /livez, port: health }
+            httpGet: { path: /livez, port: http }
             initialDelaySeconds: 10
             timeoutSeconds: 3
             periodSeconds: 15
@@ -104,3 +106,39 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensphere-extension-controller
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/name: opensphere-extension-controller
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/component: C_EXT
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: opensphere-extension-controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensphere-extension-controller-ingress
+  namespace: opensphere-console
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opensphere-extension-controller
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opensphere-console-api
+      ports:
+        - { protocol: TCP, port: 8080 }
