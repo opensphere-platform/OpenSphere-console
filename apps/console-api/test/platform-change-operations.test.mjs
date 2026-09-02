@@ -296,6 +296,8 @@ test('Gitea status projects durable proposal coordinates without claiming an app
   assert.equal(result.changes[0].execution.pull_number, 17);
   assert.equal(result.changes[0].execution.desired_revision, 'a'.repeat(40));
   assert.equal(result.changes[0].execution.reconciler, 'NotConfigured');
+  assert.equal(result.changes[0].outbox.status, 'pending');
+  assert.equal(result.changes[0].outbox.next_attempt_at, null);
   assert.equal(result.byStatus.intent, 1);
   assert.equal(result.managementReady, false);
 });

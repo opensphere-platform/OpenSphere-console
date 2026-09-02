@@ -84,16 +84,18 @@ function changeStatus(state) {
   if (state === 'Planned') return 'intent';
   if (state === 'Authorized') return 'authorized';
   if (['Submitted', 'Reconciling'].includes(state)) return 'committed';
-  if (['Applied', 'Verified', 'RolledBack'].includes(state)) return 'applied';
+  if (['Applied', 'Verified'].includes(state)) return 'applied';
   if (state === 'Failed') return 'failed';
   return 'unknown';
 }
 
-function changeProjection(item) {
+function changeProjection(item, observedAt) {
   const status = changeStatus(item.state);
   const completed = ['applied', 'failed'].includes(status) ? item.updatedAt : null;
   const proposal = item.proposal || null;
   const outbox = item.outbox || null;
+  const activeClaim = Boolean(outbox?.claimedAt && outbox?.leaseExpiresAt
+    && Date.parse(outbox.leaseExpiresAt) > Date.parse(observedAt));
   const reconcilerStatus = status === 'intent' ? 'AwaitingApproval'
     : status === 'authorized' ? 'AwaitingMerge'
       : status === 'committed' ? 'AwaitingConsumer' : status;
@@ -126,9 +128,9 @@ function changeProjection(item) {
       updated_at: item.updatedAt,
     }),
     outbox: outbox ? Object.freeze({
-      status: outbox.deliveredAt ? 'delivered' : outbox.claimedAt ? 'claimed' : 'pending',
+      status: outbox.deliveredAt ? 'delivered' : activeClaim ? 'claimed' : 'pending',
       attempts: Number(outbox.attemptCount || 0),
-      next_attempt_at: outbox.leaseExpiresAt || null,
+      next_attempt_at: null,
       last_error: item.errorCode || null,
       updated_at: outbox.createdAt,
     }) : null,
@@ -144,7 +146,7 @@ function changeProjection(item) {
 
 function statusProjection(status, inventory, giteaClient) {
   const repository = status.repositoryMetadata ? [status.repositoryMetadata] : [];
-  const changes = Object.freeze(inventory.items.map(changeProjection));
+  const changes = Object.freeze(inventory.items.map((item) => changeProjection(item, inventory.observedAt)));
   const byStatus = { intent: 0, authorized: 0, committed: 0, applied: 0, failed: 0, unknown: 0 };
   for (const change of changes) byStatus[change.status] += 1;
   const policyObserved = ['protected', 'requiredApprovals', 'directPushEnabled', 'signedCommitsRequired', 'blockRejectedReviews']
