@@ -5,7 +5,16 @@
   "targetStatus": "complete",
   "sourceBaseline": "0d3f56ab97b717dc1c4c8f83ce3725c69f01b20d",
   "supplementEvidence": "731f4d1e3301f076cc8c6b63b7916c8a2f57fccf",
-  "requirements": ["CON-FR-001", "CON-FR-002", "CON-FR-007", "CON-FR-008", "CON-FR-009", "CON-FR-010", "CON-FR-017"],
+  "requirements": [
+    "CON-FR-001",
+    "CON-FR-002",
+    "CON-FR-007",
+    "CON-FR-008",
+    "CON-FR-009",
+    "CON-FR-010",
+    "CON-FR-017",
+    "CON-FR-020"
+  ],
   "operations": [
     "getInitialAdministratorBootstrapStatus",
     "bootstrapInitialAdministrator",
@@ -51,7 +60,16 @@
     "createExtensionRevocation",
     "inspectExtensionCandidate",
     "installExtensionCandidate",
-    "removeExtension"
+    "removeExtension",
+    "createCliDeviceEnrollment",
+    "getCliDeviceEnrollment",
+    "pollCliDeviceEnrollment",
+    "approveCliDeviceEnrollment",
+    "createCliDeviceChallenge",
+    "createCliDeviceSession",
+    "introspectCliCredential",
+    "listCliDevices",
+    "revokeCliDevice"
   ],
   "requiredActionPolicies": [
     "console.registry.connection.replace@1.0",
@@ -103,7 +121,21 @@
     "owned-password-recovery-link-response.schema.json",
     "session-touch-request.schema.json",
     "session-touch-response.schema.json",
-    "session-inventory-response.schema.json"
+    "session-inventory-response.schema.json",
+    "cli-device-enrollment-request.schema.json",
+    "cli-device-enrollment-response.schema.json",
+    "cli-device-enrollment-review-response.schema.json",
+    "cli-device-enrollment-approval-request.schema.json",
+    "cli-device-enrollment-approval-response.schema.json",
+    "cli-device-enrollment-poll-request.schema.json",
+    "cli-device-enrollment-poll-response.schema.json",
+    "cli-device-challenge-request.schema.json",
+    "cli-device-challenge-response.schema.json",
+    "cli-device-session-request.schema.json",
+    "cli-device-session-response.schema.json",
+    "cli-credential-introspection-response.schema.json",
+    "cli-device-inventory-response.schema.json",
+    "cli-device-revocation-request.schema.json"
   ],
   "remaining": {
     "legacyProductionApiLiterals": 277,

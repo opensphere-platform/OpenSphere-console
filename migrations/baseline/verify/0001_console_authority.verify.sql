@@ -112,11 +112,11 @@ BEGIN
       OR v_status->'data'->'components'->0->>'state' <> 'Ready'
       OR v_status->'data'->'components'->1->>'state' <> 'Unknown'
       OR v_status->'data'->'components'->4->>'state' <> 'Ready'
-      OR v_status->'data'->'components'->4->>'baselineRevision' <> 'opensphere-console/20260902/0017'
-      OR v_status->'data'->'components'->4->>'setDigest' <> 'sha256:0079b9aa637023dbc80b2633cdc349fbb7995699d556a1f950ba2b83bc7b4d18'
-      OR v_status->'data'->'components'->4->>'migrationCount' <> '17'
+      OR v_status->'data'->'components'->4->>'baselineRevision' <> 'opensphere-console/20260902/0020'
+      OR v_status->'data'->'components'->4->>'setDigest' <> 'sha256:928006bc506840be69c04c6d6d2e5036af4ab57664c845b8c00b880da37510d4'
+      OR v_status->'data'->'components'->4->>'migrationCount' <> '20'
       OR v_status->'data'->'components'->5->>'state' <> 'Ready'
-      OR v_status->'data'->'components'->5->>'protectedTables' <> '11' THEN
+      OR v_status->'data'->'components'->5->>'protectedTables' <> '15' THEN
     RAISE EXCEPTION 'Supabase status projection overclaimed or lost baseline evidence';
   END IF;
   BEGIN
@@ -140,7 +140,7 @@ RESET ROLE;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM console_migration.applied_migration) <> 17 THEN
+  IF (SELECT count(*) FROM console_migration.applied_migration) <> 20 THEN
     RAISE EXCEPTION 'fresh migration ledger cardinality mismatch';
   END IF;
   BEGIN
@@ -480,8 +480,8 @@ BEGIN
     'console_operation'::regnamespace,
     'console_audit'::regnamespace,
     'console_extension'::regnamespace
-  )) <> 11 THEN
-    RAISE EXCEPTION 'expected eleven RLS-protected authority tables';
+  )) <> 15 THEN
+    RAISE EXCEPTION 'expected fifteen RLS-protected authority tables';
   END IF;
   IF EXISTS (
     SELECT 1

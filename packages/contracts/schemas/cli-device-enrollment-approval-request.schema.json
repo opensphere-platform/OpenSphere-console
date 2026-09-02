@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:cli-device-enrollment-approval-request:v1",
+  "title": "Browser CLI enrollment approval request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["userCode"],
+  "properties": { "userCode": { "type": "string", "pattern": "^[A-Fa-f0-9]{8}$" } }
+}

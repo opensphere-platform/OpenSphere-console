@@ -67,6 +67,235 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/AuthorityUnavailable"
+  /api/identity/cli/enrollments:
+    post:
+      operationId: createCliDeviceEnrollment
+      tags: [Identity]
+      security: []
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: fresh-five-minute-enrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/cli-device-enrollment-request.schema.json" }
+      responses:
+        "201":
+          description: Five-minute browser approval enrollment; only secret digests are persisted
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-enrollment-response.schema.json" }
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
+  /api/identity/cli/enrollments/{enrollmentId}:
+    parameters:
+      - name: enrollmentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getCliDeviceEnrollment
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string, pattern: "^[A-Fa-f0-9]{8}$" }
+      responses:
+        "200":
+          description: No-secret enrollment projection for the currently authenticated browser subject
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-enrollment-review-response.schema.json" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/identity/cli/enrollments/{enrollmentId}/poll:
+    parameters:
+      - name: enrollmentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: pollCliDeviceEnrollment
+      tags: [Identity]
+      security: []
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: same-enrollment-read
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/cli-device-enrollment-poll-request.schema.json" }
+      responses:
+        "200":
+          description: Enrollment approved and the device identity is available to the CLI
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-enrollment-poll-response.schema.json" }
+        "202":
+          description: Enrollment remains pending
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-enrollment-poll-response.schema.json" }
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410": { $ref: "#/components/responses/EnrollmentExpired" }
+  /api/identity/cli/enrollments/{enrollmentId}/approve:
+    parameters:
+      - name: enrollmentId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: approveCliDeviceEnrollment
+      tags: [Identity]
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R1
+      x-opensphere-assurance: recent-aal2
+      x-opensphere-idempotency: same-subject-enrollment-cas
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/cli-device-enrollment-approval-request.schema.json" }
+      responses:
+        "200":
+          description: Browser subject approved the P-256 public key; no private key entered Console
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-enrollment-approval-response.schema.json" }
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
+  /api/identity/cli/challenge:
+    post:
+      operationId: createCliDeviceChallenge
+      tags: [Identity]
+      security: []
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: fresh-one-minute-challenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/cli-device-challenge-request.schema.json" }
+      responses:
+        "200":
+          description: One-minute nonce returned while only its digest is persisted
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-challenge-response.schema.json" }
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+  /api/identity/cli/session:
+    post:
+      operationId: createCliDeviceSession
+      tags: [Identity]
+      security: []
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: one-time-challenge-cas
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/cli-device-session-request.schema.json" }
+      responses:
+        "200":
+          description: P-256 proof accepted and a fifteen-minute opaque CLI bearer issued
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-session-response.schema.json" }
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/identity/cli/introspect:
+    get:
+      operationId: introspectCliCredential
+      tags: [Identity]
+      security:
+        - CliBearer: []
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      responses:
+        "200":
+          description: Current permission and revoke revisions for the fifteen-minute CLI bearer
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-credential-introspection-response.schema.json" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+  /api/identity/cli/devices:
+    get:
+      operationId: listCliDevices
+      tags: [Identity]
+      security:
+        - BrowserSession: []
+        - CliBearer: []
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable
+      responses:
+        "200":
+          description: No-secret CLI device inventory for the current subject
+          content:
+            application/json:
+              schema: { $ref: "../schemas/cli-device-inventory-response.schema.json" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+  /api/identity/cli/devices/{deviceId}:
+    parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeCliDevice
+      tags: [Identity]
+      security:
+        - BrowserSession: []
+        - CliBearer: []
+      x-opensphere-requirement: CON-FR-020
+      x-opensphere-authority: SupabaseCliDeviceAuthority
+      x-opensphere-risk: R1
+      x-opensphere-idempotency: repeat-returns-not-found
+      parameters:
+        - name: X-OS-CSRF-Token
+          in: header
+          required: false
+          description: Required for BrowserSession and ignored for non-ambient CliBearer authentication
+          schema: { type: string, minLength: 16, maxLength: 512 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/cli-device-revocation-request.schema.json" }
+      responses:
+        "204":
+          description: Owned device and all sessions issued to it were atomically revoked
+        "400": { $ref: "#/components/responses/PolicyRejected" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/identity:
     get:
       operationId: listManagedIdentities
@@ -1225,6 +1454,10 @@ components:
       type: apiKey
       in: cookie
       name: __Host-opensphere-session
+    CliBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: OpenSphere opaque 15-minute CLI session
   parameters:
     LoginOrigin:
       name: Origin
@@ -1297,6 +1530,11 @@ components:
       headers:
         Retry-After:
           schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    EnrollmentExpired:
+      description: CLI enrollment lifetime elapsed before browser approval
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

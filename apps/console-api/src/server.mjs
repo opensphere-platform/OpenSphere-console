@@ -13,6 +13,7 @@ import { createIdentitySessionBroker } from './identity-session-broker.mjs';
 import { createSessionCredentialCipher } from './session-credential-cipher.mjs';
 import { createSupabaseAuthClient } from './supabase-auth-client.mjs';
 import { createSupabaseStorageClient } from './supabase-storage-client.mjs';
+import { createCliIdentityBroker } from './cli-identity-broker.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -66,6 +67,11 @@ const identitySessionBroker = createIdentitySessionBroker({
   }),
   publicOrigin,
 });
+const cliIdentityBroker = createCliIdentityBroker({
+  store,
+  resolveSession: identitySessionBroker.resolveSession,
+  publicOrigin,
+});
 const supabaseLiveProbes = createSupabaseLiveProbes({
   authUrl: supabaseAuthUrl,
   dataApiUrl: String(process.env.CONSOLE_SUPABASE_REST_URL || 'http://opensphere-supabase-rest.opensphere-console-data.svc.cluster.local:3000'),
@@ -92,6 +98,7 @@ const handler = createConsoleApiHandler({
   auditOperations,
   identityOperations,
   identitySessionBroker,
+  cliIdentityBroker,
   dataIdentityOperations,
   health: () => store.health(),
 });

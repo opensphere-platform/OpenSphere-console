@@ -145,6 +145,68 @@ const COMPLETE_MANAGED_IDENTITY_LIFECYCLE_SQL = [
   ') AS lifecycle_record',
 ].join(' ');
 
+const CREATE_CLI_DEVICE_ENROLLMENT_SQL = [
+  'SELECT console_identity.create_cli_device_enrollment(',
+  '$1::text, $2::jsonb, $3::text, $4::bytea, $5::bytea, $6::timestamptz',
+  ') AS cli_record',
+].join(' ');
+
+const GET_CLI_DEVICE_ENROLLMENT_SQL = [
+  'SELECT console_identity.get_cli_device_enrollment(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid, $6::bytea',
+  ') AS cli_record',
+].join(' ');
+
+const APPROVE_CLI_DEVICE_ENROLLMENT_SQL = [
+  'SELECT console_identity.approve_cli_device_enrollment(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid, $6::bytea, $7::text',
+  ') AS cli_record',
+].join(' ');
+
+const POLL_CLI_DEVICE_ENROLLMENT_SQL = [
+  'SELECT console_identity.poll_cli_device_enrollment($1::uuid, $2::bytea) AS cli_record',
+].join(' ');
+
+const CREATE_CLI_DEVICE_CHALLENGE_SQL = [
+  'SELECT console_identity.create_cli_device_challenge($1::uuid, $2::bytea, $3::timestamptz) AS cli_record',
+].join(' ');
+
+const GET_CLI_DEVICE_CHALLENGE_SQL = [
+  'SELECT console_identity.get_cli_device_challenge($1::uuid, $2::uuid, $3::bytea) AS cli_record',
+].join(' ');
+
+const COMPLETE_CLI_DEVICE_SESSION_SQL = [
+  'SELECT console_identity.complete_cli_device_session(',
+  '$1::uuid, $2::uuid, $3::bytea, $4::bytea, $5::timestamptz, $6::text',
+  ') AS cli_record',
+].join(' ');
+
+const RESOLVE_CLI_SESSION_SQL = [
+  'SELECT console_identity.resolve_cli_session($1::bytea) AS cli_record',
+].join(' ');
+
+const LIST_OWNED_CLI_DEVICES_SQL = [
+  'SELECT console_identity.list_owned_cli_devices(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint',
+  ') AS cli_record',
+].join(' ');
+
+const REVOKE_OWNED_CLI_DEVICE_SQL = [
+  'SELECT console_identity.revoke_owned_cli_device(',
+  '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid, $6::text, $7::text',
+  ') AS cli_record',
+].join(' ');
+
+const LIST_OWNED_CLI_DEVICES_WITH_CLI_SESSION_SQL = [
+  'SELECT console_identity.list_owned_cli_devices_with_cli_session($1::bytea) AS cli_record',
+].join(' ');
+
+const REVOKE_OWNED_CLI_DEVICE_WITH_CLI_SESSION_SQL = [
+  'SELECT console_identity.revoke_owned_cli_device_with_cli_session(',
+  '$1::bytea, $2::uuid, $3::text, $4::text',
+  ') AS cli_record',
+].join(' ');
+
 const TOUCH_SESSION_ACTIVITY_SQL = [
   'SELECT console_identity.touch_browser_session_activity(',
   '$1::bytea, $2::bytea',
@@ -233,6 +295,7 @@ function databaseError(error) {
     'StaleOperationVersion', 'InvalidOperationState', 'ObservationMissing',
     'ObservationMismatch', 'NotFound', 'RefreshNotRequired', 'BootstrapComplete',
     'RoleContinuityRequired', 'InventoryLimitExceeded', 'IdempotencyReplayUnavailable', 'Conflict',
+    'EnrollmentExpired',
   ]);
   const mapped = known.has(code) ? code : 'AuthorityUnavailable';
   const status = {
@@ -260,6 +323,7 @@ function databaseError(error) {
     InventoryLimitExceeded: 409,
     IdempotencyReplayUnavailable: 409,
     Conflict: 409,
+    EnrollmentExpired: 410,
   }[mapped];
   const messages = {
     ValidationFailed: 'operation request failed database validation',
@@ -286,6 +350,7 @@ function databaseError(error) {
     InventoryLimitExceeded: 'managed identity inventory exceeds the bounded Console view',
     IdempotencyReplayUnavailable: 'managed identity response material cannot be replayed',
     Conflict: 'managed identity state conflicts with the request',
+    EnrollmentExpired: 'CLI enrollment expired',
   };
   return Object.assign(new Error(messages[mapped]), {
     code: mapped,
@@ -674,6 +739,164 @@ export function createPostgresOperationStore({ query }) {
         const record = result?.rows?.[0]?.lifecycle_record;
         if (!record?.targetSubjectId || record?.action !== input.action || !record?.auditEventId) {
           throw new Error('complete_managed_identity_lifecycle returned no result');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async createCliDeviceEnrollment(input) {
+      try {
+        const result = await query(CREATE_CLI_DEVICE_ENROLLMENT_SQL, [
+          input.label, JSON.stringify(input.publicJwk), input.fingerprint,
+          input.userCodeDigest, input.pollTokenDigest, input.expiresAt,
+        ]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.enrollmentId || !record?.expiresAt) throw new Error('create_cli_device_enrollment returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getCliDeviceEnrollment(input) {
+      try {
+        const result = await query(GET_CLI_DEVICE_ENROLLMENT_SQL, [
+          input.sessionId, input.actorRef, input.expectedPermissionRevision,
+          input.expectedRevokeEpoch, input.enrollmentId, input.userCodeDigest,
+        ]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.enrollmentId || !record?.fingerprint) throw new Error('get_cli_device_enrollment returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async approveCliDeviceEnrollment(input) {
+      try {
+        const result = await query(APPROVE_CLI_DEVICE_ENROLLMENT_SQL, [
+          input.sessionId, input.actorRef, input.expectedPermissionRevision,
+          input.expectedRevokeEpoch, input.enrollmentId, input.userCodeDigest,
+          input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.deviceId || !record?.fingerprint) throw new Error('approve_cli_device_enrollment returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async pollCliDeviceEnrollment(input) {
+      try {
+        const result = await query(POLL_CLI_DEVICE_ENROLLMENT_SQL, [input.enrollmentId, input.pollTokenDigest]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!['pending', 'approved'].includes(record?.status)) throw new Error('poll_cli_device_enrollment returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async createCliDeviceChallenge(input) {
+      try {
+        const result = await query(CREATE_CLI_DEVICE_CHALLENGE_SQL, [input.deviceId, input.nonceDigest, input.expiresAt]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.challengeId || !record?.expiresAt) throw new Error('create_cli_device_challenge returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async getCliDeviceChallenge(input) {
+      try {
+        const result = await query(GET_CLI_DEVICE_CHALLENGE_SQL, [input.deviceId, input.challengeId, input.nonceDigest]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.deviceId || !record?.subjectId || !record?.publicJwk) throw new Error('get_cli_device_challenge returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async completeCliDeviceSession(input) {
+      try {
+        const result = await query(COMPLETE_CLI_DEVICE_SESSION_SQL, [
+          input.deviceId, input.challengeId, input.nonceDigest,
+          input.tokenDigest, input.expiresAt, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.sessionId || !record?.subjectId || !record?.deviceId) throw new Error('complete_cli_device_session returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async resolveCliSession(input) {
+      try {
+        const result = await query(RESOLVE_CLI_SESSION_SQL, [input.tokenDigest]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.sessionId || !record?.subjectId || record?.credentialType !== 'cli-device') {
+          throw Object.assign(new Error('CLI session was not found'), { detail: 'SessionInvalid' });
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listOwnedCliDevices(input) {
+      try {
+        const result = await query(LIST_OWNED_CLI_DEVICES_SQL, [
+          input.sessionId, input.actorRef, input.expectedPermissionRevision, input.expectedRevokeEpoch,
+        ]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!Array.isArray(record?.devices)) throw new Error('list_owned_cli_devices returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async revokeOwnedCliDevice(input) {
+      try {
+        const result = await query(REVOKE_OWNED_CLI_DEVICE_SQL, [
+          input.sessionId, input.actorRef, input.expectedPermissionRevision,
+          input.expectedRevokeEpoch, input.deviceId, input.reason, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.deviceId || !record?.auditEventId) throw new Error('revoke_owned_cli_device returned no result');
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async listOwnedCliDevicesWithCliSession(input) {
+      try {
+        const result = await query(LIST_OWNED_CLI_DEVICES_WITH_CLI_SESSION_SQL, [input.tokenDigest]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!Array.isArray(record?.devices)) {
+          throw new Error('list_owned_cli_devices_with_cli_session returned no result');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async revokeOwnedCliDeviceWithCliSession(input) {
+      try {
+        const result = await query(REVOKE_OWNED_CLI_DEVICE_WITH_CLI_SESSION_SQL, [
+          input.tokenDigest, input.deviceId, input.reason, input.correlationId,
+        ]);
+        const record = result?.rows?.[0]?.cli_record;
+        if (!record?.deviceId || !record?.auditEventId) {
+          throw new Error('revoke_owned_cli_device_with_cli_session returned no result');
         }
         return record;
       } catch (error) {

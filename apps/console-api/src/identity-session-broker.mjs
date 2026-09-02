@@ -1136,6 +1136,33 @@ export function createIdentitySessionBroker({
     },
 
     async resolveSession(request, { requireCsrf = false, correlationId } = {}) {
+      const authorization = String(request?.headers?.authorization || '').trim();
+      if (authorization) {
+        const match = authorization.match(/^Bearer ([A-Za-z0-9_-]{32,512})$/u);
+        if (!match || !store?.resolveCliSession) {
+          fail('AuthenticationRequired', 'valid CLI bearer credential is required', 401);
+        }
+        const session = await store.resolveCliSession({ tokenDigest: digest(match[1]) });
+        return Object.freeze({
+          sessionId: session.sessionId,
+          subjectId: session.subjectId,
+          deviceId: session.deviceId,
+          expiresAt: session.expiresAt,
+          idleExpiresAt: session.idleExpiresAt ?? session.expiresAt,
+          absoluteExpiresAt: session.absoluteExpiresAt ?? session.expiresAt,
+          persistence: 'cli-15m',
+          lastSeenAt: session.lastSeenAt ?? null,
+          accessTokenExpiresAt: null,
+          lastReauthenticatedAt: null,
+          revokedAt: session.revokedAt,
+          authorityFresh: session.authorityFresh === true,
+          permissions: Array.isArray(session.permissions) ? session.permissions : [],
+          permissionRevision: String(session.permissionRevision),
+          revokeEpoch: String(session.revokeEpoch),
+          aal: session.aal,
+          credentialType: session.credentialType,
+        });
+      }
       const options = { requireCsrf };
       let session = await baseResolveSession(request, options);
       if (!refreshDue(session)) return session;

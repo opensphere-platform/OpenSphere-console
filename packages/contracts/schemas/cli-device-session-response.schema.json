@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:cli-device-session-response:v1",
+  "title": "CLI opaque short session",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["accessToken", "expiresIn"],
+  "properties": {
+    "accessToken": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "expiresIn": { "const": 900 }
+  }
+}

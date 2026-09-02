@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:cli-device-challenge-response:v1",
+  "title": "CLI device possession challenge response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["challengeId", "nonce", "expiresAt"],
+  "properties": {
+    "challengeId": { "type": "string", "format": "uuid" },
+    "nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "expiresAt": { "type": "string", "format": "date-time" }
+  }
+}

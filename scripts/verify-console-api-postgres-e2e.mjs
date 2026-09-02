@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -1200,6 +1200,148 @@ try {
     permission_revision: '1', revoke_epoch: '0', active_permissions: 3,
   });
 
+  const { privateKey: cliPrivateKey, publicKey: cliPublicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const cliPublicJwk = cliPublicKey.export({ format: 'jwk' });
+  const cliEnrollmentResponse = await fetch(origin + '/api/identity/cli/enrollments', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-os-correlation-id': 'integration-cli-enrollment-0001' },
+    body: JSON.stringify({ label: 'integration-operator-laptop', publicJwk: cliPublicJwk }),
+  });
+  assert.equal(cliEnrollmentResponse.status, 201);
+  const cliEnrollment = await cliEnrollmentResponse.json();
+  assert.match(cliEnrollment.enrollmentId, /^[0-9a-f-]{36}$/u);
+  assert.match(cliEnrollment.pollToken, /^[A-Za-z0-9_-]{43}$/u);
+  assert.match(cliEnrollment.userCode, /^[A-F0-9]{8}$/u);
+  assert.equal(new URL(cliEnrollment.verificationUriComplete).origin, publicOrigin);
+  assert.equal(cliEnrollment.pollInterval, 2);
+
+  const cliReviewResponse = await fetch(
+    origin + `/api/identity/cli/enrollments/${cliEnrollment.enrollmentId}?code=${cliEnrollment.userCode}`,
+    { headers: { cookie: headers.cookie, 'x-os-correlation-id': 'integration-cli-review-0001' } },
+  );
+  assert.equal(cliReviewResponse.status, 200);
+  const cliReview = await cliReviewResponse.json();
+  assert.equal(cliReview.label, 'integration-operator-laptop');
+  assert.equal(cliReview.status, 'pending');
+  assert.equal(cliReview.approvingUser, loginSubjectId);
+  assert.doesNotMatch(JSON.stringify(cliReview), /publicJwk|pollToken|userCode/i);
+
+  const cliApprovalResponse = await fetch(
+    origin + `/api/identity/cli/enrollments/${cliEnrollment.enrollmentId}/approve`,
+    {
+      method: 'POST',
+      headers: {
+        cookie: headers.cookie, 'x-os-csrf-token': csrf, 'content-type': 'application/json',
+        'x-os-idempotency-key': 'integration-cli-approval-key-0001',
+        'x-os-correlation-id': 'integration-cli-approval-0001',
+      },
+      body: JSON.stringify({ userCode: cliEnrollment.userCode }),
+    },
+  );
+  const cliApprovalText = await cliApprovalResponse.text();
+  assert.equal(cliApprovalResponse.status, 200, cliApprovalText);
+  const cliApproval = JSON.parse(cliApprovalText);
+  assert.equal(cliApproval.label, 'integration-operator-laptop');
+  assert.equal(cliApproval.replayed, false);
+
+  const cliPollResponse = await fetch(
+    origin + `/api/identity/cli/enrollments/${cliEnrollment.enrollmentId}/poll`,
+    {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pollToken: cliEnrollment.pollToken }),
+    },
+  );
+  assert.equal(cliPollResponse.status, 200);
+  const cliPoll = await cliPollResponse.json();
+  assert.equal(cliPoll.status, 'approved');
+  assert.equal(cliPoll.deviceId, cliApproval.deviceId);
+
+  const cliChallengeResponse = await fetch(origin + '/api/identity/cli/challenge', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId: cliApproval.deviceId }),
+  });
+  assert.equal(cliChallengeResponse.status, 200);
+  const cliChallenge = await cliChallengeResponse.json();
+  const cliProofMessage = `opensphere-cli-session-v2\n${cliApproval.deviceId}\n${cliChallenge.challengeId}\n${cliChallenge.nonce}`;
+  const cliSignature = sign('sha256', Buffer.from(cliProofMessage, 'utf8'), cliPrivateKey).toString('base64url');
+  const cliSessionResponse = await fetch(origin + '/api/identity/cli/session', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-os-correlation-id': 'integration-cli-session-0001' },
+    body: JSON.stringify({
+      deviceId: cliApproval.deviceId,
+      challengeId: cliChallenge.challengeId,
+      nonce: cliChallenge.nonce,
+      signature: cliSignature,
+    }),
+  });
+  const cliSessionText = await cliSessionResponse.text();
+  assert.equal(cliSessionResponse.status, 200, cliSessionText);
+  const cliSession = JSON.parse(cliSessionText);
+  assert.equal(cliSession.expiresIn, 900);
+  assert.match(cliSession.accessToken, /^[A-Za-z0-9_-]{43}$/u);
+  const cliAuthorization = { authorization: 'Bearer ' + cliSession.accessToken };
+
+  const cliIntrospectionResponse = await fetch(origin + '/api/identity/cli/introspect', {
+    headers: { ...cliAuthorization, 'x-os-correlation-id': 'integration-cli-introspect-0001' },
+  });
+  assert.equal(cliIntrospectionResponse.status, 200);
+  const cliIntrospection = await cliIntrospectionResponse.json();
+  assert.equal(cliIntrospection.active, true);
+  assert.equal(cliIntrospection.subject, loginSubjectId);
+  assert.equal(cliIntrospection.deviceId, cliApproval.deviceId);
+  assert.equal(cliIntrospection.type, 'cli');
+
+  const cliDevicesResponse = await fetch(origin + '/api/identity/cli/devices', {
+    headers: { ...cliAuthorization, 'x-os-correlation-id': 'integration-cli-devices-0001' },
+  });
+  assert.equal(cliDevicesResponse.status, 200);
+  const cliDevices = await cliDevicesResponse.json();
+  assert.equal(cliDevices.devices.some(({ id }) => id === cliApproval.deviceId), true);
+  assert.doesNotMatch(JSON.stringify(cliDevices), /publicJwk|tokenDigest|nonceDigest|pollToken|userCode/i);
+
+  const cliDatabaseEvidence = await admin.query([
+    'SELECT octet_length(e.user_code_digest)::int AS user_digest_bytes,',
+    'octet_length(e.poll_token_digest)::int AS poll_digest_bytes,',
+    'octet_length(c.nonce_digest)::int AS nonce_digest_bytes,',
+    'octet_length(s.token_digest)::int AS token_digest_bytes,',
+    'c.used_at IS NOT NULL AS challenge_used',
+    'FROM console_identity.cli_enrollment e',
+    'JOIN console_identity.cli_device d ON d.device_id=e.device_id',
+    'JOIN console_identity.cli_challenge c ON c.device_id=d.device_id',
+    'JOIN console_identity.cli_session s ON s.device_id=d.device_id',
+    'WHERE e.enrollment_id=$1',
+  ].join(' '), [cliEnrollment.enrollmentId]);
+  assert.deepEqual(cliDatabaseEvidence.rows[0], {
+    user_digest_bytes: 32, poll_digest_bytes: 32, nonce_digest_bytes: 32,
+    token_digest_bytes: 32, challenge_used: true,
+  });
+
+  const cliRevokeResponse = await fetch(origin + `/api/identity/cli/devices/${cliApproval.deviceId}`, {
+    method: 'DELETE',
+    headers: {
+      ...cliAuthorization, 'content-type': 'application/json',
+      'x-os-idempotency-key': 'integration-cli-revoke-key-0001',
+      'x-os-correlation-id': 'integration-cli-revoke-0001',
+    },
+    body: JSON.stringify({ reason: 'integration test revoked CLI device' }),
+  });
+  assert.equal(cliRevokeResponse.status, 204);
+  const revokedCliIntrospection = await fetch(origin + '/api/identity/cli/introspect', {
+    headers: { ...cliAuthorization, 'x-os-correlation-id': 'integration-cli-revoked-0001' },
+  });
+  assert.equal(revokedCliIntrospection.status, 401);
+  const cliRevocationEvidence = await admin.query([
+    'SELECT d.status, d.revoked_at IS NOT NULL AS device_revoked,',
+    'count(s.session_id)::int AS session_count,',
+    'count(s.revoked_at)::int AS revoked_session_count,',
+    "(SELECT count(*)::int FROM console_audit.event e WHERE e.correlation_id IN ('integration-cli-approval-0001','integration-cli-session-0001','integration-cli-revoke-0001')) AS audit_events",
+    'FROM console_identity.cli_device d LEFT JOIN console_identity.cli_session s ON s.device_id=d.device_id',
+    'WHERE d.device_id=$1 GROUP BY d.device_id',
+  ].join(' '), [cliApproval.deviceId]);
+  assert.deepEqual(cliRevocationEvidence.rows[0], {
+    status: 'revoked', device_revoked: true, session_count: 1, revoked_session_count: 1, audit_events: 3,
+  });
+
   const secondLoginResponse = await fetch(origin + '/api/identity/session/login', {
     method: 'POST',
     headers: {
@@ -1990,6 +2132,7 @@ try {
     privilegedStepUpLifecycle: true,
     managedIdentityRoleLifecycle: true,
     managedIdentityLifecycle: true,
+    interactiveCliIdentity: true,
     identityProjection: true,
     sessionSelfRevoke: true,
     passwordRecoveryLifecycle: true,

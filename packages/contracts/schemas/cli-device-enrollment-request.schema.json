@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:cli-device-enrollment-request:v1",
+  "title": "Interactive CLI device enrollment request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["label", "publicJwk"],
+  "properties": {
+    "label": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\r\\n\\u0000-\\u001f\\u007f]+$" },
+    "publicJwk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kty", "crv", "x", "y"],
+      "properties": {
+        "kty": { "const": "EC" },
+        "crv": { "const": "P-256" },
+        "x": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "y": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+      }
+    }
+  }
+}

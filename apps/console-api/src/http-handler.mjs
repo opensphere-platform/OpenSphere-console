@@ -87,7 +87,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, identitySessionBroker, dataIdentityOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -121,6 +121,81 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           requestOrigin: request.headers.origin,
           correlationId,
         }));
+      }
+      if (url.pathname === '/api/identity/cli/enrollments' && request.method === 'POST') {
+        if (!cliIdentityBroker?.createEnrollment) throw Object.assign(new Error('CLI identity enrollment is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 201, await cliIdentityBroker.createEnrollment({ body: await jsonBody(request), correlationId }));
+      }
+      const cliEnrollmentMatch = url.pathname.match(/^\/api\/identity\/cli\/enrollments\/([0-9a-fA-F-]{36})$/u);
+      const cliEnrollmentPollMatch = url.pathname.match(/^\/api\/identity\/cli\/enrollments\/([0-9a-fA-F-]{36})\/poll$/u);
+      const cliEnrollmentApproveMatch = url.pathname.match(/^\/api\/identity\/cli\/enrollments\/([0-9a-fA-F-]{36})\/approve$/u);
+      if (cliEnrollmentMatch && request.method === 'GET') {
+        if (!cliIdentityBroker?.getEnrollment) throw Object.assign(new Error('CLI identity enrollment is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        return send(response, 200, await cliIdentityBroker.getEnrollment(request, {
+          enrollmentId: cliEnrollmentMatch[1], userCode: onlyQueryParameter(url, 'code'), correlationId,
+        }));
+      }
+      if (cliEnrollmentPollMatch && request.method === 'POST') {
+        if (!cliIdentityBroker?.pollEnrollment) throw Object.assign(new Error('CLI identity enrollment poll is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        const polled = await cliIdentityBroker.pollEnrollment({
+          enrollmentId: cliEnrollmentPollMatch[1], body: await jsonBody(request), correlationId,
+        });
+        return send(response, polled.status === 'pending' ? 202 : 200, polled);
+      }
+      if (cliEnrollmentApproveMatch && request.method === 'POST') {
+        if (!cliIdentityBroker?.approveEnrollment) throw Object.assign(new Error('CLI identity enrollment approval is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await cliIdentityBroker.approveEnrollment(request, {
+          enrollmentId: cliEnrollmentApproveMatch[1], body: await jsonBody(request), correlationId,
+        }));
+      }
+      if (url.pathname === '/api/identity/cli/challenge' && request.method === 'POST') {
+        if (!cliIdentityBroker?.createChallenge) throw Object.assign(new Error('CLI identity challenge is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await cliIdentityBroker.createChallenge({ body: await jsonBody(request), correlationId }));
+      }
+      if (url.pathname === '/api/identity/cli/session' && request.method === 'POST') {
+        if (!cliIdentityBroker?.createSession) throw Object.assign(new Error('CLI identity session is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await cliIdentityBroker.createSession({ body: await jsonBody(request), correlationId }));
+      }
+      if (url.pathname === '/api/identity/cli/introspect' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!/^Bearer [A-Za-z0-9_-]{32,512}$/u.test(String(request.headers.authorization || ''))) {
+          throw Object.assign(new Error('CLI bearer credential is required'), { code: 'AuthenticationRequired', status: 401 });
+        }
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        const groups = (session.permissions || []).flatMap((permission) => ({
+          'console.role.admin': ['console-admins'],
+          'console.role.operator': ['console-operators'],
+          'console.role.viewer': ['console-viewers'],
+        })[permission] || []);
+        return send(response, 200, {
+          active: true,
+          userId: session.subjectId,
+          subject: session.subjectId,
+          deviceId: session.deviceId || null,
+          groups,
+          permissions: session.permissions || [],
+          type: 'cli',
+          expiresAt: session.expiresAt,
+        });
+      }
+      if (url.pathname === '/api/identity/cli/devices' && request.method === 'GET') {
+        if (!cliIdentityBroker?.listDevices) throw Object.assign(new Error('CLI identity devices are unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        return send(response, 200, await cliIdentityBroker.listDevices(request, { correlationId }));
+      }
+      const cliDeviceMatch = url.pathname.match(/^\/api\/identity\/cli\/devices\/([0-9a-fA-F-]{36})$/u);
+      if (cliDeviceMatch && request.method === 'DELETE') {
+        if (!cliIdentityBroker?.revokeDevice) throw Object.assign(new Error('CLI identity device revocation is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        await cliIdentityBroker.revokeDevice(request, {
+          deviceId: cliDeviceMatch[1], body: await jsonBody(request), correlationId,
+        });
+        return send(response, 204, null);
       }
       if (url.pathname === '/api/identity' && request.method === 'GET') {
         if (!identitySessionBroker?.listManagedIdentities) {

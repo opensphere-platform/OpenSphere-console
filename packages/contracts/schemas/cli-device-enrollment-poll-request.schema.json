@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:cli-device-enrollment-poll-request:v1",
+  "title": "CLI enrollment poll request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pollToken"],
+  "properties": { "pollToken": { "type": "string", "minLength": 32, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$" } }
+}

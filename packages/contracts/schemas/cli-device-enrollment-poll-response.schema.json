@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:cli-device-enrollment-poll-response:v1",
+  "title": "CLI enrollment poll response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status"],
+  "properties": {
+    "status": { "enum": ["pending", "approved"] },
+    "deviceId": { "type": "string", "format": "uuid" },
+    "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{2}(:[a-f0-9]{2}){31}$" }
+  },
+  "oneOf": [
+    { "properties": { "status": { "const": "pending" } }, "not": { "anyOf": [{ "required": ["deviceId"] }, { "required": ["label"] }, { "required": ["fingerprint"] }] } },
+    { "properties": { "status": { "const": "approved" } }, "required": ["deviceId", "label", "fingerprint"] }
+  ]
+}

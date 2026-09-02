@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "repository": "OpenSphere-Console",
-  "latestGlobalId": "opensphere-console/20260902/0017",
-  "migrationCount": 17,
-  "setDigest": "sha256:0079b9aa637023dbc80b2633cdc349fbb7995699d556a1f950ba2b83bc7b4d18",
+  "latestGlobalId": "opensphere-console/20260902/0020",
+  "migrationCount": 20,
+  "setDigest": "sha256:928006bc506840be69c04c6d6d2e5036af4ab57664c845b8c00b880da37510d4",
   "migrations": [
     {
       "globalId": "opensphere-console/20260902/0001",
@@ -174,6 +174,36 @@
       "sourceRevision": "75d6bd2b1a5fe514390ef68f9a105d21aacdff4b",
       "setSize": 17,
       "setDigest": "sha256:0079b9aa637023dbc80b2633cdc349fbb7995699d556a1f950ba2b83bc7b4d18"
+    },
+    {
+      "globalId": "opensphere-console/20260902/0018",
+      "semanticKey": "console.identity.cli_device",
+      "predecessorGlobalId": "opensphere-console/20260902/0017",
+      "path": "migrations/versions/0018_cli_device_identity.sql",
+      "sha256": "acc7ee61a971cf0081dd26597bf895e54cb815f5dbaa8640800885201d9e3c97",
+      "sourceRevision": "e9d6354b826c9a60ab4d9e30327e08485c4fdac3",
+      "setSize": 18,
+      "setDigest": "sha256:d1e8a35bb25d05740f601c131980b91c0b19eed0d2408223d833b0b6f97c901a"
+    },
+    {
+      "globalId": "opensphere-console/20260902/0019",
+      "semanticKey": "console.identity.cli_bearer_device_management",
+      "predecessorGlobalId": "opensphere-console/20260902/0018",
+      "path": "migrations/versions/0019_cli_bearer_device_management.sql",
+      "sha256": "e3bfea1d5fab4f0961c6477f71bfd07dc1e4f1d9b355d9b84b4ffd7c9e351081",
+      "sourceRevision": "adf1af947ee0b0a8882c08e6c197022ae2b426a9",
+      "setSize": 19,
+      "setDigest": "sha256:de425cce3ee32a3c8d5214ba4f255a7ad8da090bfaa45da8d13da7e6a5ec03a7"
+    },
+    {
+      "globalId": "opensphere-console/20260902/0020",
+      "semanticKey": "console.data_identity.cli_rls_status",
+      "predecessorGlobalId": "opensphere-console/20260902/0019",
+      "path": "migrations/versions/0020_supabase_status_cli_rls.sql",
+      "sha256": "ed762769adc5a7aae43c39f361fb56868102f64e818f46a6c44800b64358d4d1",
+      "sourceRevision": "4f84bd0b5ef5324d2cb8e6f55bd9ab7a814243f2",
+      "setSize": 20,
+      "setDigest": "sha256:928006bc506840be69c04c6d6d2e5036af4ab57664c845b8c00b880da37510d4"
     }
   ]
 }

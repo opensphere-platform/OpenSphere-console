@@ -9,12 +9,12 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 45,
+    operations: 54,
     actionPolicies: 5,
-    schemas: 43,
+    schemas: 57,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 36,
+    consoleApiDatabaseFunctions: 48,
     browserApiPatterns: 122,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
@@ -48,7 +48,9 @@ test('Console API authority verification rejects missing grants and direct table
   const avatarSource = await readFile(new URL('../migrations/versions/0015_owned_profile_avatar.sql', import.meta.url), 'utf8');
   const managedIdentitySource = await readFile(new URL('../migrations/versions/0016_managed_identity_roles.sql', import.meta.url), 'utf8');
   const managedIdentityLifecycleSource = await readFile(new URL('../migrations/versions/0017_managed_identity_lifecycle.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource, managedIdentitySource, managedIdentityLifecycleSource].join('\n');
+  const cliIdentitySource = await readFile(new URL('../migrations/versions/0018_cli_device_identity.sql', import.meta.url), 'utf8');
+  const cliBearerManagementSource = await readFile(new URL('../migrations/versions/0019_cli_bearer_device_management.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource, managedIdentitySource, managedIdentityLifecycleSource, cliIdentitySource, cliBearerManagementSource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

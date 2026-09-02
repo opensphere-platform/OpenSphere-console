@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:cli-device-enrollment-response:v1",
+  "title": "Interactive CLI device enrollment response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["enrollmentId", "pollToken", "userCode", "verificationUriComplete", "expiresAt", "pollInterval"],
+  "properties": {
+    "enrollmentId": { "type": "string", "format": "uuid" },
+    "pollToken": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "userCode": { "type": "string", "pattern": "^[A-F0-9]{8}$" },
+    "verificationUriComplete": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "pollInterval": { "const": 2 }
+  }
+}
