@@ -721,6 +721,31 @@ test('PostgreSQL Registry projection binds session, actor and correlation withou
   assert.deepEqual(calls[0].values, [sessionId, actorRef, 'registry-store-correlation-0001']);
 });
 
+test('PostgreSQL Owner access exchange binds only opaque proofs and Auth session identity', async () => {
+  const calls = [];
+  const store = createPostgresOperationStore({
+    async query(sql, values) {
+      calls.push({ sql, values });
+      if (/prepare_owner_access_credential/.test(sql)) {
+        return { rows: [{ owner_record: {
+          sessionId, subjectId: actorRef, accessTokenCiphertext: 'ciphertext', accessTokenExpiresAt: '2026-09-02T00:15:00.000Z',
+        } }] };
+      }
+      return { rows: [{ session_record: {
+        sessionId, subjectId: actorRef, permissions: ['console.role.admin'], aal: 'aal2',
+      } }] };
+    },
+  });
+  const tokenDigest = Buffer.alloc(32, 1);
+  const csrfTokenDigest = Buffer.alloc(32, 2);
+  await store.prepareOwnerAccessCredential({ tokenDigest, csrfTokenDigest, requireCsrf: true });
+  await store.resolveOwnerAccessAuthority({ subjectId: actorRef, authSessionRef: 'auth-session-0001' });
+  assert.match(calls[0].sql, /prepare_owner_access_credential/);
+  assert.deepEqual(calls[0].values, [tokenDigest, csrfTokenDigest, true]);
+  assert.match(calls[1].sql, /resolve_owner_access_authority/);
+  assert.deepEqual(calls[1].values, [actorRef, 'auth-session-0001']);
+});
+
 test('opaque session resolver sends only cookie and CSRF digests to PostgreSQL', async () => {
   const calls = [];
   const resolver = createDatabaseSessionResolver({

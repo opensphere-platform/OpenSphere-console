@@ -14,7 +14,7 @@ test('foundational Console contracts are internally complete and self-contained'
     schemas: 64,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 52,
+    consoleApiDatabaseFunctions: 54,
     browserApiPatterns: 120,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,

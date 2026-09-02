@@ -55,9 +55,11 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.prepare_managed_identity_lifecycle',
   'console_identity.prepare_owned_password_recovery_link',
   'console_identity.prepare_owned_profile_avatar_access',
+  'console_identity.prepare_owner_access_credential',
   'console_identity.reject_browser_session_refresh',
   'console_identity.resolve_browser_session',
   'console_identity.resolve_cli_session',
+  'console_identity.resolve_owner_access_authority',
   'console_identity.revoke_all_owned_browser_sessions',
   'console_identity.revoke_browser_session',
   'console_identity.revoke_browser_sessions_after_password_recovery',
@@ -170,9 +172,17 @@ export function verifyConsoleApiDeployment({ documents, nginxSource }) {
   assert(service.spec?.type === 'ClusterIP', 'C_API Service must remain cluster-internal');
 
   assert(JSON.stringify(networkPolicy.spec?.policyTypes) === JSON.stringify(['Ingress', 'Egress']), 'C_API NetworkPolicy must select both directions');
-  const ingress = JSON.stringify(networkPolicy.spec?.ingress || []);
+  const ingressRules = networkPolicy.spec?.ingress || [];
+  const ingress = JSON.stringify(ingressRules);
   const egress = JSON.stringify(networkPolicy.spec?.egress || []);
-  assert(ingress.includes('opensphere-console') && !ingress.includes('namespaceSelector'), 'C_API ingress must be limited to Console Web pods');
+  const ingressApps = ingressRules.flatMap((rule) => rule.from || [])
+    .map((peer) => peer?.podSelector?.matchLabels?.app).filter(Boolean).sort();
+  assert(
+    JSON.stringify(ingressApps) === JSON.stringify(['opensphere-console', 'opensphere-console-osaa-gateway'])
+      && !ingress.includes('namespaceSelector')
+      && ingressRules.every((rule) => JSON.stringify(rule.ports) === JSON.stringify([{ protocol: 'TCP', port: 8080 }])),
+    'C_API ingress must be limited to same-namespace Console Web and OSAA Gateway pods on TCP/8080',
+  );
   for (const destination of ['kube-system', 'opensphere-console-data', 'opensphere-supabase-postgres', 'opensphere-supabase-auth', 'opensphere-supabase-rest', 'opensphere-supabase-storage', 'opensphere-registry']) {
     assert(egress.includes(destination), `C_API NetworkPolicy omits required destination ${destination}`);
   }

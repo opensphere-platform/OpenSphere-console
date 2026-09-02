@@ -8,9 +8,9 @@ BEGIN
         AND column_name IN ('auth_session_ref', 'access_token_ciphertext', 'refresh_token_ciphertext')) <> 3 THEN
     RAISE EXCEPTION 'browser session credential-envelope columns are incomplete';
   END IF;
-  IF (SELECT count(*) FROM console_migration.applied_migration) <> 16
+  IF (SELECT count(*) FROM console_migration.applied_migration) <> 25
       OR (SELECT global_id FROM console_migration.applied_migration ORDER BY applied_sequence DESC LIMIT 1)
-         <> 'opensphere-console/20260902/0016' THEN
+         <> 'opensphere-console/20260902/0025' THEN
     RAISE EXCEPTION 'browser session credential migration lineage is incomplete';
   END IF;
 END;

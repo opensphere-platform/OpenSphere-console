@@ -17,6 +17,7 @@ import { createCliIdentityBroker } from './cli-identity-broker.mjs';
 import { createGiteaChangeClient } from './gitea-change-client.mjs';
 import { createPlatformChangeOperations } from './platform-change-operations.mjs';
 import { createCatalogOperations } from './catalog-operations.mjs';
+import { createOwnerAdmissionOperations } from './owner-admission-operations.mjs';
 
 const { Pool } = pg;
 function positiveInteger(name, fallback, maximum) {
@@ -95,6 +96,7 @@ const registryOperations = createRegistryOperations({
   registryResolver,
 });
 const catalogOperations = createCatalogOperations({ registryResolver });
+const ownerAdmissionOperations = createOwnerAdmissionOperations({ identitySessionBroker });
 const giteaChangeClient = createGiteaChangeClient({
   baseUrl: String(process.env.CONSOLE_GITEA_URL || ''),
   controlToken: String(process.env.CONSOLE_GITEA_CONTROL_TOKEN || ''),
@@ -116,6 +118,7 @@ const handler = createConsoleApiHandler({
   operationService,
   registryOperations,
   catalogOperations,
+  ownerAdmissionOperations,
   auditOperations,
   identityOperations,
   identitySessionBroker,

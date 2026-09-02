@@ -87,3 +87,11 @@ node --check apps/osaa-gateway/server.js
 npm.cmd test
 npm.cmd run build
 ```
+
+## Target browser-session admission
+
+`C_AI` owns the Console-native OSAA and Manual read surfaces. Browser cookies never enter this workload. Nginx first exchanges the opaque Console session through an internal C_API admission request, removes Cookie and client identity headers, and forwards only the resulting bearer.
+
+During the atomic browser-session migration, the Gateway supports two explicit identity profiles. The default profile keeps the current compatibility authority at `CONSOLE_IDENTITY_URL/api/identity/session`. The target profile requires `CONSOLE_TARGET_OWNER_ADMISSION=true` and reads `CONSOLE_SESSION_AUTHORITY_URL/api/identity/me` with the internal `X-OS-Owner-Admission: osaa-gateway-v1` marker. Target C_API accepts that bearer only when Supabase `/user` and the current DB browser session, Auth session reference, permission revision, revoke epoch, expiry, and AAL all agree. The Gateway derives the three closed Console groups only from `console.role.*` permissions.
+
+Do not enable target mode by itself. It must be rendered together with the Nginx internal admission upstream and the rest of the authenticated browser-family cutover. `CONSOLE_IDENTITY_URL` remains the fixed compatibility Owner API origin until those Owner operations have target contracts.

@@ -74,6 +74,7 @@ const {
   PgNotificationSink,
 } = require('./r2d2-incident-relay');
 const { projectAuthorityAdapters } = require('./r2d2-source-adapters');
+const { createConsoleIdentityVerifier } = require('./console-identity-client');
 const {
   RUNTIME_RESOURCE_KINDS,
   WATCH_RESOURCE_KINDS,
@@ -91,6 +92,8 @@ const SA = '/var/run/secrets/kubernetes.io/serviceaccount';
 const APISERVER = process.env.APISERVER || 'https://kubernetes.default.svc';
 const CONSOLE_ADMIN_GROUP = process.env.CONSOLE_ADMIN_GROUP || 'console-admins';
 const CONSOLE_IDENTITY_URL = (process.env.CONSOLE_IDENTITY_URL || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const CONSOLE_SESSION_AUTHORITY_URL = (process.env.CONSOLE_SESSION_AUTHORITY_URL || CONSOLE_IDENTITY_URL).replace(/\/$/, '');
+const CONSOLE_TARGET_OWNER_ADMISSION = process.env.CONSOLE_TARGET_OWNER_ADMISSION === 'true';
 const DUPA_CONTROL_URL = (process.env.DUPA_CONTROL_URL || 'http://opensphere-console-dupa-controller.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const REGISTRY_URL = (process.env.REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const CLUSTER_MANAGER_URL = (process.env.CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
@@ -269,33 +272,10 @@ async function k8s(method, path, body) {
   return { ok: res.ok, status: res.status, json: data };
 }
 
-async function verifyAuthed(req) {
-  const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
-  if (!m) throw { code: 401, msg: 'no bearer token' };
-  let response;
-  try {
-    response = await fetch(`${CONSOLE_IDENTITY_URL}/api/identity/session`, {
-      headers: { authorization: `Bearer ${m[1]}`, accept: 'application/json' },
-      signal: boundedSignal(8000),
-    });
-  } catch {
-    throw { code: 503, msg: 'Supabase identity authority unavailable' };
-  }
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw { code: response.status === 403 ? 403 : 401, msg: body.error || 'invalid Supabase session' };
-  return {
-    username: body.username || body.subject || 'unknown',
-    subject: body.subject || '',
-    groups: Array.isArray(body.groups) ? body.groups : [],
-    permissions: Array.isArray(body.permissions) ? body.permissions : [],
-    assurance: body.assurance || 'aal1',
-    authzRevision: body.authorizationRevision || body.authzRevision || '',
-    // Never log this value.  It is retained only for a same-request call to
-    // the Console Backend audit authority.
-    bearerToken: m[1],
-    provider: 'supabase',
-  };
-}
+const verifyAuthed = createConsoleIdentityVerifier({
+  baseUrl: CONSOLE_SESSION_AUTHORITY_URL,
+  targetOwnerAdmission: CONSOLE_TARGET_OWNER_ADMISSION,
+});
 
 async function verifyAdmin(req) {
   const actor = await verifyAuthed(req);

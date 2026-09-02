@@ -36,7 +36,7 @@ BEGIN
   IF v_result->>'state' <> 'complete'
       OR (v_result->>'subjectId')::uuid <> v_subject
       OR (v_result->>'permissionRevision')::bigint <> 1
-      OR (v_result->>'permissionCount')::integer <> 8
+      OR (v_result->>'permissionCount')::integer <> 11
       OR console_identity.get_initial_administrator_bootstrap_status() <> '{"state":"complete"}'::jsonb THEN
     RAISE EXCEPTION 'initial administrator bootstrap receipt or status is invalid';
   END IF;
@@ -45,14 +45,15 @@ BEGIN
     WHERE subject_id = v_subject AND permission_revision = 1 AND revoke_epoch = 0
   ) OR EXISTS (
     SELECT 1 FROM console_identity.subject_authority WHERE subject_id = v_other
-  ) OR (SELECT count(*) FROM console_identity.permission_grant WHERE subject_id = v_subject) <> 8 THEN
+  ) OR (SELECT count(*) FROM console_identity.permission_grant WHERE subject_id = v_subject) <> 11 THEN
     RAISE EXCEPTION 'initial administrator authority set is incomplete or overbroad';
   END IF;
   IF (SELECT array_agg(permission ORDER BY permission) FROM console_identity.permission_grant WHERE subject_id = v_subject)
       <> ARRAY[
         'console.audit.read', 'console.data_identity.read', 'console.extension.install',
-        'console.extension.remove', 'console.extension.revoke', 'console.operation.approve',
-        'console.operation.verify', 'console.registry.manage'
+        'console.extension.remove', 'console.extension.revoke', 'console.git.change',
+        'console.identity.manage', 'console.operation.approve', 'console.operation.verify',
+        'console.registry.manage', 'console.role.admin'
       ]::text[] THEN
     RAISE EXCEPTION 'initial administrator permission set drifted';
   END IF;
@@ -65,7 +66,7 @@ BEGIN
           AND target_ref = 'subject:' || v_subject::text
           AND outcome = 'succeeded'
           AND reason = 'initial-administrator-bootstrap'
-          AND evidence = '{"permissionCount":8,"permissionRevision":1}'::jsonb
+          AND evidence = '{"permissionCount":11,"permissionRevision":1}'::jsonb
       ) THEN
     RAISE EXCEPTION 'initial administrator audit evidence is missing or contains unexpected data';
   END IF;
@@ -79,7 +80,7 @@ BEGIN
   END;
   IF NOT v_failed
       OR EXISTS (SELECT 1 FROM console_identity.subject_authority WHERE subject_id = v_other)
-      OR (SELECT count(*) FROM console_identity.permission_grant) <> 8
+      OR (SELECT count(*) FROM console_identity.permission_grant) <> 11
       OR (SELECT count(*) FROM console_audit.event) <> v_before_events + 1 THEN
     RAISE EXCEPTION 'second bootstrap claimant mutated authority state';
   END IF;

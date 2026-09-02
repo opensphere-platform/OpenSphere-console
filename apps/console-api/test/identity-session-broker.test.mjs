@@ -87,6 +87,22 @@ test('Supabase password client revalidates the returned subject and detects veri
   assert.equal(calls[1].init.headers.authorization, 'Bearer ' + accessToken);
 });
 
+test('Supabase owner access inspection revalidates subject and Auth session reference', async () => {
+  const accessToken = token({ aal: 'aal2' });
+  const client = createSupabaseAuthClient({
+    baseUrl: 'http://supabase-auth.test', now: () => now,
+    async fetchImpl(url, init) {
+      assert.equal(url, 'http://supabase-auth.test/user');
+      assert.equal(init.headers.authorization, 'Bearer ' + accessToken);
+      return jsonResponse({ id: subjectId });
+    },
+  });
+  assert.deepEqual(await client.inspectAccessToken(accessToken), {
+    subjectId, authSessionRef: 'auth-session-0001', aal: 'aal2',
+    expiresAt: '2026-09-02T00:15:00.000Z',
+  });
+});
+
 test('Supabase session preference uses only the current subject access credential', async () => {
   const accessToken = token();
   const calls = [];
@@ -1885,4 +1901,74 @@ test('HTTP owned-session routes preserve the CSRF boundary and clear cookies onl
   assert.equal(all.status, 204);
   assert.equal(all.headers.getSetCookie().length, 2);
   assert.equal(calls.revokeAll[0].request.headers['x-os-csrf-token'], proofHeaders['x-os-csrf-token']);
+});
+
+test('browser Owner exchange returns only the current decrypted Supabase access credential', async () => {
+  const cipher = createSessionCredentialCipher({ encryptionKey, randomBytes: (size) => Buffer.alloc(size, 21) });
+  const accessToken = token({ aal: 'aal2' });
+  const store = {
+    async resolveSession() {
+      return {
+        sessionId, subjectId, expiresAt: '2026-09-02T12:00:00.000Z',
+        absoluteExpiresAt: '2026-09-03T00:00:00.000Z', accessTokenExpiresAt: '2026-09-02T00:15:00.000Z',
+        revokedAt: null, authorityFresh: true, permissions: ['console.role.admin'], permissionRevision: '1', revokeEpoch: '0', aal: 'aal2',
+      };
+    },
+    async prepareOwnerAccessCredential(input) {
+      assert.equal(input.tokenDigest.length, 32);
+      assert.equal(input.csrfTokenDigest.length, 32);
+      assert.equal(input.requireCsrf, true);
+      return { sessionId, subjectId, accessTokenCiphertext: cipher.encrypt(accessToken), accessTokenExpiresAt: '2026-09-02T00:15:00.000Z' };
+    },
+    async issueSession() {}, async getPendingMfa() {}, async activateMfa() {}, async getRefreshCredentials() {},
+    async rotateCredentials() {}, async rejectRefresh() {}, async touchActivity() {}, ...unusedOwnedSessionMethods(),
+  };
+  const broker = createIdentitySessionBroker({
+    store,
+    authClient: { async authenticatePassword() {}, async completeTotp() {}, async refreshSession() {}, async logout() {} },
+    credentialCipher: cipher, publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const exchanged = await broker.exchangeOwnerAccessCredential({ headers: {
+    cookie: '__Host-opensphere-session=' + 'h'.repeat(43), 'x-os-csrf-token': 'c'.repeat(32),
+  } }, { requireCsrf: true, correlationId: 'owner-exchange-0001' });
+  assert.deepEqual(exchanged, { authorization: 'Bearer ' + accessToken, expiresAt: '2026-09-02T00:15:00.000Z' });
+});
+
+test('internal Owner bearer resolves only through Supabase and an active bound browser session', async () => {
+  const accessToken = token({ aal: 'aal2' });
+  const observed = [];
+  const store = {
+    async resolveSession() { throw new Error('browser session resolution must not run for Owner bearer'); },
+    async resolveOwnerAccessAuthority(input) {
+      observed.push(input);
+      return {
+        sessionId, subjectId, expiresAt: '2026-09-02T12:00:00.000Z',
+        absoluteExpiresAt: '2026-09-03T00:00:00.000Z', accessTokenExpiresAt: '2026-09-02T00:15:00.000Z',
+        revokedAt: null, authorityFresh: true, permissions: ['console.role.admin'], permissionRevision: '4', revokeEpoch: '2', aal: 'aal2',
+      };
+    },
+    async issueSession() {}, async getPendingMfa() {}, async activateMfa() {}, async getRefreshCredentials() {},
+    async rotateCredentials() {}, async rejectRefresh() {}, async touchActivity() {}, ...unusedOwnedSessionMethods(),
+  };
+  const broker = createIdentitySessionBroker({
+    store,
+    authClient: {
+      async authenticatePassword() {}, async completeTotp() {}, async refreshSession() {}, async logout() {},
+      async inspectAccessToken(value) {
+        assert.equal(value, accessToken);
+        return { subjectId, authSessionRef: 'auth-session-0001', aal: 'aal2' };
+      },
+    },
+    credentialCipher: createSessionCredentialCipher({ encryptionKey }),
+    publicOrigin: 'https://console.example.test', clock: () => now,
+  });
+  const session = await broker.resolveSession({ headers: {
+    authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'osaa-gateway-v1',
+  } });
+  assert.equal(session.credentialType, 'owner-access');
+  assert.deepEqual(session.permissions, ['console.role.admin']);
+  assert.deepEqual(observed, [{ subjectId, authSessionRef: 'auth-session-0001' }]);
+  await assert.rejects(broker.resolveSession({ headers: { authorization: 'Bearer ' + accessToken } }), {
+    code: 'AuthenticationRequired', status: 401,
+  });
 });

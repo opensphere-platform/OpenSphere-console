@@ -143,6 +143,18 @@ const PREPARE_OWNED_PROFILE_AVATAR_ACCESS_SQL = [
   ') AS avatar_record',
 ].join(' ');
 
+const PREPARE_OWNER_ACCESS_CREDENTIAL_SQL = [
+  'SELECT console_identity.prepare_owner_access_credential(',
+  '$1::bytea, $2::bytea, $3::boolean',
+  ') AS owner_record',
+].join(' ');
+
+const RESOLVE_OWNER_ACCESS_AUTHORITY_SQL = [
+  'SELECT console_identity.resolve_owner_access_authority(',
+  '$1::uuid, $2::text',
+  ') AS session_record',
+].join(' ');
+
 const LIST_MANAGED_IDENTITIES_SQL = [
   'SELECT console_identity.list_managed_identities(',
   '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::text',
@@ -671,6 +683,37 @@ export function createPostgresOperationStore({ query }) {
         if (!record?.sessionId || !record?.subjectId || !record?.accessTokenCiphertext
             || (['select', 'upload'].includes(input.operation) && !record?.auditEventId)) {
           throw new Error('prepare_owned_profile_avatar_access returned no record');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async prepareOwnerAccessCredential(input) {
+      try {
+        const result = await query(PREPARE_OWNER_ACCESS_CREDENTIAL_SQL, [
+          input.tokenDigest, input.csrfTokenDigest ?? null, input.requireCsrf === true,
+        ]);
+        const record = result?.rows?.[0]?.owner_record;
+        if (!record?.sessionId || !record?.subjectId || !record?.accessTokenCiphertext
+            || !record?.accessTokenExpiresAt) {
+          throw new Error('prepare_owner_access_credential returned no record');
+        }
+        return record;
+      } catch (error) {
+        throw databaseError(error);
+      }
+    },
+
+    async resolveOwnerAccessAuthority(input) {
+      try {
+        const result = await query(RESOLVE_OWNER_ACCESS_AUTHORITY_SQL, [
+          input.subjectId, input.authSessionRef,
+        ]);
+        const record = result?.rows?.[0]?.session_record;
+        if (!record?.sessionId || !record?.subjectId || !Array.isArray(record?.permissions)) {
+          throw new Error('resolve_owner_access_authority returned no record');
         }
         return record;
       } catch (error) {

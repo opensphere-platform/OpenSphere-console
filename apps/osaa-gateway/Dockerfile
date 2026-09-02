@@ -10,6 +10,7 @@ COPY provider-tool-calls.js /app/provider-tool-calls.js
 COPY chat-runtime-policy.js /app/chat-runtime-policy.js
 COPY osdst-client.js /app/osdst-client.js
 COPY canonical-digest.js /app/canonical-digest.js
+COPY console-identity-client.js /app/console-identity-client.js
 COPY dialogue-capability.js /app/dialogue-capability.js
 COPY dialogue-evidence.js /app/dialogue-evidence.js
 COPY dialogue-request-boundary.js /app/dialogue-request-boundary.js

@@ -50,20 +50,10 @@ jobs:
           node scripts/console-migrations.mjs apply
           node scripts/console-migrations.mjs apply
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0011_initial_administrator_bootstrap.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/baseline/verify/0001_console_authority.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0002_browser_session_credential_envelope.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0003_browser_session_mfa_activation.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0004_browser_session_refresh_rotation.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0005_browser_session_activity_expiry.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0006_browser_session_inventory_revocation.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0007_browser_session_totp_enrollment.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0008_browser_session_step_up.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0009_recent_aal2_enforcement.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0010_password_recovery_session_revocation.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0012_browser_session_preference.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0013_owned_browser_session_events.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0014_owned_password_recovery_link.verify.sql
-          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f migrations/versions/verify/0015_owned_profile_avatar.verify.sql
+          while IFS= read -r verify_path; do
+            psql -v ON_ERROR_STOP=1 -h localhost -U postgres -f "$verify_path"
+          done < <(find migrations/baseline/verify migrations/versions/verify \
+            -name '*.verify.sql' ! -name '0011_initial_administrator_bootstrap.verify.sql' -print | sort)
       - name: Verify Console API through PostgreSQL
         env:
           PGPASSWORD: console-test
@@ -91,6 +81,8 @@ jobs:
         run: npm run build -- --configuration production
       - name: Build target Console API image
         run: docker build --file apps/console-api/Dockerfile --tag opensphere-console-api:validation .
+      - name: Build OSAA Gateway image
+        run: docker build --file apps/osaa-gateway/Dockerfile --tag opensphere-console-osaa-gateway:validation apps/osaa-gateway
       - name: Build target Extension Controller image
         run: docker build --file apps/extension-controller/Dockerfile --tag opensphere-extension-controller:validation .
       - name: Setup Go

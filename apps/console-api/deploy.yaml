@@ -152,6 +152,12 @@ spec:
               app: opensphere-console
       ports:
         - { protocol: TCP, port: 8080 }
+    - from:
+        - podSelector:
+            matchLabels:
+              app: opensphere-console-osaa-gateway
+      ports:
+        - { protocol: TCP, port: 8080 }
   egress:
     - to:
         - namespaceSelector:

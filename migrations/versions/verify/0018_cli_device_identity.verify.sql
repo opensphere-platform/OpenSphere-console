@@ -2,7 +2,7 @@
 
 DO $$
 DECLARE
-  v_subject uuid := '88888888-8888-4888-8888-888888888888';
+  v_subject uuid := '88181818-1818-4181-8181-181818181818';
   v_browser jsonb;
   v_enrollment jsonb;
   v_projection jsonb;

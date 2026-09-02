@@ -1135,24 +1135,78 @@ export function createIdentitySessionBroker({
       });
     },
 
+    async exchangeOwnerAccessCredential(request, { requireCsrf = false, correlationId } = {}) {
+      if (String(request?.headers?.authorization || '').trim()) {
+        fail('PermissionDenied', 'browser owner credential exchange does not accept bearer input', 403);
+      }
+      if (!store?.prepareOwnerAccessCredential) {
+        fail('AuthorityUnavailable', 'owner access credential authority is unavailable', 503);
+      }
+      const session = await broker.resolveSession(request, { requireCsrf, correlationId });
+      const proof = readBrowserSessionProof(request, { requireCsrf });
+      const record = await store.prepareOwnerAccessCredential({
+        tokenDigest: proof.tokenDigest,
+        csrfTokenDigest: proof.csrfTokenDigest,
+        requireCsrf,
+      });
+      if (record.sessionId !== session.sessionId || record.subjectId !== session.subjectId) {
+        fail('AuthorityUnavailable', 'owner access credential changed session authority', 503);
+      }
+      return Object.freeze({
+        authorization: 'Bearer ' + credentialCipher.decrypt(record.accessTokenCiphertext),
+        expiresAt: record.accessTokenExpiresAt,
+      });
+    },
+
     async resolveSession(request, { requireCsrf = false, correlationId } = {}) {
       const authorization = String(request?.headers?.authorization || '').trim();
       if (authorization) {
-        const match = authorization.match(/^Bearer ([A-Za-z0-9_-]{32,512})$/u);
-        if (!match || !store?.resolveCliSession) {
-          fail('AuthenticationRequired', 'valid CLI bearer credential is required', 401);
+        const cliMatch = authorization.match(/^Bearer ([A-Za-z0-9_-]{32,512})$/u);
+        if (cliMatch) {
+          if (!store?.resolveCliSession) fail('AuthenticationRequired', 'valid CLI bearer credential is required', 401);
+          const session = await store.resolveCliSession({ tokenDigest: digest(cliMatch[1]) });
+          return Object.freeze({
+            sessionId: session.sessionId,
+            subjectId: session.subjectId,
+            deviceId: session.deviceId,
+            expiresAt: session.expiresAt,
+            idleExpiresAt: session.idleExpiresAt ?? session.expiresAt,
+            absoluteExpiresAt: session.absoluteExpiresAt ?? session.expiresAt,
+            persistence: 'cli-15m',
+            lastSeenAt: session.lastSeenAt ?? null,
+            accessTokenExpiresAt: null,
+            lastReauthenticatedAt: null,
+            revokedAt: session.revokedAt,
+            authorityFresh: session.authorityFresh === true,
+            permissions: Array.isArray(session.permissions) ? session.permissions : [],
+            permissionRevision: String(session.permissionRevision),
+            revokeEpoch: String(session.revokeEpoch),
+            aal: session.aal,
+            credentialType: session.credentialType,
+          });
         }
-        const session = await store.resolveCliSession({ tokenDigest: digest(match[1]) });
+        const ownerMatch = authorization.match(/^Bearer ([A-Za-z0-9_-]+[.][A-Za-z0-9_-]+[.][A-Za-z0-9_-]+)$/u);
+        if (!ownerMatch || request?.headers?.['x-os-owner-admission'] !== 'osaa-gateway-v1'
+            || !authClient?.inspectAccessToken || !store?.resolveOwnerAccessAuthority) {
+          fail('AuthenticationRequired', 'valid internal Owner access credential is required', 401);
+        }
+        const inspected = await authClient.inspectAccessToken(ownerMatch[1]);
+        const session = await store.resolveOwnerAccessAuthority({
+          subjectId: inspected.subjectId,
+          authSessionRef: inspected.authSessionRef,
+        });
+        if (session.subjectId !== inspected.subjectId || session.aal !== inspected.aal) {
+          fail('AuthenticationRequired', 'Owner access credential changed session authority', 401);
+        }
         return Object.freeze({
           sessionId: session.sessionId,
           subjectId: session.subjectId,
-          deviceId: session.deviceId,
           expiresAt: session.expiresAt,
           idleExpiresAt: session.idleExpiresAt ?? session.expiresAt,
           absoluteExpiresAt: session.absoluteExpiresAt ?? session.expiresAt,
-          persistence: 'cli-15m',
+          persistence: 'owner-access',
           lastSeenAt: session.lastSeenAt ?? null,
-          accessTokenExpiresAt: null,
+          accessTokenExpiresAt: session.accessTokenExpiresAt,
           lastReauthenticatedAt: null,
           revokedAt: session.revokedAt,
           authorityFresh: session.authorityFresh === true,
@@ -1160,7 +1214,7 @@ export function createIdentitySessionBroker({
           permissionRevision: String(session.permissionRevision),
           revokeEpoch: String(session.revokeEpoch),
           aal: session.aal,
-          credentialType: session.credentialType,
+          credentialType: 'owner-access',
         });
       }
       const options = { requireCsrf };

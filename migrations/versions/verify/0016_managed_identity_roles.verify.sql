@@ -34,7 +34,7 @@ BEGIN
   END IF;
   IF console_identity.managed_role_permissions('console-admins') <> ARRAY[
       'console.audit.read', 'console.data_identity.read', 'console.extension.install',
-      'console.extension.remove', 'console.extension.revoke', 'console.identity.manage',
+      'console.extension.remove', 'console.extension.revoke', 'console.git.change', 'console.identity.manage',
       'console.operation.approve', 'console.operation.verify', 'console.registry.manage',
       'console.role.admin'
     ]::text[]

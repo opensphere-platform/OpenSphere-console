@@ -12,6 +12,11 @@ function send(response, status, body, headers = {}) {
   response.end(payload);
 }
 
+function sendEmpty(response, status, headers = {}) {
+  response.writeHead(status, { 'cache-control': 'no-store', ...headers });
+  response.end();
+}
+
 function sendAvatar(response, avatar) {
   response.writeHead(200, {
     'content-type': avatar.contentType,
@@ -87,7 +92,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -105,6 +110,14 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           state: ready ? 'Ready' : 'Unavailable',
           authority: 'SupabasePostgreSQL',
         });
+      }
+      if (url.pathname === '/api/internal/r2d2-proxy-authn' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        if (!ownerAdmissionOperations?.authorizeOsaa) {
+          throw Object.assign(new Error('OSAA owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+        }
+        const admission = await ownerAdmissionOperations.authorizeOsaa(request, { correlationId });
+        return sendEmpty(response, 204, { 'x-os-r2d2-authorization': admission.authorization });
       }
       if (url.pathname === '/api/identity/bootstrap/status' && request.method === 'GET') {
         if (!identitySessionBroker?.initialAdministratorStatus) {

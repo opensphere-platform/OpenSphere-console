@@ -9,8 +9,8 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 24);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0024');
+  assert.equal(manifest.migrationCount, 25);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260902/0025');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
   assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   assert.equal(manifest.migrations[2].sourceRevision, 'd7c5d09ecdcfbeed01b32fd13a447c15b5692116');
@@ -35,6 +35,7 @@ test('fresh migration manifest binds the exact source revision and ordered SQL i
   assert.equal(manifest.migrations[21].sourceRevision, 'ecba08066cd93807f9127fd8f1d6b87cd5764a6c');
   assert.equal(manifest.migrations[22].sourceRevision, 'ad1961615479df63490da5dcc5dba1c65458e196');
   assert.equal(manifest.migrations[23].sourceRevision, 'cfb17795b63d8403125a056ea21ecf28b2d44b21');
+  assert.equal(manifest.migrations[24].sourceRevision, '8b77dcbd22bd7770513f6bb96224135c0fd70554');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
@@ -180,6 +181,33 @@ test('Supabase CLI RLS status successor is independently renderable', () => {
   const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0020' });
   assert.match(sql, /v_authority_table_count = 15/);
   assert.match(sql, /opensphere-console\/20260902\/0020/);
+  assert.doesNotMatch(sql, /CREATE TABLE/);
+});
+test('platform Git change permission successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0021' });
+  assert.match(sql, /console[.]git[.]change/);
+  assert.match(sql, /opensphere-console\/20260902\/0021/);
+});
+test('Gitea merge receipt successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0022' });
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation[.]record_gitea_merge/);
+  assert.match(sql, /opensphere-console\/20260902\/0022/);
+});
+test('Gitea proposal receipt successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0023' });
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation[.]record_gitea_proposal/);
+  assert.match(sql, /opensphere-console\/20260902\/0023/);
+});
+test('Gitea change inventory successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0024' });
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_operation[.]list_gitea_changes/);
+  assert.match(sql, /opensphere-console\/20260902\/0024/);
+});
+test('Owner access credential successor is independently renderable', () => {
+  const sql = renderMigration({ root, globalId: 'opensphere-console/20260902/0025' });
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]prepare_owner_access_credential/);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION console_identity[.]resolve_owner_access_authority/);
+  assert.match(sql, /opensphere-console\/20260902\/0025/);
   assert.doesNotMatch(sql, /CREATE TABLE/);
 });
 test('migration renderer emits only a manifest-bound transaction body', () => {

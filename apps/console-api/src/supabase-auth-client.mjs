@@ -218,6 +218,19 @@ export function createSupabaseAuthClient({
   }
 
   return Object.freeze({
+    async inspectAccessToken(accessToken) {
+      const claims = jwtClaims(accessToken, now());
+      const user = await request('/user', { token: accessToken });
+      if (String(user?.id || '') !== String(claims.sub) || !claims.session_id) {
+        fail('AuthenticationRequired', 'Supabase access credential subject is invalid', 401);
+      }
+      return Object.freeze({
+        subjectId: String(claims.sub),
+        authSessionRef: String(claims.session_id),
+        aal: claims.aal,
+        expiresAt: new Date(Number(claims.exp) * 1000).toISOString(),
+      });
+    },
     async readManagedUser(subjectId) {
       if (!adminKey) fail('AuthorityUnavailable', 'Supabase managed-user authority is unavailable', 503);
       const expectedSubjectId = String(subjectId || '');
