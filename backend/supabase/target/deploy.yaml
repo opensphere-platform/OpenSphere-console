@@ -226,7 +226,8 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom: { secretKeyRef: { name: opensphere-supabase-secrets, key: postgres-password } }
             - { name: PGRST_DB_URI, value: "postgres://authenticator:$(POSTGRES_PASSWORD)@opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local:5432/postgres" }
-            - { name: PGRST_DB_SCHEMAS, value: "console,audit,storage,osaa" }
+            # Fresh Console authority uses C_API direct SQL; only Storage is exposed here.
+            - { name: PGRST_DB_SCHEMAS, value: "storage" }
             - { name: PGRST_DB_EXTRA_SEARCH_PATH, value: "public,auth,extensions" }
             - { name: PGRST_DB_ANON_ROLE, value: anon }
             - name: PGRST_JWT_SECRET

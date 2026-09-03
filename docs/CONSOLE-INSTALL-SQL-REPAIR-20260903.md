@@ -1,6 +1,8 @@
 # 2026-09-03 Console 초기 설치 SQL 오류
 
-상태: 원인 수정·실제 PostgreSQL 회귀 통과 / Console 202609031456 GHCR edge 및 공개 Setup edge.22 발행 완료 / 기존 Failed 설치 업그레이드 실행 전.
+> **2026-09-03 후속 상태:** 사용자의 클린 재설치 지시에 따라 기존 Console 설치 namespace 5개와 영구 데이터 4개를 모두 삭제했다. 아래 실패/보존형 upgrade 내용은 과거 기록이며 현재는 설치 lock도 없다. 새 설치는 아직 실행하지 않았다. [삭제 완료 보고서](CONSOLE-INSTALL-CLEAN-PURGE-20260903.md).
+
+상태: 원인 수정·실제 PostgreSQL 회귀 통과 / Console 202609031456 GHCR edge 및 공개 Setup edge.22 발행 완료 / 실제 upgrade 및 rollback 실패. 추가 REST/템플릿/Secret 해석 결함은 [적용 승인용 변경 명세](CONSOLE-INSTALL-RECOVERY-PATCH-REVIEW-20260903.md)를 따른다. 설치 미완료.
 
 ## 원인과 검증 공백
 

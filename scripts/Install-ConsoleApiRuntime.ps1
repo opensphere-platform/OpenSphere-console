@@ -40,6 +40,84 @@ $deploymentPath = Join-Path $repositoryRoot 'apps\console-api\deploy.yaml'
 $extensionDeploymentPath = Join-Path $repositoryRoot 'apps\extension-controller\deploy.yaml'
 $dataDeploymentPath = Join-Path $repositoryRoot 'backend\supabase\target\deploy.yaml'
 
+$script:installStage = $null
+function Write-InstallProgress([string]$State, [string]$Detail = '') {
+  if (-not $script:installStage) { return }
+  $seconds = $script:installStage.Clock.Elapsed.TotalSeconds.ToString('F1', [Globalization.CultureInfo]::InvariantCulture)
+  $suffix = if ($Detail) { " — $Detail" } else { '' }
+  [Console]::Error.WriteLine(('[{0} {1:00}/12] {2}{3} ({4}s)' -f $State, $script:installStage.Number, $script:installStage.Name, $suffix, $seconds))
+}
+function Start-InstallStage([int]$Number, [string]$Name) {
+  $script:installStage = @{ Number = $Number; Name = $Name; Clock = [Diagnostics.Stopwatch]::StartNew() }
+  Write-InstallProgress '시작'
+}
+function Complete-InstallStage {
+  Write-InstallProgress '완료'
+  $script:installStage = $null
+}
+# Only readiness commands use this runner. SQL, Secret values and manifests
+# remain on the existing captured path; stdout keeps the final JSON contract.
+function Invoke-KubectlWait([string[]]$Arguments, [double]$HeartbeatSeconds = 15) {
+  $start = [Diagnostics.ProcessStartInfo]::new()
+  $start.FileName = (Get-Command kubectl -ErrorAction Stop).Source
+  $start.UseShellExecute = $false
+  $start.CreateNoWindow = $true
+  $start.RedirectStandardOutput = $true
+  $start.RedirectStandardError = $true
+  foreach ($argument in @($kubectlArgs) + $Arguments) { $start.ArgumentList.Add($argument) }
+  $process = [Diagnostics.Process]::new()
+  $process.StartInfo = $start
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  $output = [Collections.Generic.List[string]]::new()
+  $lastStatus = 'Kubernetes 준비 확인 중'
+  $nextHeartbeat = $HeartbeatSeconds
+  $started = $false
+  try {
+    if (-not $process.Start()) { throw 'Unable to start kubectl readiness check' }
+    $started = $true
+    $lineTask = $process.StandardOutput.ReadLineAsync()
+    $errorTask = $process.StandardError.ReadToEndAsync()
+    while ($true) {
+      while ($null -ne $lineTask -and $lineTask.IsCompleted) {
+        $line = $lineTask.GetAwaiter().GetResult()
+        if ($null -eq $line) { $lineTask = $null; break }
+        $output.Add($line)
+        if ($line.Trim()) {
+          $lastStatus = $line
+          Write-InstallProgress '대기' $lastStatus
+        }
+        $lineTask = $process.StandardOutput.ReadLineAsync()
+      }
+      if ($process.HasExited -and $null -eq $lineTask) { break }
+      if ($clock.Elapsed.TotalSeconds -ge $nextHeartbeat) {
+        Write-InstallProgress '대기' $lastStatus
+        $nextHeartbeat = $clock.Elapsed.TotalSeconds + $HeartbeatSeconds
+      }
+      Start-Sleep -Milliseconds 100
+    }
+    $process.WaitForExit()
+    $errorText = $errorTask.GetAwaiter().GetResult()
+    if ($process.ExitCode -ne 0) {
+      # Do not echo arbitrary authentication-provider stderr or command input.
+      $reason = if ($errorText -match 'timed out waiting for the condition') { '제한 시간 내 Ready 미도달' }
+        elseif ($errorText -match 'exceeded its progress deadline') { 'ProgressDeadlineExceeded' }
+        else { "준비 확인 명령 실패, exit=$($process.ExitCode)" }
+      Write-InstallProgress '실패' $reason
+      throw "kubectl readiness failed: $reason"
+    }
+    return $output.ToArray()
+  } finally {
+    if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+    $process.Dispose()
+  }
+}
+trap {
+  if ($script:installStage) { Write-InstallProgress '실패' '현재 단계 중단; 다음 단계는 실행하지 않음' }
+  break
+}
+
+Start-InstallStage 1 '설치 입력·기존 상태 검증'
+
 foreach ($imageInput in @(
   @{ Name = 'ConsoleApiImage'; Value = $ConsoleApiImage; Artifact = 'opensphere-console-api' },
   @{ Name = 'ExtensionControllerImage'; Value = $ExtensionControllerImage; Artifact = 'opensphere-extension-controller' },
@@ -104,6 +182,8 @@ $kubectlArgs = @()
 if ($KubeContext) { $kubectlArgs += @('--context', $KubeContext) }
 
 function Invoke-Kubectl([string[]]$Arguments, [string]$InputText = '') {
+  $readiness = ($Arguments -contains 'rollout' -and $Arguments -contains 'status') -or ($Arguments -contains 'wait')
+  if (-not $InputText -and $readiness) { return @(Invoke-KubectlWait $Arguments) }
   if ($InputText) { $output = $InputText | & kubectl @kubectlArgs @Arguments }
   else { $output = & kubectl @kubectlArgs @Arguments }
   if ($LASTEXITCODE -ne 0) { throw "kubectl failed: $($Arguments -join ' ')" }
@@ -292,14 +372,18 @@ function Get-RuntimePasswordFromSecret([string]$Json) {
   if ($userinfo.Count -ne 2 -or [Uri]::UnescapeDataString($userinfo[0]) -ne $roleName) {
     throw 'Runtime Secret database role differs from the fixed C_API login'
   }
-  try { $sessionKeyBytes = [Convert]::FromBase64String([string]$secret.data.$sessionEncryptionSecretKey) }
-  catch { throw 'Runtime Secret session encryption key is not valid base64' }
   try {
-    if ($sessionKeyBytes.Length -ne 32 -or [Convert]::ToBase64String($sessionKeyBytes) -ne [string]$secret.data.$sessionEncryptionSecretKey) {
+    # Kubernetes data wraps the application's canonical base64 text in base64.
+    $sessionKeyText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$secret.data.$sessionEncryptionSecretKey))
+    $sessionKeyBytes = [Convert]::FromBase64String($sessionKeyText)
+  } catch { throw 'Runtime Secret session encryption key is not valid base64' }
+  try {
+    if ($sessionKeyBytes.Length -ne 32 -or [Convert]::ToBase64String($sessionKeyBytes) -cne $sessionKeyText) {
       throw 'Runtime Secret session encryption key must be canonical base64 for exactly 32 bytes'
     }
   } finally {
     [Array]::Clear($sessionKeyBytes, 0, $sessionKeyBytes.Length)
+    $sessionKeyText = $null
   }
   $runtimeServiceRole = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String([string]$secret.data.$supabaseServiceRoleSecretKey)
@@ -455,6 +539,8 @@ if ($existingDataResources.Count -eq $dataResources.Count) {
   }
 }
 
+Complete-InstallStage
+Start-InstallStage 2 'Supabase 선언 적용·PostgreSQL 준비'
 $dataDeploymentTemplate = Get-Content -Raw -LiteralPath $dataDeploymentPath
 $dataPlaceholders = [ordered]@{
   '__OPENSPHERE_SUPABASE_POSTGRES_IMAGE__' = @{ Count = 3; Value = $SupabasePostgresImage }
@@ -490,6 +576,8 @@ foreach ($workload in $dataWorkloads) {
   }
 }
 
+Complete-InstallStage
+Start-InstallStage 3 'Supabase 서비스 DB 역할 동기화'
 $escapedPostgresPassword = $postgresPassword.Replace("'", "''")
 $serviceRoleSql = @"
 DO `$roles`$
@@ -513,13 +601,19 @@ $serviceRoleSql = $null
 $escapedPostgresPassword = $null
 $postgresPassword = $null
 [Array]::Clear($postgresPasswordBytes, 0, $postgresPasswordBytes.Length)
+Complete-InstallStage
+Start-InstallStage 4 'Supabase Auth 준비 (최대 10분)'
 Invoke-Kubectl @('-n', $DataNamespace, 'rollout', 'status', 'deployment/opensphere-supabase-auth', '--timeout=10m') | Out-Null
+Complete-InstallStage
+Start-InstallStage 5 'Storage Pod 실행·자체 스키마 초기화'
 Invoke-Kubectl @('-n', $DataNamespace, 'wait', '--for=jsonpath={.status.phase}=Running', 'pod', '-l', 'app=opensphere-supabase-storage', '--timeout=10m') | Out-Null
 $storagePods = (Invoke-Kubectl @('-n', $DataNamespace, 'get', 'pod', '-l', 'app=opensphere-supabase-storage', '-o', 'json') | Out-String) | ConvertFrom-Json
 $runningStoragePods = @($storagePods.items | Where-Object { $_.status.phase -eq 'Running' })
 if ($runningStoragePods.Count -ne 1) { throw "Expected exactly one Running Supabase Storage pod in $DataNamespace" }
 Invoke-Kubectl @('-n', $DataNamespace, 'exec', [string]$runningStoragePods[0].metadata.name, '--', 'node', '/app/dist/scripts/migrate-call.js') | Out-Null
 
+Complete-InstallStage
+Start-InstallStage 6 'Console DB 마이그레이션'
 $ledgerExists = Invoke-OwnerSql "SELECT CASE WHEN to_regclass('console_migration.applied_migration') IS NULL THEN 'absent' ELSE 'present' END;"
 if ($ledgerExists.Count -ne 1 -or $ledgerExists[0] -notin @('absent', 'present')) {
   throw 'Unable to establish fresh migration ledger state'
@@ -532,6 +626,7 @@ if ($ledgerExists[0] -eq 'present') {
   $appliedMigrationCount = Get-AppliedMigrationCount $currentLedger[0]
 }
 
+Write-InstallProgress '진행' "기존 적용 $appliedMigrationCount/$($migrationManifest.migrationCount), 나머지 순차 적용"
 $migrationTool = Join-Path $PSScriptRoot 'console-migrations.mjs'
 for ($migrationIndex = $appliedMigrationCount; $migrationIndex -lt [int]$migrationManifest.migrationCount; $migrationIndex++) {
   $migration = @($migrationManifest.migrations)[$migrationIndex]
@@ -539,7 +634,9 @@ for ($migrationIndex = $appliedMigrationCount; $migrationIndex -lt [int]$migrati
   if ($VerifiedMaterializedRelease) { $migrationRenderArguments += '--verified-materialized-release' }
   $migrationSql = (& node $migrationTool @migrationRenderArguments | Out-String)
   if ($LASTEXITCODE -ne 0 -or -not $migrationSql.Trim()) { throw "Fresh migration renderer failed: $($migration.globalId)" }
+  Write-InstallProgress '적용' "$($migrationIndex + 1)/$($migrationManifest.migrationCount) $($migration.globalId)"
   Invoke-OwnerMigrationSql $migrationSql
+  Write-InstallProgress '반영' "$($migrationIndex + 1)/$($migrationManifest.migrationCount) $($migration.globalId)"
   $migrationSql = $null
   $migrationStatus = 'applied'
 }
@@ -548,8 +645,14 @@ $ledger = Invoke-OwnerSql $ledgerSql
 if ($ledger.Count -ne 1 -or $ledger[0] -ne $expectedLedger) {
   throw 'Console API runtime provisioning requires the exact fresh migration prefix'
 }
+Complete-InstallStage
+Start-InstallStage 7 'Supabase REST 준비 (최대 10분)'
 Invoke-Kubectl @('-n', $DataNamespace, 'rollout', 'status', 'deployment/opensphere-supabase-rest', '--timeout=10m') | Out-Null
+Complete-InstallStage
+Start-InstallStage 8 'Supabase Storage 준비 (최대 10분)'
 Invoke-Kubectl @('-n', $DataNamespace, 'rollout', 'status', 'deployment/opensphere-supabase-storage', '--timeout=10m') | Out-Null
+Complete-InstallStage
+Start-InstallStage 9 'Console API 최소권한 계정·전용 Secret 확인'
 $authorityState = Invoke-OwnerSql "SELECT rolname||'|'||rolcanlogin::text||'|'||rolsuper::text||'|'||rolcreaterole::text||'|'||rolcreatedb::text||'|'||rolreplication::text||'|'||rolbypassrls::text FROM pg_roles WHERE rolname='$authorityRole';"
 if ($authorityState.Count -ne 1 -or $authorityState[0] -ne "$authorityRole|false|false|false|false|false|false") {
   throw 'Fresh console_api authority role attributes differ from the closed baseline'
@@ -658,6 +761,8 @@ try {
 $runtimeStatus = 'provisioned'
 }
 
+Complete-InstallStage
+Start-InstallStage 10 'Extension Controller 최소권한 계정·전용 Secret 확인'
 $extensionRoleState = Invoke-OwnerSql "SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$extensionRoleName') THEN 'present' ELSE 'absent' END;"
 if ($extensionRoleState.Count -ne 1 -or $extensionRoleState[0] -notin @('present', 'absent')) { throw 'Unable to establish C_EXT runtime role state' }
 $extensionSecretJson = (Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'secret', $extensionSecretName, '--ignore-not-found', '-o', 'json') | Out-String).Trim()
@@ -740,6 +845,8 @@ COMMIT;
   $extensionRuntimeStatus = 'provisioned'
 }
 
+Complete-InstallStage
+Start-InstallStage 11 'Console API 배포·준비 (최대 5분)'
 $deploymentTemplate = Get-Content -Raw -LiteralPath $deploymentPath
 if ([regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_API_IMAGE__')).Count -ne 1 -or
     [regex]::Matches($deploymentTemplate, [regex]::Escape('__OPENSPHERE_CONSOLE_URL__')).Count -ne 1) {
@@ -752,6 +859,8 @@ Invoke-Kubectl @('-n', $RuntimeNamespace, 'rollout', 'status', 'deployment/opens
 $installedImage = ((Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'deployment/opensphere-console-api', '-o', 'jsonpath={.spec.template.spec.containers[0].image}')) -join '').Trim()
 if ($installedImage -ne $ConsoleApiImage) { throw 'Installed C_API image differs from the requested exact digest' }
 
+Complete-InstallStage
+Start-InstallStage 12 'Extension Controller 배포·준비 (최대 5분)'
 $extensionDeploymentTemplate = Get-Content -Raw -LiteralPath $extensionDeploymentPath
 if ([regex]::Matches($extensionDeploymentTemplate, [regex]::Escape('__OPENSPHERE_EXTENSION_CONTROLLER_IMAGE__')).Count -ne 1) {
   throw 'C_EXT deployment image placeholder contract is invalid'
@@ -763,6 +872,7 @@ Invoke-Kubectl @('-n', $RuntimeNamespace, 'rollout', 'status', 'deployment/opens
 $installedExtensionImage = ((Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'deployment/opensphere-extension-controller', '-o', 'jsonpath={.spec.template.spec.containers[0].image}')) -join '').Trim()
 if ($installedExtensionImage -ne $ExtensionControllerImage) { throw 'Installed C_EXT image differs from the requested exact digest' }
 
+Complete-InstallStage
 Write-Output (@{
   status = 'passed'
   dataStack = $dataStackStatus

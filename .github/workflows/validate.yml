@@ -67,6 +67,8 @@ jobs:
           npm ci --prefix apps/console-api --no-audit --no-fund
           npm ci --prefix apps/extension-controller --no-audit --no-fund
           node scripts/verify-console-installer-postgres.mjs
+          node scripts/verify-console-data-manifest-postgres.mjs
+          pwsh -NoProfile -File scripts/verify-console-installer-runtime.ps1
           createdb -h localhost -U postgres opensphere_console_bootstrap_test
           trap 'dropdb --if-exists -h localhost -U postgres opensphere_console_bootstrap_test' EXIT
           psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d opensphere_console_bootstrap_test -f migrations/baseline/verify/supabase-test-database-prerequisites.sql
