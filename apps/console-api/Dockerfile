@@ -6,6 +6,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
 COPY apps/console-api/src ./src
 COPY apps/console-api/runtime/platform-release-contract.js apps/console-api/runtime/platform-release-agent-identity-cutover.js ./runtime/
 COPY apps/console-api/runtime/foundation-bootstrap-contract.js ./runtime/
+COPY apps/console-api/runtime/package.json ./runtime/
 COPY packages /workspace/packages
 ENV NODE_ENV=production
 ENV PORT=8080

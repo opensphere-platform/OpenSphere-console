@@ -90,6 +90,8 @@ jobs:
         run: npm run build -- --configuration production
       - name: Build target Console API image
         run: docker build --file apps/console-api/Dockerfile --tag opensphere-console-api:validation .
+      - name: Run packaged Console API against isolated PostgreSQL
+        run: node scripts/verify-console-api-image.mjs --image opensphere-console-api:validation
       - name: Build OSAA Gateway image
         run: docker build --file apps/osaa-gateway/Dockerfile --tag opensphere-console-osaa-gateway:validation apps/osaa-gateway
       - name: Build target Extension Controller image

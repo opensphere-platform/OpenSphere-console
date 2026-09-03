@@ -312,7 +312,7 @@ function Assert-LocalEdgeImageMetadata {
   if ($remoteDigest -ne $Digest) {
     throw "OCI digest mismatch for ${reference}: $remoteDigest, expected $Digest"
   }
-  Write-Host "[preflight] $reference metadata and $ExpectedPlatform runtime verified"
+  Write-Host "[preflight] $reference OCI metadata and $ExpectedPlatform platform verified (not a startup probe)"
 }
 
 Write-Host '[step 02/06] Declare the CLI platforms this host can build'
@@ -507,6 +507,14 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
   Write-Host "[pushed] ${repository}:$localTag -> $digest"
 }
 
+# Immutable source images may be built above, but date/channel tags must not move
+# until the exact packaged C_API digest has started and served DB-backed Ready.
+if ($digests.Contains('consoleApi')) {
+  $apiReference = "$Registry/opensphere-console-api@$($digests.consoleApi)"
+  Write-Host '[gate] Run the exact Console API image against isolated PostgreSQL'
+  Invoke-Checked docker pull $apiReference
+  Invoke-Checked node (Join-Path $consoleCheckout 'scripts/verify-console-api-image.mjs') --image $apiReference
+}
 Write-Host "[step 05/06] Publish immutable date tag $releaseTag"
 foreach ($item in $images) {
   $repository = "$Registry/$($item.Image)"
