@@ -19,6 +19,74 @@ function Invoke-Checked {
   return $output
 }
 
+function Invoke-ConsolePostJson {
+  param(
+    [Parameter(Mandatory)][uri]$Uri,
+    [Parameter(Mandatory)][string]$BearerToken,
+    [Parameter(Mandatory)][string]$JsonBody
+  )
+
+  # Setup CLI creates a private installation CA for the localhost Console and
+  # stores only its public certificate beside the serving certificate. Trust
+  # that exact CA for this request without changing the Windows trust store or
+  # disabling certificate or hostname validation.
+  $encodedCa = ([string](Invoke-Checked kubectl -n opensphere-console get secret shell-tls `
+    -o 'jsonpath={.data.ca\.crt}')).Trim()
+  if (-not $encodedCa) { throw 'Console TLS Secret shell-tls does not contain ca.crt.' }
+
+  try {
+    $caCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
+      [Convert]::FromBase64String($encodedCa)
+    )
+  } catch {
+    throw 'Console TLS Secret shell-tls contains an invalid ca.crt.'
+  }
+  $basicConstraints = @($caCertificate.Extensions | Where-Object {
+    $_ -is [Security.Cryptography.X509Certificates.X509BasicConstraintsExtension]
+  })
+  $now = [DateTimeOffset]::UtcNow
+  if (-not $basicConstraints.Count -or -not $basicConstraints[0].CertificateAuthority -or
+      $caCertificate.Subject -ne $caCertificate.Issuer -or
+      $now -lt [DateTimeOffset]$caCertificate.NotBefore -or
+      $now -gt [DateTimeOffset]$caCertificate.NotAfter) {
+    $caCertificate.Dispose()
+    throw 'Console TLS Secret shell-tls does not contain a current self-signed CA certificate.'
+  }
+
+  $chainPolicy = [Security.Cryptography.X509Certificates.X509ChainPolicy]::new()
+  $chainPolicy.TrustMode = [Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
+  [void]$chainPolicy.CustomTrustStore.Add($caCertificate)
+  # The private installation CA has no network CRL endpoint. Chain and
+  # localhost hostname validation remain enabled by SslStream.
+  $chainPolicy.RevocationMode = [Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+  $handler = [Net.Http.SocketsHttpHandler]::new()
+  $handler.SslOptions.CertificateChainPolicy = $chainPolicy
+  $client = [Net.Http.HttpClient]::new($handler)
+  $client.Timeout = [TimeSpan]::FromSeconds(60)
+  $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, $Uri)
+  $request.Headers.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $BearerToken)
+  $request.Content = [Net.Http.StringContent]::new($JsonBody, [Text.Encoding]::UTF8, 'application/json')
+
+  try {
+    $httpResponse = $client.SendAsync($request).GetAwaiter().GetResult()
+    try {
+      $responseBody = $httpResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+      if (-not $httpResponse.IsSuccessStatusCode) {
+        throw "Console release request failed with HTTP $([int]$httpResponse.StatusCode): $responseBody"
+      }
+      if (-not $responseBody) { throw 'Console release request returned an empty response.' }
+      return $responseBody | ConvertFrom-Json
+    } finally {
+      $httpResponse.Dispose()
+    }
+  } finally {
+    $request.Dispose()
+    $client.Dispose()
+    $handler.Dispose()
+    $caCertificate.Dispose()
+  }
+}
+
 if ($env:OS -ne 'Windows_NT') {
   throw 'Local edge automation is available only on the Windows Docker Desktop development host.'
 }
@@ -75,11 +143,10 @@ try {
   } | ConvertTo-Json -Depth 8
   Write-Host '[authority] docker-desktop ServiceAccount/audience opensphere-local-edge-release'
   Write-Host "[scope] $($selected -join ', ')"
-  $response = Invoke-RestMethod -Method Post `
+  $response = Invoke-ConsolePostJson `
     -Uri "$($ConsoleUrl.TrimEnd('/'))/api/platform/releases/local-edge-automation" `
-    -Headers @{ Authorization = "Bearer $token" } `
-    -ContentType 'application/json' `
-    -Body $payload
+    -BearerToken $token `
+    -JsonBody $payload
   if (-not $response.requestId -or [string]$response.targetReleaseDigest -notmatch '^sha256:[0-9a-f]{64}$') {
     throw 'Console response did not contain a governed request and target release digest.'
   }

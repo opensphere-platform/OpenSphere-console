@@ -419,6 +419,11 @@ test('Platform Release runtime is isolated from browser and local workstation ex
   assert.doesNotMatch(deployer, /release-lock\.json/);
   assert.doesNotMatch(deployer, /kubectl\s+(?:apply|patch|set|replace|delete)/i);
   assert.doesNotMatch(deployer, /SkipCertificateCheck|--insecure|-k\b/);
+  assert.match(deployer, /secret shell-tls/);
+  assert.match(deployer, /X509ChainTrustMode\]::CustomRootTrust/);
+  assert.match(deployer, /SocketsHttpHandler/);
+  assert.match(deployer, /CertificateChainPolicy/);
+  assert.doesNotMatch(deployer, /ServerCertificateCustomValidationCallback/);
   assert.match(dockerfile, /COPY --from=setup-cli src \/app\/opensphere-setup-cli\/src/);
   assert.match(dockerfile, /COPY apps\/console-api\/runtime\/platform-release-agent-identity-cutover\.js/);
   assert.match(dockerfile, /registry\.k8s\.io\/kubectl@sha256:/);
