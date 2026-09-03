@@ -1,6 +1,6 @@
 # Console 클린 재설치를 위한 기존 설치 데이터 삭제
 
-2026-09-03. 상태: **삭제 완료, 새 설치 미실행**. 사용자의 “기존 설치 하던 데이터 모두 지우고 보고” 지시에 따른 작업이다.
+2026-09-03 첫 삭제 기록(15:37 KST경). 이후 사용자가 다시 설치했고, 두 번째 삭제는 아래 추가 기록을 따른다. 사용자의 “기존 설치 하던 데이터 모두 지우고 보고” 지시에 따른 작업이다.
 
 ## 수행
 
@@ -46,4 +46,28 @@ Kubernetes context/노드, ingress, StorageClass, 다른 서비스, GitHub 저�
 - `.release/registry-auth-verification/console-clean-purge-edge22.log`: 실제 공개 CLI 삭제 및 성공 종료.
 - `.release/registry-auth-verification/console-clean-purge-after.json`: 잔여 0건, 외부 리소스 보존, 실제 볼륨 경로 삭제 기록.
 
-기존 복구 실패 보고서는 과거 실행 기록으로 보존한다. 현재 상태는 이 삭제 완료 기록을 따른다.
+기존 복구 실패 보고서는 과거 실행 기록으로 보존한다. 첫 삭제 당시의 관찰 기록이며 현재 상태는 아래 두 번째 삭제 기록을 따른다.
+
+## 두 번째 실패 설치 삭제 — 16:10 KST경
+
+사용자가 다시 시도한 edge.22 설치는 15:54 KST경 REST schema 오류로 Failed 상태가 됐다. 16:10 KST경 사용자 “업데이트, 기존 설치 삭제 후 보고” 지시에 따라 공개 실행 파일을 명시적으로 버전 고정하여 다시 삭제했다.
+
+```powershell
+.\opensphere-setup.exe --version 0.5.0-edge.22 uninstall --purge-data --confirm DELETE-OPENSPHERE --context docker-desktop
+```
+
+- 실행 파일 SHA-256: `481858ec0fe30e9a2e5baea022edde05a338238397b8e5ffb19e17fd5acaa79f`.
+- 삭제한 실패 release: `sha256:a1eef0bbe196b02fe312d8cb861f5e8792ddf0e669db62534d5b2febf3626cce`.
+- CLI 종료 0. 전용 namespace 5개, PV 4개 및 고정 관리 cluster resource 12종의 잔여 없음.
+- local-path provisioner의 07:09:57~07:10:30 UTC 로그로 실제 볼륨 저장 경로 4개 삭제 확인.
+- 비대상 namespace 9개는 기존 UID 동일. 비대상 PV 8개는 기존 UID/claim 동일, 전부 Bound.
+- Console 포트 1114 listener 없음. 새로운 Console 설치는 실행하지 않았다.
+- source, 문서, GitHub/GHCR, 다운로드 runtime cache, 외부 OAuth 앱/승인, Developer/WWW 및 공용 Kubernetes 기반 자원은 purge 대상에 포함하지 않았다.
+
+비밀 원문 없는 근거:
+
+- Console `.release/registry-auth-verification/console-edge23-purge-before.json`
+- Setup `.release/registry-auth-verification/console-edge23-second-purge.log`
+- Console `.release/registry-auth-verification/console-edge23-purge-after.json`
+
+수정판의 코드·진행 표시·공개 버전은 [edge.23 업데이트 결과](CONSOLE-INSTALL-EDGE23-UPDATE-20260903.md)에서 관리한다. 실제 새 클린 설치의 성공 여부는 다음 사용자 실행에서 확인해야 한다.
