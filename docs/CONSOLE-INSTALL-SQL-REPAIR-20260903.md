@@ -1,6 +1,6 @@
 # 2026-09-03 Console 초기 설치 SQL 오류
 
-상태: 원인 수정·실제 PostgreSQL 회귀 통과 / 수정 릴리스 발행과 기존 Failed 설치 복구 진행 중.
+상태: 원인 수정·실제 PostgreSQL 회귀 통과 / Console 202609031456 GHCR edge 및 공개 Setup edge.22 발행 완료 / 기존 Failed 설치 업그레이드 실행 전.
 
 ## 원인과 검증 공백
 
@@ -27,3 +27,19 @@ Console `202609031353`의 `scripts/Install-ConsoleApiRuntime.ps1`가 Supabase �
 
 - [PostgreSQL SQL 예약어 표](https://www.postgresql.org/docs/17/sql-keywords-appendix.html): CURRENT_ROLE은 reserved.
 - 로컬 증거: `.release/registry-auth-verification/console-installer-postgres.log`, `console-installer-repair-db-full.log`.
+
+## 실제 발행 완료
+
+- Console: `202609031456`, source `3d50f630a6273085e66b6a76fcd5cc8889f9ca40`, linux/amd64 localhost edge, pre-ga.
+- Anchor: `ghcr.io/opensphere-platform/opensphere-console@sha256:7ca70ad9118bf53b86636b6395f6356f36816bc2b42acb253d4b03f2c125aeca`.
+- canonical 18개 + auxiliary 3개 metadata/불변 tag 검증 및 날짜 tag 연결, non-Console edge 이후 Console anchor 마지막 전환 완료.
+- Console main CI: https://github.com/opensphere-platform/OpenSphere-console/actions/runs/33720966579 — success.
+- Setup: `setup-v0.5.0-edge.22`, source `5a985eb5a716adb11563d7fc6f3460b72a3ba1ce`; 300 tests 및 main CI, 5개 플랫폼 공개 발행 통과.
+- 공개 EXE: 7,497,216 bytes, SHA-256 `481858ec0fe30e9a2e5baea022edde05a338238397b8e5ffb19e17fd5acaa79f`. 실제 공개 다운로드·해시·version/status 실행·runtime cache 준비 확인. Windows 설치 없음.
+- 기존 설치 PVC 4개와 Secret 13개의 UID·인증값 해시를 비밀 원문 없이 기록했다. 아직 실제 upgrade 완료나 데이터 보존 검증 성공을 주장하지 않는다.
+
+발행 도중 전역 Docker config/credential 항목이 두 차례 사라져 검증이 중단됐다. 정확한 변경 주체는 확인하지 못했다. 작업 전용 Docker 설정과 기존 Windows Credential Manager를 사용해 전역 설정과 분리한 후 전체 검증·발행에 성공했다. 설정 파일에 PAT 원문/base64 인증값을 저장하지 않았다.
+
+Gitea의 webhook/post-merge owner 경고는 별도 기능 제한이다. 현재 target 코드에서 webhook owner가 구현·연결되지 않았으므로 병합 후 자동 반영과 management readiness가 제한된다. SQL 오류의 원인이나 K8s 구조 결함으로 묶지 않으며, bootstrap core Ready가 이 기능의 완성을 뜻하지 않는다.
+
+증거: `.release/registry-auth-verification/console-installer-repair-published-bom.json`, `console-installer-repair-publish-resume2.log`, `console-repair-preservation-before.json`.

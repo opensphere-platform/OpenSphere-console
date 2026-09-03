@@ -1,5 +1,7 @@
 # Setup CLI를 통한 Console 설치 준비
 
+> 후속 실제 설치에서 SQL 구문 오류가 확인됐고 Console 202609031456 / Setup edge.22로 수정 발행했다. 아래 doctor 성공은 설치 성공이 아니다. 최신 복구 상태는 [SQL 오류 및 복구 보고서](CONSOLE-INSTALL-SQL-REPAIR-20260903.md)를 따른다.
+
 2026-09-03. 목표는 공개 Setup CLI가 localhost docker-desktop Kubernetes에서 Console을 설치할 수 있도록 하는 것이다. CLI 자체 발행으로 완료 처리하지 않는다.
 
 **현재 판정 (2026-09-03 14:38 KST): 설치 사전진단 통과 / Kubernetes 미설치.** Console `202609031353` 통합 이미지 21개의 GHCR 발행·edge 승격, 양쪽 main CI, 공개 Setup `setup-v0.5.0-edge.21`의 실제 최소 OAuth 권한 doctor가 모두 통과했다. 원격 설치 자료 47개/manifest 12개 그룹까지 검증했다. 아래 작업 시작·차단·승인 기록은 이력이며 현재 차단 상태가 아니다. 정확한 artifact, 명령, 미실행 범위는 [최종 발행·진단 결과](CONSOLE-INSTALL-RELEASE-202609031353.md)를 따른다.

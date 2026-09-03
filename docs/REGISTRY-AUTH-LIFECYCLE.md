@@ -50,7 +50,7 @@ GitHub GHCR 문서는 PAT classic을 공식 사용자 인증 수단으로 안내
 5. 재인증: Console 기존 GHCR 화면 → 최근 MFA/console.registry.manage/CSRF/idempotency/reason → durable operation → device code 시작 → 브라우저 승인 → 현재 사용자 권한과 최근 MFA 재검증 → 새 credential 인계. code는 요청한 사용자에게만 표시한다. 권한이 철회됐거나 MFA 유효 시간이 지나면 완료하지 않는다.
 6. PAT: 자동 refresh가 없으며 manual로 표시한다. 관측 가능한 만료 일시를 표시하고 거부/만료를 감지하면 재인증 또는 token 교체를 요구한다. 만료 정보가 없으면 없음으로 표시하며 영구 권한이라고 부르지 않는다.
 7. 제거: 현재 권한과 exact confirmation 확인 후 refresh token을 포함한 owner credential을 비우고 모든 pull Secret을 anonymous로 동기화한다. GitHub 계정 전체 앱 권한을 자동 철회하지 않는다. 실행 중인 컨테이너 종료를 의미하지 않는다.
-8. 기존 설치: Setup은 Console이 소유하는 credential을 교체하지 않는다. upgrade용 인증과 runtime 재인증을 구분한다. 현재 작업본은 OAuth를 가진 upgrade에서 Console 재인증 경로를 요구한다.
+8. 기존 설치: Setup은 Console이 소유하는 credential을 교체하지 않는다. upgrade용 인증과 runtime 재인증을 구분한다. Setup edge.22의 OAuth upgrade는 임시 credential을 기존/대상 release 공급망 검증에만 사용하고 기존 owner/pull Secret을 보존한다. runtime credential 교체·갱신은 Console 재인증 또는 별도 복구 절차를 따른다. 운영 Secret 누락을 임시 OAuth로 덮어쓰지 않는다.
 
 ## 상태·검증 의미
 
