@@ -56,12 +56,12 @@ test('local edge publisher can rebuild only explicitly affected Console componen
   // No component selector means the governed integrated release. An explicit
   // selector narrows the publication without weakening the full-release default.
   assert.match(localEdgePublisher, /\[string\[\]\]\$Components = @\('console', 'consoleApi',/);
-  assert.match(localEdgePublisher, /\$auxiliaryComponentKeys = @\('cliArtifacts', 'osShellControl', 'osShellRuntime'\)/);
+  assert.match(localEdgePublisher, /\$auxiliaryComponentKeys = @\('cliArtifacts', 'osShellControl', 'osShellRuntime', 'consoleIndexContent'\)/);
   assert.match(localEdgePublisher, /\$canonicalImages = @\(\$allImages \| Where-Object \{\s*\$_\.Key -notin \$auxiliaryComponentKeys -and \$_\.Key -notin \$blockedLegacyComponentKeys\s*\}\)/);
   assert.match(localEdgePublisher, /\$partialPublication = -not \$integratedPublication/);
   assert.match(localEdgePublisher, /Where-Object \{ \$requestedComponents\.Contains\(\$_.Key\) \}/);
   assert.match(localEdgePublisher, /OpenSphereEdgeComponentPublication/);
-  assert.match(localEdgePublisher, /ValidateSet\('console', 'consoleApi',[\s\S]{0,500}'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend'/);
+  assert.match(localEdgePublisher, /ValidateSet\('console', 'consoleApi',[\s\S]{0,500}'cliArtifacts', 'osShellControl', 'osShellRuntime', 'consoleIndexContent', 'backend'/);
   assert.match(localEdgePublisher, /Key = 'cliArtifacts'; Image = 'opensphere-os-cli'/);
   assert.match(localEdgePublisher, /\$componentEvidence = \[ordered\]@\{\}/);
   assert.match(localEdgePublisher, /\[string\]\$SetupSourcePath = ''/);

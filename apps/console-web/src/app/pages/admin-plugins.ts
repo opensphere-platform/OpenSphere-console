@@ -313,7 +313,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
     @if (activeView() === 'catalog') {
       <section class="oci-install" aria-labelledby="oci-install-title">
         <h2 id="oci-install-title">Install Extension</h2>
-        <p class="os-sub">Select a signed descriptor from the current Registry snapshot. C_API re-resolves descriptorId and the exact catalog revision server-side before accepting the operation.</p>
+        <p class="os-sub">Select a signed descriptor from the current Registry snapshot. C_API re-resolves descriptorId and the exact catalog revision server-side before accepting the operation. 개발용 local edge의 설치·업데이트는 MFA를 생략하지만, 다른 환경과 다른 lifecycle 작업은 최근 MFA를 요구합니다. 사유는 항상 8자 이상 필요합니다.</p>
         <div class="registry-access-form registry-access-form--install">
           <div class="clr-form-control">
             <label for="extension-descriptor" class="clr-control-label">Registry Extension</label>
