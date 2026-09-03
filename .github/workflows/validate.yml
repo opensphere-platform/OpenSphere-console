@@ -78,6 +78,9 @@ jobs:
           node --test scripts/verify-manual-seed.test.mjs
       - name: Test Console contracts and legacy behavior
         run: |
+          npm ci --prefix apps/os-shell-control --no-audit --no-fund
+          npm run test:console-api
+          npm run test:extension-controller
           npm run test:contracts
           npm test
       - name: Build production Web
