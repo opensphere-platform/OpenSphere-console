@@ -497,8 +497,8 @@ BEGIN
   IF EXISTS (
     SELECT required.role_name
     FROM (VALUES ('authenticator'), ('supabase_auth_admin'), ('supabase_storage_admin')) AS required(role_name)
-    LEFT JOIN pg_roles current_role ON current_role.rolname = required.role_name
-    WHERE current_role.oid IS NULL
+    LEFT JOIN pg_roles existing_role ON existing_role.rolname = required.role_name
+    WHERE existing_role.oid IS NULL
   ) THEN
     RAISE EXCEPTION 'required Supabase service role is absent';
   END IF;

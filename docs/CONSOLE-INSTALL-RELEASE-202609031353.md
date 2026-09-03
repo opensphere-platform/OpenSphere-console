@@ -1,5 +1,7 @@
 # Console 설치용 edge 발행 결과
 
+> 후속 실제 설치에서 installer SQL 구문 오류가 확인됐다. 아래 doctor 성공은 사전진단 결과만 유효하며 bootstrap 성공을 뜻하지 않는다. 수정·복구 상태는 [SQL 오류 보고서](CONSOLE-INSTALL-SQL-REPAIR-20260903.md)를 따른다.
+
 2026-09-03. **main 반영·GHCR 발행·edge 갱신 완료 / 공개 EXE의 OAuth doctor 통과 / Kubernetes 미설치.**
 
 - Console 버전: `202609031353`
