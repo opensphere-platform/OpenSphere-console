@@ -62,6 +62,33 @@ const COMPONENT_REPOSITORIES = Object.freeze({
   giteaPostgres: 'opensphere-console-gitea-postgres',
   recovery: 'opensphere-console-recovery',
 });
+// Current C_API/C_EXT release profile. Keep the historical profile closed;
+// accepting a union would let incomplete or mixed owner sets pass validation.
+const TARGET_COMPONENT_REPOSITORIES = Object.freeze({
+  console: 'opensphere-console',
+  consoleApi: 'opensphere-console-api',
+  extensionController: 'opensphere-extension-controller',
+  registry: 'opensphere-registry',
+  osaaGateway: 'opensphere-console-osaa-gateway',
+  osdst: 'opensphere-osdst',
+  osaaGovernedAdapter: 'opensphere-osaa-governed-adapter',
+  notificationDispatcher: 'opensphere-console-notification-dispatcher',
+  gitea: 'opensphere-console-gitea',
+  supabasePostgres: 'opensphere-console-supabase-postgres',
+  supabaseAuth: 'opensphere-console-supabase-auth',
+  supabaseRest: 'opensphere-console-supabase-rest',
+  supabaseStorage: 'opensphere-console-supabase-storage',
+  giteaPostgres: 'opensphere-console-gitea-postgres',
+  recovery: 'opensphere-console-recovery',
+  beszelHub: 'opensphere-console-beszel-hub',
+  beszelAgent: 'opensphere-console-beszel-agent',
+  beszelBootstrap: 'opensphere-console-beszel-bootstrap',
+});
+const TARGET_AUXILIARY_ARTIFACT_REPOSITORIES = Object.freeze({
+  cliArtifacts: 'opensphere-os-cli',
+  osShellControl: 'opensphere-console-os-shell-control',
+  osShellRuntime: 'opensphere-os-shell-runtime',
+});
 const AUXILIARY_ARTIFACT_REPOSITORIES = Object.freeze({
   cliArtifacts: 'opensphere-os-cli',
 });
@@ -113,6 +140,10 @@ function assertClosedObject(value, allowed, label) {
 
 function installedComponentProfile(components, { allowInstalledAgentIdentityCutover = false } = {}) {
   const names = Object.keys(components ?? {});
+  const targetNames = Object.keys(TARGET_COMPONENT_REPOSITORIES);
+  if (names.length === targetNames.length && targetNames.every((name) => names.includes(name))) {
+    return { names: targetNames, repositories: TARGET_COMPONENT_REPOSITORIES, agentIdentity: 'canonical' };
+  }
   const canonicalNames = Object.keys(COMPONENT_REPOSITORIES);
   if (names.length === canonicalNames.length
     && canonicalNames.every((name) => names.includes(name))) {
@@ -232,6 +263,11 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
   });
   if (!componentProfile) throw new Error('targetLock component set is incomplete or unsupported');
   const { names: expectedNames, repositories } = componentProfile;
+  const auxiliaryRepositories = repositories === TARGET_COMPONENT_REPOSITORIES
+    ? TARGET_AUXILIARY_ARTIFACT_REPOSITORIES : AUXILIARY_ARTIFACT_REPOSITORIES;
+  if (repositories === TARGET_COMPONENT_REPOSITORIES && lock.auxiliaryArtifacts === undefined) {
+    throw new Error('current targetLock requires the complete governed auxiliary artifact set');
+  }
   assertClosedObject(lock.components, expectedNames, 'targetLock.components');
   const names = Object.keys(lock.components).sort();
   if (names.length !== expectedNames.length
@@ -270,7 +306,7 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
     if (!localEdge || lock.channel !== 'edge') {
       throw new Error('targetLock auxiliary artifacts require localhost edge trust');
     }
-    const expectedAuxiliaryNames = Object.keys(AUXILIARY_ARTIFACT_REPOSITORIES);
+    const expectedAuxiliaryNames = Object.keys(auxiliaryRepositories);
     assertClosedObject(lock.auxiliaryArtifacts, expectedAuxiliaryNames, 'targetLock.auxiliaryArtifacts');
     const auxiliaryNames = Object.keys(lock.auxiliaryArtifacts);
     if (canonicalJson(auxiliaryNames) !== canonicalJson(expectedAuxiliaryNames)) {
@@ -284,7 +320,7 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
       const image = String(artifact.image || '');
       const match = image.match(IMAGE_RE);
       if (!match || artifact.repository !== match[1]
-        || artifact.repository !== AUXILIARY_ARTIFACT_REPOSITORIES[name]) {
+        || artifact.repository !== auxiliaryRepositories[name]) {
         throw new Error(`targetLock auxiliary artifact ${name} is not a canonical exact-digest image`);
       }
       if (!REVISION_RE.test(String(artifact.sourceRevision || ''))) {
@@ -366,8 +402,8 @@ function validateReleaseTransition(baseLock, targetLock) {
   return target;
 }
 
-function normalizeComponentImage(name, value) {
-  const repository = COMPONENT_REPOSITORIES[name];
+function normalizeComponentImage(name, value, repositories = COMPONENT_REPOSITORIES) {
+  const repository = repositories[name];
   const raw = String(value || '').trim();
   const image = SHA256_RE.test(raw)
     ? `ghcr.io/opensphere-platform/${repository}@${raw}`
@@ -388,7 +424,10 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
   if (!REVISION_RE.test(String(evidence.sourceRevision || ''))) {
     throw new Error('componentEvidence sourceRevision is invalid');
   }
-  assertClosedObject(evidence.components, REQUIRED_COMPONENTS, 'componentEvidence.components');
+  const repositories = installedComponentProfile(base.components, { allowInstalledAgentIdentityCutover: true }).repositories === TARGET_COMPONENT_REPOSITORIES
+    ? TARGET_COMPONENT_REPOSITORIES : COMPONENT_REPOSITORIES;
+  const supportedNames = Object.keys(repositories);
+  assertClosedObject(evidence.components, supportedNames, 'componentEvidence.components');
   const changedComponents = Object.keys(evidence.components).sort();
   if (changedComponents.length === 0) {
     throw new Error('componentEvidence must contain at least one changed component');
@@ -406,7 +445,7 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
       structuredClone(component),
     ]));
   for (const name of changedComponents) {
-    if (!REQUIRED_COMPONENTS.includes(name)) {
+    if (!supportedNames.includes(name)) {
       throw new Error(`componentEvidence contains unsupported component ${name}`);
     }
     const item = evidence.components[name];
@@ -416,8 +455,8 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
       throw new Error(`componentEvidence component ${name} registry credential flag is invalid`);
     }
     components[name] = {
-      repository: COMPONENT_REPOSITORIES[name],
-      image: normalizeComponentImage(name, item.image),
+      repository: repositories[name],
+      image: normalizeComponentImage(name, item.image, repositories),
       sourceRevision: evidence.sourceRevision,
       registryCredentialsRequired: item.registryCredentialsRequired
         ?? base.components[cutover ? installedNameForCanonicalComponent(name) : name]
