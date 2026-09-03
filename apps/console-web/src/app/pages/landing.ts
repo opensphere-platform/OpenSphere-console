@@ -1,10 +1,11 @@
+import { ConsoleIndexContentService } from '../core/console-index-content.service';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { routeForPlugin } from '../core/perspectives';
-import { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.model';
+import type { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.model';
 import { LandingFoundations } from './landing-foundations';
 import { LandingOsaaDialogueState } from './landing-osaa-dialogue-state';
 import { LandingRegistryCatalog } from './landing-registry-catalog';
@@ -43,18 +44,7 @@ type ArchitecturePageId =
  * eleventh Perspective; it is a Platform Control realization object in L3.
  * A Perspective link becomes actionable only when DUPA publishes its page.
  */
-const PERSPECTIVES: PerspectiveDef[] = [
-  { num: 1, name: 'Base / Substrate', korean: '기반', band: 'Operate', question: '무엇 위에서 실행되는가', pluginId: 'os' },
-  { num: 2, name: 'Kubernetes + Ceph', korean: '클러스터', band: 'Operate', question: '클러스터와 데이터 경로는 건강한가', pluginId: 'cluster-manager' },
-  { num: 3, name: 'User', korean: '사용자', band: 'Operate', question: '누가 어떤 권한으로 사용하는가', pluginId: 'identity' },
-  { num: 4, name: 'Developer', korean: '개발자', band: 'Build', question: '서비스를 어떻게 만들고 전달하는가', pluginId: 'developer' },
-  { num: 5, name: 'AI Level', korean: '지능', band: 'Build', question: '모델과 지능을 어떻게 소비하는가', pluginId: 'ai' },
-  { num: 6, name: 'API / Information Flow', korean: '정보 흐름', band: 'Build', question: '무엇을 주고받고 어떤 계약을 지키는가', pluginId: 'api' },
-  { num: 7, name: 'Workspace', korean: '내부 업무', band: 'Deliver', question: '직원은 어디에서 업무를 수행하는가', pluginId: 'workspace' },
-  { num: 8, name: 'Customer', korean: '고객', band: 'Deliver', question: '고객에게 어떤 경험을 제공하는가', pluginId: 'customer' },
-  { num: 9, name: 'External Web Service', korean: '대외 서비스', band: 'Deliver', question: '외부 서비스는 어떻게 안전하게 노출되는가', pluginId: 'edge' },
-  { num: 10, name: 'Website', korean: '웹사이트', band: 'Deliver', question: '조직의 얼굴을 어떻게 운영하는가', pluginId: 'website' },
-];
+declare const PERSPECTIVES: PerspectiveDef[];
 
 @Component({
   selector: 'os-landing',
@@ -62,71 +52,78 @@ const PERSPECTIVES: PerspectiveDef[] = [
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
+      @if (content.state() === 'loading') {
+        <p role="status">Console index 콘텐츠를 불러오는 중입니다.</p>
+      } @else if (content.state() === 'error') {
+        <section role="alert"><h2>Console index 콘텐츠를 불러오지 못했습니다.</h2>
+          <p>콘텐츠 파일의 누락·호환성·무결성을 확인해 주세요. 서비스 운영 상태와는 별도의 오류입니다.</p>
+          <button class="btn btn-outline" (click)="content.load()">다시 시도</button>
+        </section>
+      } @else {
       <clr-tabs class="architecture-page-tabs">
         <clr-tab>
-          <button clrTabLink (click)="selectPage('architecture')">10P × 6L Architecture</button>
+          <button clrTabLink (click)="selectPage('architecture')">{{ copy('10p-6l-architecture') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'architecture'">
             <div class="architecture-page" id="architecture-page-realization">
       <section class="architecture-hero" aria-labelledby="architecture-title">
         <div>
           <div class="architecture-title-lockup">
-            <img src="/assets/pictograms/systems.svg" alt="Interconnected OpenSphere architecture systems" width="72" height="72" />
+            <img src="/assets/pictograms/systems.svg" [attr.alt]="copy('interconnected-opensphere-architecture-systems')" width="72" height="72" />
             <div>
-              <p class="eyebrow">OpenSphere architecture index</p>
+              <p class="eyebrow">{{ copy('opensphere-architecture-index') }}</p>
               <h1 id="architecture-title">
-                OpenSphere Ten-Perspective and Six-Layer
-                <span>Service Realization Architecture</span>
+                {{ copy('opensphere-ten-perspective-and-six-layer') }}
+                <span>{{ copy('service-realization-architecture') }}</span>
               </h1>
             </div>
           </div>
           <p class="hero-lead">
-            10개의 수평적 Perspective로 서비스의 의미를 정의하고, 6개의 수직적 Layer로
-            그 서비스가 설치·활성화·운영·복구 가능한 실체가 되는 과정을 정의합니다.
+            {{ copy('10개의-수평적-perspective로-서비스의-의미를-정의하고-6개의-수직적-layer로-그-서비스가-설치-활성화-운영-복구') }}
           </p>
         </div>
-        <div class="model-equation" aria-label="Ten Perspectives by Six Layers">
+        <div class="model-equation" [attr.aria-label]="copy('ten-perspectives-by-six-layers')">
           <div>
-            <strong>10</strong>
-            <span>Perspectives</span>
-            <small>Horizontal service lenses</small>
+            <strong>{{ copy('10') }}</strong>
+            <span>{{ copy('perspectives') }}</span>
+            <small>{{ copy('horizontal-service-lenses') }}</small>
           </div>
-          <b aria-hidden="true">×</b>
+          <b aria-hidden="true">{{ copy('symbol') }}</b>
           <div>
-            <strong>6</strong>
-            <span>Layers</span>
-            <small>Vertical realization structure</small>
+            <strong>{{ copy('6') }}</strong>
+            <span>{{ copy('layers') }}</span>
+            <small>{{ copy('vertical-realization-structure') }}</small>
           </div>
         </div>
       </section>
 
-      <section class="axis-definitions" aria-label="Architecture axes">
+      <section class="axis-definitions" [attr.aria-label]="copy('architecture-axes')">
         <article>
-          <span class="axis-mark axis-mark-horizontal">Horizontal</span>
+          <span class="axis-mark axis-mark-horizontal">{{ copy('horizontal') }}</span>
           <div class="axis-copy">
-            <img src="/assets/pictograms/connected-ecosystem.svg" alt="Connected service perspectives" width="44" height="44" />
+            <img src="/assets/pictograms/connected-ecosystem.svg" [attr.alt]="copy('connected-service-perspectives')" width="44" height="44" />
             <div>
-              <h2>10 Perspectives</h2>
-              <p>서비스를 어떤 사용자·업무·정보 흐름의 관점에서 읽고 제공하는지를 정의합니다.</p>
+              <h2>{{ copy('10-perspectives') }}</h2>
+              <p>{{ copy('서비스를-어떤-사용자-업무-정보-흐름의-관점에서-읽고-제공하는지를-정의합니다') }}</p>
             </div>
           </div>
         </article>
         <article>
-          <span class="axis-mark axis-mark-vertical">Vertical</span>
+          <span class="axis-mark axis-mark-vertical">{{ copy('vertical') }}</span>
           <div class="axis-copy">
-            <img src="/assets/pictograms/cloud-infrastructure-management.svg" alt="Layered service infrastructure" width="44" height="44" />
+            <img src="/assets/pictograms/cloud-infrastructure-management.svg" [attr.alt]="copy('layered-service-infrastructure')" width="44" height="44" />
             <div>
-              <h2>6 Service Realization Layers</h2>
-              <p>무엇이 먼저 성립해야 하며, 누가 권위를 갖고 어떤 증거로 다음 Layer를 여는지 정의합니다.</p>
+              <h2>{{ copy('6-service-realization-layers') }}</h2>
+              <p>{{ copy('무엇이-먼저-성립해야-하며-누가-권위를-갖고-어떤-증거로-다음-layer를-여는지-정의합니다') }}</p>
             </div>
           </div>
         </article>
         <article class="coordinate-rule">
-          <span class="axis-mark">Coordinate</span>
+          <span class="axis-mark">{{ copy('coordinate') }}</span>
           <div class="axis-copy">
-            <img src="/assets/pictograms/microservices.svg" alt="Atomic service coordinate" width="44" height="44" />
+            <img src="/assets/pictograms/microservices.svg" [attr.alt]="copy('atomic-service-coordinate')" width="44" height="44" />
             <div>
-              <h2>Service = Perspective × Layer</h2>
-              <p>제품 이름이 아니라 서비스의 의미와 운영 책임이 만나는 좌표에 객체를 배치합니다.</p>
+              <h2>{{ copy('service-perspective-layer') }}</h2>
+              <p>{{ copy('제품-이름이-아니라-서비스의-의미와-운영-책임이-만나는-좌표에-객체를-배치합니다') }}</p>
             </div>
           </div>
         </article>
@@ -135,39 +132,39 @@ const PERSPECTIVES: PerspectiveDef[] = [
       <section class="architecture-capabilities" aria-labelledby="architecture-contract-title">
         <div class="section-heading">
           <div class="section-heading-title">
-            <img src="/assets/pictograms/control-panel.svg" alt="Architecture operating contract controls" width="52" height="52" />
-            <div><p class="eyebrow">Operating contract</p><h2 id="architecture-contract-title">좌표를 실제 운영 계약으로 바꾸는 네 가지 기능</h2></div>
+            <img src="/assets/pictograms/control-panel.svg" [attr.alt]="copy('architecture-operating-contract-controls')" width="52" height="52" />
+            <div><p class="eyebrow">{{ copy('operating-contract') }}</p><h2 id="architecture-contract-title">{{ copy('좌표를-실제-운영-계약으로-바꾸는-네-가지-기능') }}</h2></div>
           </div>
-          <p>각 객체는 분류에서 끝나지 않고 입력, 소유자, 완료 조건과 증거가 함께 정의되어야 합니다.</p>
+          <p>{{ copy('각-객체는-분류에서-끝나지-않고-입력-소유자-완료-조건과-증거가-함께-정의되어야-합니다') }}</p>
         </div>
         <div class="architecture-capability-grid">
-          <article><span>01</span><h3>좌표 분류</h3><p>사용자·업무 의미를 Perspective로, 실제 구현 책임을 주 Layer로 고정합니다.</p><small>입력: service intent · 출력: Perspective × Layer coordinate</small></article>
-          <article><span>02</span><h3>선행 조건 검증</h3><p>Requires가 충족되지 않은 객체는 다음 Layer의 Ready로 승격하지 않습니다.</p><small>입력: dependency evidence · 출력: admitted or blocked decision</small></article>
-          <article><span>03</span><h3>소유자와 증거 확정</h3><p>한 lifecycle owner가 Establishes와 Ready evidence를 함께 책임지도록 계약합니다.</p><small>입력: owner contract · 출력: authority and evidence binding</small></article>
-          <article><span>04</span><h3>실행 표면 연결</h3><p>모델 객체와 현재 Registry·Console route를 구분해 실제 사용 가능한 진입점만 노출합니다.</p><small>입력: verified projection · 출력: live navigation or model-only state</small></article>
+          <article><span>{{ copy('01') }}</span><h3>{{ copy('좌표-분류') }}</h3><p>{{ copy('사용자-업무-의미를-perspective로-실제-구현-책임을-주-layer로-고정합니다') }}</p><small>{{ copy('입력-service-intent-출력-perspective-layer-coordinate') }}</small></article>
+          <article><span>{{ copy('02') }}</span><h3>{{ copy('선행-조건-검증') }}</h3><p>{{ copy('requires가-충족되지-않은-객체는-다음-layer의-ready로-승격하지-않습니다') }}</p><small>{{ copy('입력-dependency-evidence-출력-admitted-or-blocked-decision') }}</small></article>
+          <article><span>{{ copy('03') }}</span><h3>{{ copy('소유자와-증거-확정') }}</h3><p>{{ copy('한-lifecycle-owner가-establishes와-ready-evidence를-함께-책임지도록-계약합니다') }}</p><small>{{ copy('입력-owner-contract-출력-authority-and-evidence-binding') }}</small></article>
+          <article><span>{{ copy('04') }}</span><h3>{{ copy('실행-표면-연결') }}</h3><p>{{ copy('모델-객체와-현재-registry-console-route를-구분해-실제-사용-가능한-진입점만-노출합니다') }}</p><small>{{ copy('입력-verified-projection-출력-live-navigation-or-model-only-state') }}</small></article>
         </div>
       </section>
 
       <section class="model-section" aria-labelledby="model-title">
         <div class="section-heading">
           <div class="section-heading-title">
-            <img src="/assets/pictograms/microservices.svg" alt="Service realization model" width="52" height="52" />
+            <img src="/assets/pictograms/microservices.svg" [attr.alt]="copy('service-realization-model')" width="52" height="52" />
             <div>
-              <p class="eyebrow">10P × 6L model</p>
-              <h2 id="model-title">OpenSphere Service Realization Map</h2>
+              <p class="eyebrow">{{ copy('10p-6l-model') }}</p>
+              <h2 id="model-title">{{ copy('opensphere-service-realization-map') }}</h2>
             </div>
           </div>
-          <p>구조는 아래에서 위로 축적되며, 설립 순서는 L1 bootstrap에서 L3를 거쳐 L1 HISS를 실증하는 feedback을 포함합니다.</p>
+          <p>{{ copy('구조는-아래에서-위로-축적되며-설립-순서는-l1-bootstrap에서-l3를-거쳐-l1-hiss를-실증하는-feedback을') }}</p>
         </div>
 
-        <div class="model-scroll" tabindex="0" aria-label="10 Perspectives and 6 Layers architecture map">
+        <div class="model-scroll" tabindex="0" [attr.aria-label]="copy('10-perspectives-and-6-layers-architecture-map')">
           <table class="realization-map">
             <thead>
               <tr>
                 <th class="axis-corner" scope="col">
-                  <span>Service meaning</span>
-                  <strong>Perspectives →</strong>
-                  <small>Realization ↑</small>
+                  <span>{{ copy('service-meaning') }}</span>
+                  <strong>{{ copy('perspectives-2') }}</strong>
+                  <small>{{ copy('realization') }}</small>
                 </th>
                 @for (p of perspectiveCards(); track p.num) {
                   <th class="perspective-column" scope="col">
@@ -176,14 +173,14 @@ const PERSPECTIVES: PerspectiveDef[] = [
                         <span>P{{ perspectiveNumber(p.num) }}</span>
                         <strong>{{ p.name }}</strong>
                         <small>{{ p.korean }} · {{ p.band }}</small>
-                        <em>등록됨</em>
+                        <em>{{ copy('등록됨') }}</em>
                       </a>
                     } @else {
                       <div [attr.aria-label]="'Perspective ' + p.num + ' ' + p.name">
                         <span>P{{ perspectiveNumber(p.num) }}</span>
                         <strong>{{ p.name }}</strong>
                         <small>{{ p.korean }} · {{ p.band }}</small>
-                        <em>모델 정의</em>
+                        <em>{{ copy('모델-정의') }}</em>
                       </div>
                     }
                   </th>
@@ -205,7 +202,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
                         <h3>{{ layer.name }}</h3>
                         <p>{{ layer.role }}</p>
                       </div>
-                      <div class="object-list" aria-label="Representative objects">
+                      <div class="object-list" [attr.aria-label]="copy('representative-objects')">
                         @for (object of layer.objects; track object) {
                           <span>{{ object }}</span>
                         }
@@ -213,19 +210,19 @@ const PERSPECTIVES: PerspectiveDef[] = [
                     </div>
                     <dl class="layer-contract">
                       <div>
-                        <dt>Requires</dt>
+                        <dt>{{ copy('requires') }}</dt>
                         <dd>{{ layer.requires }}</dd>
                       </div>
                       <div>
-                        <dt>Establishes</dt>
+                        <dt>{{ copy('establishes') }}</dt>
                         <dd>{{ layer.establishes }}</dd>
                       </div>
                       <div>
-                        <dt>Ready evidence</dt>
+                        <dt>{{ copy('ready-evidence') }}</dt>
                         <dd>{{ layer.evidence }}</dd>
                       </div>
                       <div>
-                        <dt>Lifecycle authority</dt>
+                        <dt>{{ copy('lifecycle-authority') }}</dt>
                         <dd>{{ layer.authority }}</dd>
                       </div>
                     </dl>
@@ -240,28 +237,28 @@ const PERSPECTIVES: PerspectiveDef[] = [
       <section class="model-rules" aria-labelledby="rules-title">
         <div class="section-heading">
           <div class="section-heading-title">
-            <img src="/assets/pictograms/control-panel.svg" alt="Architecture reading rules" width="52" height="52" />
+            <img src="/assets/pictograms/control-panel.svg" [attr.alt]="copy('architecture-reading-rules')" width="52" height="52" />
             <div>
-              <p class="eyebrow">Reading rules</p>
-              <h2 id="rules-title">이 모델을 읽는 세 가지 원칙</h2>
+              <p class="eyebrow">{{ copy('reading-rules') }}</p>
+              <h2 id="rules-title">{{ copy('이-모델을-읽는-세-가지-원칙') }}</h2>
             </div>
           </div>
         </div>
         <div>
           <article>
-            <span>01</span>
-            <h3>Layer는 설치 단계가 아닙니다</h3>
-            <p>지속되는 운영 구조이며, bootstrap은 L1→L2→L3 뒤 L1 HISS를 실증하는 feedback을 가집니다.</p>
+            <span>{{ copy('01') }}</span>
+            <h3>{{ copy('layer는-설치-단계가-아닙니다') }}</h3>
+            <p>{{ copy('지속되는-운영-구조이며-bootstrap은-l1-l2-l3-뒤-l1-hiss를-실증하는-feedback을-가집니다') }}</p>
           </article>
           <article>
-            <span>02</span>
-            <h3>존재는 Ready의 증거가 아닙니다</h3>
-            <p>Pod나 객체의 존재가 아니라 실제 I/O, sync, rollback, restore와 정책 실증으로 판정합니다.</p>
+            <span>{{ copy('02') }}</span>
+            <h3>{{ copy('존재는-ready의-증거가-아닙니다') }}</h3>
+            <p>{{ copy('pod나-객체의-존재가-아니라-실제-i-o-sync-rollback-restore와-정책-실증으로-판정합니다') }}</p>
           </article>
           <article>
-            <span>03</span>
-            <h3>한 객체의 lifecycle owner는 하나입니다</h3>
-            <p>여러 Perspective에 노출되고 하위 Layer에서 증거를 얻더라도 설치·변경·삭제를 소유하는 주 Layer는 하나입니다.</p>
+            <span>{{ copy('03') }}</span>
+            <h3>{{ copy('한-객체의-lifecycle-owner는-하나입니다') }}</h3>
+            <p>{{ copy('여러-perspective에-노출되고-하위-layer에서-증거를-얻더라도-설치-변경-삭제를-소유하는-주-layer는-하나입니다') }}</p>
           </article>
         </div>
       </section>
@@ -269,20 +266,20 @@ const PERSPECTIVES: PerspectiveDef[] = [
       <section class="service-index" aria-labelledby="service-index-title">
         <div class="section-heading">
           <div class="section-heading-title">
-            <img src="/assets/pictograms/console.svg" alt="Operational Console service index" width="52" height="52" />
+            <img src="/assets/pictograms/console.svg" [attr.alt]="copy('operational-console-service-index')" width="52" height="52" />
             <div>
-              <p class="eyebrow">Current implementation</p>
-              <h2 id="service-index-title">Operational Service Index</h2>
+              <p class="eyebrow">{{ copy('current-implementation') }}</p>
+              <h2 id="service-index-title">{{ copy('operational-service-index') }}</h2>
             </div>
           </div>
-          <p>구조 모델과 현재 실행 가능한 Console 진입점을 분리해 표시합니다.</p>
+          <p>{{ copy('구조-모델과-현재-실행-가능한-console-진입점을-분리해-표시합니다') }}</p>
         </div>
         <div class="service-index-grid">
           <article>
             <div class="service-group-heading">
               <div>
-                <span>Native</span>
-                <h3>Console control surfaces</h3>
+                <span>{{ copy('native') }}</span>
+                <h3>{{ copy('console-control-surfaces') }}</h3>
               </div>
               <strong>{{ coreCards().length }}</strong>
             </div>
@@ -298,8 +295,8 @@ const PERSPECTIVES: PerspectiveDef[] = [
           <article>
             <div class="service-group-heading">
               <div>
-                <span>DUPA Registry</span>
-                <h3>Registered service surfaces</h3>
+                <span>{{ copy('dupa-registry') }}</span>
+                <h3>{{ copy('registered-service-surfaces') }}</h3>
               </div>
               <strong>{{ extCards().length }}</strong>
             </div>
@@ -313,7 +310,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
                 }
               </div>
             } @else {
-              <p class="empty-state">검증·활성화되어 Registry에 게시된 서비스가 없습니다.</p>
+              <p class="empty-state">{{ copy('검증-활성화되어-registry에-게시된-서비스가-없습니다') }}</p>
             }
           </article>
         </div>
@@ -323,67 +320,68 @@ const PERSPECTIVES: PerspectiveDef[] = [
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('service-stacks')">Service Stacks</button>
+          <button clrTabLink (click)="selectPage('service-stacks')">{{ copy('service-stacks') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'service-stacks'">
             <os-landing-foundations page="service-stacks" />
           </clr-tab-content>
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('dupa')">DUPA</button>
+          <button clrTabLink (click)="selectPage('dupa')">{{ copy('dupa') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'dupa'">
             <os-landing-foundations page="dupa" />
           </clr-tab-content>
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('control-pillars')">Control Pillars</button>
+          <button clrTabLink (click)="selectPage('control-pillars')">{{ copy('control-pillars') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'control-pillars'">
             <os-landing-foundations page="control-pillars" />
           </clr-tab-content>
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('control-engine')">OSCE</button>
+          <button clrTabLink (click)="selectPage('control-engine')">{{ copy('osce') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'control-engine'">
             <os-landing-foundations page="control-engine" />
           </clr-tab-content>
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('registry-catalog')">Registry &amp; Catalog</button>
+          <button clrTabLink (click)="selectPage('registry-catalog')">{{ copy('registry-catalog') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'registry-catalog'">
             <os-landing-registry-catalog />
           </clr-tab-content>
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('pfss-delivery')">PFSS Delivery</button>
+          <button clrTabLink (click)="selectPage('pfss-delivery')">{{ copy('pfss-delivery') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'pfss-delivery'">
             <os-landing-pfss-delivery />
           </clr-tab-content>
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('ai-lifecycle')">AI Lifecycle</button>
+          <button clrTabLink (click)="selectPage('ai-lifecycle')">{{ copy('ai-lifecycle') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'ai-lifecycle'">
             <os-landing-foundations page="ai-lifecycle" />
           </clr-tab-content>
         </clr-tab>
 
         <clr-tab>
-          <button clrTabLink (click)="selectPage('osaa-dialogue-state')">OSDST</button>
+          <button clrTabLink (click)="selectPage('osaa-dialogue-state')">{{ copy('osdst') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'osaa-dialogue-state'">
             <os-landing-osaa-dialogue-state />
           </clr-tab-content>
         </clr-tab>
         <clr-tab>
-          <button clrTabLink (click)="selectPage('installation')">설치 이정표</button>
+          <button clrTabLink (click)="selectPage('installation')">{{ copy('설치-이정표') }}</button>
           <clr-tab-content *clrIfActive="activePage() === 'installation'">
             <os-landing-installation-milestones />
           </clr-tab-content>
         </clr-tab>
       </clr-tabs>
+      }
     </main>
   `,
   styles: [
@@ -726,10 +724,15 @@ const PERSPECTIVES: PerspectiveDef[] = [
   ],
 })
 export class Landing {
+  readonly content = inject(ConsoleIndexContentService);
+  readonly copy = (key: string): string => this.content.text('architecture', key);
+
+  constructor() { void this.content.load(); }
+
   private ext = inject(ExtensionHostService);
   private psp = inject(PerspectiveService);
 
-  readonly layers = SERVICE_REALIZATION_LAYERS;
+  get layers(): typeof SERVICE_REALIZATION_LAYERS { return this.content.model('SERVICE_REALIZATION_LAYERS'); }
   readonly activePage = signal<ArchitecturePageId>(
     inject(ActivatedRoute).snapshot.fragment === 'installation' ? 'installation' : 'architecture',
   );
@@ -766,7 +769,7 @@ export class Landing {
 
   readonly perspectiveCards = computed(() => {
     const registered = new Set(this.ext.navigationItems().map((page) => page.id));
-    return PERSPECTIVES.map((perspective) => ({
+    return this.content.model<typeof PERSPECTIVES>('PERSPECTIVES').map((perspective) => ({
       ...perspective,
       live: registered.has(perspective.pluginId),
       path: routeForPlugin(perspective.pluginId),

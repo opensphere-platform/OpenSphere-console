@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ConsoleIndexContentService } from '../core/console-index-content.service';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 
 @Component({
   selector: 'os-landing-pfss-delivery',
@@ -9,132 +10,127 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         <div class="delivery-intro-title">
           <img
             src="/assets/pictograms/connected-ecosystem.svg"
-            alt="Connected PFSS delivery lifecycle"
+            [attr.alt]="copy('connected-pfss-delivery-lifecycle')"
             width="72"
             height="72"
           />
           <div>
-            <p class="delivery-eyebrow">PFSS DELIVERY CONTROL LOOP</p>
-            <h1 id="pfss-delivery-title">PFSS 모듈은 어떻게 설치·운영·업데이트되는가</h1>
+            <p class="delivery-eyebrow">{{ copy('pfss-delivery-control-loop') }}</p>
+            <h1 id="pfss-delivery-title">{{ copy('pfss-모듈은-어떻게-설치-운영-업데이트되는가') }}</h1>
           </div>
         </div>
         <p>
-          관리자는 Catalog에서 모듈을 선택하지만, 한 제품이 모든 일을 처리하지 않습니다.
-          판단·승인·선언·배포·운영을 각 권위가 이어받고, 업데이트는 같은 흐름으로 다시 진입합니다. 이 페이지는
-          OpenSphere 공통 Delivery Control Loop를 PFSS에 적용한 형태이며, 다른 구성요소는 각자의 Controller가 마지막 운영
-          책임을 맡습니다.
+          {{ copy('관리자는-catalog에서-모듈을-선택하지만-한-제품이-모든-일을-처리하지-않습니다-판단-승인-선언-배포-운영을-각-권위가-이') }}
         </p>
       </section>
 
       <section class="delivery-flow" aria-labelledby="delivery-flow-title">
         <div class="delivery-section-heading">
           <div>
-            <p class="delivery-eyebrow">INSTALLATION FLOW</p>
-            <h2 id="delivery-flow-title">선택에서 운영까지, 여섯 번의 명확한 책임 이동</h2>
+            <p class="delivery-eyebrow">{{ copy('installation-flow') }}</p>
+            <h2 id="delivery-flow-title">{{ copy('선택에서-운영까지-여섯-번의-명확한-책임-이동') }}</h2>
           </div>
           <p>
-            각 단계의 출력이 다음 단계의 입력이 되며, 앞 단계를 건너뛴 직접 배포는 정상 경로가
-            아닙니다.
+            {{ copy('각-단계의-출력이-다음-단계의-입력이-되며-앞-단계를-건너뛴-직접-배포는-정상-경로가-아닙니다') }}
           </p>
         </div>
 
         <ol class="delivery-steps">
           <li>
-            <span class="step-number">01</span>
+            <span class="step-number">{{ copy('01') }}</span>
             <img
               src="/assets/pictograms/connected-ecosystem.svg"
-              alt="Foundation Registry and Catalog"
+              [attr.alt]="copy('foundation-registry-and-catalog')"
               width="52"
               height="52"
             />
             <div>
-              <small>DISCOVER</small>
-              <h3>Registry / Catalog</h3>
+              <small>{{ copy('discover') }}</small>
+              <h3>{{ copy('registry-catalog') }}</h3>
             </div>
-            <p>공통 Descriptor에서 모듈 identity·배포 출처·서명·호환성을 검증하고 현재 revision에 후보를 고정합니다.</p>
-            <strong>출력 · revision-bound 설치 후보</strong>
+            <p>{{ copy('공통-descriptor에서-모듈-identity-배포-출처-서명-호환성을-검증하고-현재-revision에-후보를-고정합니다') }}</p>
+            <strong>{{ copy('출력-revision-bound-설치-후보') }}</strong>
           </li>
           <li>
-            <span class="step-number">02</span>
+            <span class="step-number">{{ copy('02') }}</span>
             <img
               src="/assets/pictograms/control-panel.svg"
-              alt="OSCE authorization and planning"
+              [attr.alt]="copy('osce-authorization-and-planning')"
               width="52"
               height="52"
             />
             <div>
-              <small>AUTHORIZE</small>
-              <h3>Console + OSCE</h3>
+              <small>{{ copy('authorize') }}</small>
+              <h3>{{ copy('console-osce') }}</h3>
             </div>
-            <p>관리자 요청을 받아 정책·영향·승인을 확인하고 정확한 변경 계획을 만듭니다.</p>
-            <strong>출력 · 승인된 operation plan</strong>
+            <p>{{ copy('관리자-요청을-받아-정책-영향-승인을-확인하고-정확한-변경-계획을-만듭니다') }}</p>
+            <strong>{{ copy('출력-승인된-operation-plan') }}</strong>
           </li>
           <li>
-            <span class="step-number">03</span>
+            <span class="step-number">{{ copy('03') }}</span>
             <img
               class="product-logo"
               src="/assets/product-logos/gitea.svg"
-              alt="Gitea"
+              [attr.alt]="copy('gitea')"
               width="52"
               height="52"
             />
             <div>
-              <small>DECLARE</small>
-              <h3>Gitea</h3>
+              <small>{{ copy('declare') }}</small>
+              <h3>{{ copy('gitea') }}</h3>
             </div>
             <p>
-              설치 대상, 구성, exact image digest를 desired state로 기록하고 변경 이력을 보존합니다.
+              {{ copy('설치-대상-구성-exact-image-digest를-desired-state로-기록하고-변경-이력을-보존합니다') }}
             </p>
-            <strong>출력 · 감사 가능한 Git revision</strong>
+            <strong>{{ copy('출력-감사-가능한-git-revision') }}</strong>
           </li>
           <li>
-            <span class="step-number">04</span>
+            <span class="step-number">{{ copy('04') }}</span>
             <img
               class="product-logo"
               src="/assets/product-logos/argocd.svg"
-              alt="Argo CD"
+              [attr.alt]="copy('argo-cd')"
               width="52"
               height="52"
             />
             <div>
-              <small>RECONCILE</small>
-              <h3>Argo CD</h3>
+              <small>{{ copy('reconcile') }}</small>
+              <h3>{{ copy('argo-cd') }}</h3>
             </div>
-            <p>Gitea의 승인된 선언을 Kubernetes에 동기화하고 Sync·Health·Drift를 관찰합니다.</p>
-            <strong>출력 · 배포 상태와 동기화 증거</strong>
+            <p>{{ copy('gitea의-승인된-선언을-kubernetes에-동기화하고-sync-health-drift를-관찰합니다') }}</p>
+            <strong>{{ copy('출력-배포-상태와-동기화-증거') }}</strong>
           </li>
           <li>
-            <span class="step-number">05</span>
+            <span class="step-number">{{ copy('05') }}</span>
             <img
               src="/assets/pictograms/cloud-infrastructure-management.svg"
-              alt="PFSS owner and operator"
+              [attr.alt]="copy('pfss-owner-and-operator')"
               width="52"
               height="52"
             />
             <div>
-              <small>OPERATE</small>
-              <h3>PFSS Owner / Operator</h3>
+              <small>{{ copy('operate') }}</small>
+              <h3>{{ copy('pfss-owner-operator') }}</h3>
             </div>
-            <p>서비스 생성·확장·백업·복구·마이그레이션과 실제 domain health를 책임집니다.</p>
-            <strong>출력 · 소비 가능한 PFSS capability</strong>
+            <p>{{ copy('서비스-생성-확장-백업-복구-마이그레이션과-실제-domain-health를-책임집니다') }}</p>
+            <strong>{{ copy('출력-소비-가능한-pfss-capability') }}</strong>
           </li>
           <li>
-            <span class="step-number">06</span>
+            <span class="step-number">{{ copy('06') }}</span>
             <img
               src="/assets/pictograms/systems.svg"
-              alt="Verified operating evidence"
+              [attr.alt]="copy('verified-operating-evidence')"
               width="52"
               height="52"
             />
             <div>
-              <small>VERIFY</small>
-              <h3>OSCE Postcondition</h3>
+              <small>{{ copy('verify') }}</small>
+              <h3>{{ copy('osce-postcondition') }}</h3>
             </div>
             <p>
-              배포와 서비스 상태를 함께 검증해 operation을 종료하고 현재 증거를 Console에
-              돌려줍니다.
+              {{ copy('배포와-서비스-상태를-함께-검증해-operation을-종료하고-현재-증거를-console에-돌려줍니다') }}
             </p>
-            <strong>출력 · 완료 receipt 또는 rollback</strong>
+            <strong>{{ copy('출력-완료-receipt-또는-rollback') }}</strong>
           </li>
         </ol>
       </section>
@@ -142,31 +138,31 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
       <section class="pfss-object-model" aria-labelledby="pfss-object-model-title">
         <div class="delivery-section-heading">
           <div>
-            <p class="delivery-eyebrow">OBJECT BOUNDARIES</p>
-            <h2 id="pfss-object-model-title">모듈을 아는 것과 인스턴스를 운영하는 것은 다른 책임입니다.</h2>
+            <p class="delivery-eyebrow">{{ copy('object-boundaries') }}</p>
+            <h2 id="pfss-object-model-title">{{ copy('모듈을-아는-것과-인스턴스를-운영하는-것은-다른-책임입니다') }}</h2>
           </div>
-          <p>Registry는 PFSS의 존재와 설치 출처를 설명하지만, PostgreSQL cluster의 현재 상태나 운영 설정을 대신 답하지 않습니다.</p>
+          <p>{{ copy('registry는-pfss의-존재와-설치-출처를-설명하지만-postgresql-cluster의-현재-상태나-운영-설정을-대신') }}</p>
         </div>
         <div class="pfss-object-grid">
           <article>
-            <span>01</span><strong>Installable Module</strong>
-            <p>공통 Descriptor가 PFSS identity, Owner, 설치 source와 exact release evidence를 제공합니다.</p>
-            <small>권위 · Registry &amp; Catalog</small>
+            <span>{{ copy('01') }}</span><strong>{{ copy('installable-module') }}</strong>
+            <p>{{ copy('공통-descriptor가-pfss-identity-owner-설치-source와-exact-release-evidence를') }}</p>
+            <small>{{ copy('권위-registry-catalog') }}</small>
           </article>
           <article>
-            <span>02</span><strong>Runtime Catalog</strong>
-            <p>PostgreSQL version·profile·replica·storage·backup 선택지는 제품 도메인 안에서 검증합니다.</p>
-            <small>권위 · PFSS Owner</small>
+            <span>{{ copy('02') }}</span><strong>{{ copy('runtime-catalog') }}</strong>
+            <p>{{ copy('postgresql-version-profile-replica-storage-backup-선택지는-제품-도메인-안에서-검증합니') }}</p>
+            <small>{{ copy('권위-pfss-owner') }}</small>
           </article>
           <article>
-            <span>03</span><strong>Operation</strong>
-            <p>선택한 입력과 Registry revision을 결속하고 위험·승인·rollback·postcondition을 계획합니다.</p>
-            <small>권위 · OSCE</small>
+            <span>{{ copy('03') }}</span><strong>{{ copy('operation') }}</strong>
+            <p>{{ copy('선택한-입력과-registry-revision을-결속하고-위험-승인-rollback-postcondition을-계획합니다') }}</p>
+            <small>{{ copy('권위-osce') }}</small>
           </article>
           <article>
-            <span>04</span><strong>Instance</strong>
-            <p>실제로 생성된 cluster의 Ready·scale·backup·restore·migration 상태를 관측하고 운영합니다.</p>
-            <small>권위 · PFSS Owner API</small>
+            <span>{{ copy('04') }}</span><strong>{{ copy('instance') }}</strong>
+            <p>{{ copy('실제로-생성된-cluster의-ready-scale-backup-restore-migration-상태를-관측하고-운영합니다') }}</p>
+            <small>{{ copy('권위-pfss-owner-api') }}</small>
           </article>
         </div>
       </section>
@@ -175,40 +171,39 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
         <div class="loop-title">
           <img
             src="/assets/pictograms/systems.svg"
-            alt="PFSS update control loop"
+            [attr.alt]="copy('pfss-update-control-loop')"
             width="64"
             height="64"
           />
           <div>
-            <p class="delivery-eyebrow">UPDATE LOOP</p>
+            <p class="delivery-eyebrow">{{ copy('update-loop') }}</p>
             <h2 id="update-loop-title">
-              업데이트는 자동 덮어쓰기가 아니라 같은 통제 흐름의 재실행입니다
+              {{ copy('업데이트는-자동-덮어쓰기가-아니라-같은-통제-흐름의-재실행입니다') }}
             </h2>
             <p>
-              새 버전의 발견만으로 설치 상태는 변하지 않습니다. 승인된 exact digest가 Gitea에 선언된
-              뒤에만 Argo CD가 동기화합니다.
+              {{ copy('새-버전의-발견만으로-설치-상태는-변하지-않습니다-승인된-exact-digest가-gitea에-선언된-뒤에만-argo-cd가') }}
             </p>
           </div>
         </div>
         <ol>
           <li>
-            <span>1</span><strong>Registry가 새 release 후보 발견</strong
-            ><small>Descriptor·서명·호환성·revision 검증</small>
+            <span>{{ copy('1') }}</span><strong>{{ copy('registry가-새-release-후보-발견') }}</strong
+            ><small>{{ copy('descriptor-서명-호환성-revision-검증') }}</small>
           </li>
           <li>
-            <span>2</span><strong>OSCE가 변경 승인</strong><small>영향·백업·rollback 계획</small>
+            <span>{{ copy('2') }}</span><strong>{{ copy('osce가-변경-승인') }}</strong><small>{{ copy('영향-백업-rollback-계획') }}</small>
           </li>
           <li>
-            <span>3</span><strong>Gitea desired state 갱신</strong
-            ><small>새 exact digest와 설정 revision</small>
+            <span>{{ copy('3') }}</span><strong>{{ copy('gitea-desired-state-갱신') }}</strong
+            ><small>{{ copy('새-exact-digest와-설정-revision') }}</small>
           </li>
           <li>
-            <span>4</span><strong>Argo CD가 배포 동기화</strong
-            ><small>Sync·Health·Drift evidence</small>
+            <span>{{ copy('4') }}</span><strong>{{ copy('argo-cd가-배포-동기화') }}</strong
+            ><small>{{ copy('sync-health-drift-evidence') }}</small>
           </li>
           <li>
-            <span>5</span><strong>PFSS Owner가 전환 검증</strong
-            ><small>migration·service health·postcondition</small>
+            <span>{{ copy('5') }}</span><strong>{{ copy('pfss-owner가-전환-검증') }}</strong
+            ><small>{{ copy('migration-service-health-postcondition') }}</small>
           </li>
         </ol>
       </section>
@@ -216,49 +211,48 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
       <section class="delivery-boundaries" aria-labelledby="delivery-boundaries-title">
         <div class="delivery-section-heading">
           <div>
-            <p class="delivery-eyebrow">AUTHORITY BOUNDARIES</p>
-            <h2 id="delivery-boundaries-title">누가 무엇을 결정하고 실행하는가</h2>
+            <p class="delivery-eyebrow">{{ copy('authority-boundaries') }}</p>
+            <h2 id="delivery-boundaries-title">{{ copy('누가-무엇을-결정하고-실행하는가') }}</h2>
           </div>
-          <p>Argo CD는 App Store가 아니며 Registry 업데이트를 스스로 선택하지 않습니다.</p>
+          <p>{{ copy('argo-cd는-app-store가-아니며-registry-업데이트를-스스로-선택하지-않습니다') }}</p>
         </div>
         <dl>
           <div>
-            <dt>모듈 identity·설치 출처 판단</dt>
-            <dd>Registry &amp; Catalog</dd>
+            <dt>{{ copy('모듈-identity-설치-출처-판단') }}</dt>
+            <dd>{{ copy('registry-catalog-2') }}</dd>
           </div>
           <div>
-            <dt>관리 요청·정책·승인</dt>
-            <dd>Console + OSCE</dd>
+            <dt>{{ copy('관리-요청-정책-승인') }}</dt>
+            <dd>{{ copy('console-osce') }}</dd>
           </div>
           <div>
-            <dt>Desired-state 정본</dt>
-            <dd>Gitea</dd>
+            <dt>{{ copy('desired-state-정본') }}</dt>
+            <dd>{{ copy('gitea') }}</dd>
           </div>
           <div>
-            <dt>Kubernetes 배포 실행</dt>
-            <dd>Argo CD · HISS Platform Support Controller</dd>
+            <dt>{{ copy('kubernetes-배포-실행') }}</dt>
+            <dd>{{ copy('argo-cd-hiss-platform-support-controller') }}</dd>
           </div>
           <div>
-            <dt>Runtime 설정·Instance lifecycle</dt>
-            <dd>PFSS Runtime Catalog + Owner / Operator</dd>
+            <dt>{{ copy('runtime-설정-instance-lifecycle') }}</dt>
+            <dd>{{ copy('pfss-runtime-catalog-owner-operator') }}</dd>
           </div>
           <div>
-            <dt>최종 완료·복구 판정</dt>
-            <dd>OSCE + component postcondition</dd>
+            <dt>{{ copy('최종-완료-복구-판정') }}</dt>
+            <dd>{{ copy('osce-component-postcondition') }}</dd>
           </div>
         </dl>
       </section>
 
-      <aside class="delivery-rule" aria-label="PFSS delivery operating rule">
+      <aside class="delivery-rule" [attr.aria-label]="copy('pfss-delivery-operating-rule')">
         <img
           src="/assets/pictograms/control-tower.svg"
-          alt="Controlled PFSS delivery"
+          [attr.alt]="copy('controlled-pfss-delivery')"
           width="48"
           height="48"
         />
         <p>
-          <strong>한 문장으로:</strong> Registry가 모듈 후보를 고정하고, PFSS Owner가 runtime 입력을
-          검증하며, OSCE가 승인하고, Gitea·Argo CD가 배포한 뒤 PFSS Owner가 Instance를 운영합니다.
+          <strong>{{ copy('한-문장으로') }}</strong> {{ copy('registry가-모듈-후보를-고정하고-pfss-owner가-runtime-입력을-검증하며-osce가-승인하고-gitea-ar') }}
         </p>
       </aside>
     </article>
@@ -721,4 +715,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
     `,
   ],
 })
-export class LandingPfssDelivery {}
+export class LandingPfssDelivery {
+  readonly content = inject(ConsoleIndexContentService);
+  readonly copy = (key: string): string => this.content.text('pfss-delivery', key);
+}

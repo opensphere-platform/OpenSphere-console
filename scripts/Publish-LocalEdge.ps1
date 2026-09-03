@@ -11,8 +11,8 @@ param(
   [switch]$UseExistingRegistryLogin,
   [switch]$DeferChannelPromotion,
   [switch]$AdvanceOsShellUxConsoleEdge,
-  [ValidateSet('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend')]
-  [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime')
+  [ValidateSet('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'consoleIndexContent', 'backend')]
+  [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'consoleIndexContent')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -170,7 +170,7 @@ $canonicalComponentKeys = @(
   'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage',
   'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap'
 )
-$auxiliaryComponentKeys = @('cliArtifacts', 'osShellControl', 'osShellRuntime')
+$auxiliaryComponentKeys = @('cliArtifacts', 'osShellControl', 'osShellRuntime', 'consoleIndexContent')
 $completeReleaseComponentKeys = @($canonicalComponentKeys + $auxiliaryComponentKeys)
 $requestedForGate = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($component in $Components) { [void]$requestedForGate.Add($component) }
@@ -379,6 +379,7 @@ $allImages = @(
   [ordered]@{ Key = 'cliArtifacts'; Image = 'opensphere-os-cli'; Context = (Join-Path $consoleCheckout 'cmd\os-cli'); File = (Join-Path $consoleCheckout 'cmd\os-cli\Dockerfile') },
   [ordered]@{ Key = 'osShellControl'; Image = 'opensphere-console-os-shell-control'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile') },
   [ordered]@{ Key = 'osShellRuntime'; Image = 'opensphere-os-shell-runtime'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\os-shell-control\Dockerfile.runtime') },
+  [ordered]@{ Key = 'consoleIndexContent'; Image = 'opensphere-console-index-content'; Context = (Join-Path $consoleCheckout 'apps\console-index-content'); File = (Join-Path $consoleCheckout 'apps\console-index-content\Dockerfile') },
   # Retained only to reject stale explicit callers before registry mutation.
   [ordered]@{ Key = 'backend'; Image = 'opensphere-console-backend'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\runtime\Dockerfile'); SetupContext = $setupCheckout }
 )
@@ -480,6 +481,10 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
       '--build-arg', "SETUP_SOURCE_REVISION=$setupSourceRevision"
     )
   }
+  if ($item.Key -eq 'consoleIndexContent') {
+    Invoke-Checked node (Join-Path $consoleCheckout 'scripts/build-console-index-content.mjs') --source-revision $SourceRevision --version $releaseTag
+    $arguments += @('--build-arg', "VERSION=$releaseTag", '--build-arg', "SOURCE_REVISION=$SourceRevision")
+  }
   if ($item.Key -eq 'cliArtifacts') {
     $arguments += @(
       '--build-arg', "CLI_UPDATE_TRUST_ID=$CliUpdateSigningKeyId",
@@ -542,8 +547,8 @@ foreach ($item in $images) {
   }
 }
 if (-not $partialPublication -and
-    ($componentEvidence.Count -ne 18 -or $auxiliaryArtifactEvidence.Count -ne 3)) {
-  throw "Complete local edge release must contain exactly 18 canonical components and 3 auxiliary artifacts; found $($componentEvidence.Count)+$($auxiliaryArtifactEvidence.Count)."
+    ($componentEvidence.Count -ne 18 -or $auxiliaryArtifactEvidence.Count -ne 4)) {
+  throw "Complete local edge release must contain exactly 18 canonical components and 4 auxiliary artifacts; found $($componentEvidence.Count)+$($auxiliaryArtifactEvidence.Count)."
 }
 $releaseArtifacts = [ordered]@{
   supabaseMigrationManifest = [ordered]@{

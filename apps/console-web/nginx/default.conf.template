@@ -53,6 +53,29 @@ server {
 
     include /etc/nginx/target-api-routes.conf;
 
+    # C_WEB read-only data from the digest-pinned init container; no SPA fallback.
+    location = /console-index/content.json {
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        expires -1;
+        error_page 404 = @console_index_unavailable;
+        try_files $uri =404;
+    }
+    location @console_index_unavailable {
+        default_type application/json;
+        return 503 '{"error":"index_content_unavailable","message":"Console index content is not mounted."}';
+    }
+    location /console-index/ { return 404; }
+    location = /assets/installation/installation-milestones.json {
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        alias /usr/share/nginx/html/console-index/installation/installation-milestones.json;
+        expires -1;
+    }
+    location = /assets/installation/installation-milestones.md {
+        if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+        alias /usr/share/nginx/html/console-index/installation/installation-milestones.md;
+        expires -1;
+    }
+
     # ADR-006 Supabase same-origin endpoints.  Console authentication is served
     # only by Supabase Auth; parallel legacy identity routes are deliberately absent.
     location ^~ /auth/v1/ {

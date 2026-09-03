@@ -81,7 +81,8 @@
     "introspectCliCredential",
     "listCliDevices",
     "revokeCliDevice",
-    "beginRegistryOAuth"
+    "beginRegistryOAuth",
+    "getConsoleIndexContent"
   ],
   "requiredActionPolicies": [
     "console.platform.change.propose@1.0",
@@ -166,7 +167,9 @@
     "cli-device-revocation-request.schema.json",
     "registry-credential-status.schema.json",
     "registry-oauth-request.schema.json",
-    "registry-oauth-response.schema.json"
+    "registry-oauth-response.schema.json",
+    "console-index-content.schema.json",
+    "console-index-envelope.schema.json"
   ],
   "releaseProfiles": {
     "bootstrap-core": {

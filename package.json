@@ -11,7 +11,7 @@
     "ng": "ng",
     "prestart": "node scripts/generate-carbon-icon-assets.mjs && node scripts/build-os-shell-terminal-frame.mjs",
     "start": "ng serve",
-    "prebuild": "node scripts/generate-carbon-icon-assets.mjs && node scripts/build-os-shell-terminal-frame.mjs && node scripts/verify-console-composition.mjs && node scripts/verify-os-shell-system-plugin.mjs && node scripts/verify-manual-ui.mjs --source",
+    "prebuild": "node scripts/verify-console-index-renderer.mjs && node scripts/generate-carbon-icon-assets.mjs && node scripts/build-os-shell-terminal-frame.mjs && node scripts/verify-console-composition.mjs && node scripts/verify-os-shell-system-plugin.mjs && node scripts/verify-manual-ui.mjs --source",
     "build": "ng build",
     "postbuild": "node scripts/verify-os-shell-system-plugin.mjs --dist && node scripts/verify-manual-ui.mjs --dist dist/opensphere-console/browser",
     "manual:seed": "node apps/osaa-gateway/scripts/build-manual-seed.js",
@@ -28,7 +28,9 @@
     "test:web-shell-edge-mvp": "node --test scripts/web-shell-edge-mvp-contract.test.mjs",
     "test:navigation-snapshot": "node --test apps/console-web/src/app/core/console-navigation-snapshot.spec.ts apps/console-web/src/app/core/r2d2-risk.service.spec.ts",
     "test:carbon-icons": "node --test scripts/carbon-icon-assets.test.mjs",
-    "test:r2d2-repair-runner": "node --test scripts/r2d2-local-edge-repair-runner.test.mjs apps/console-api/runtime/r2d2-engineering-remediation.test.js"
+    "test:r2d2-repair-runner": "node --test scripts/r2d2-local-edge-repair-runner.test.mjs apps/console-api/runtime/r2d2-engineering-remediation.test.js",
+    "build:index-content": "node scripts/build-console-index-content.mjs",
+    "test:index-content": "node --test scripts/console-index-content.test.mjs"
   },
   "private": true,
   "packageManager": "npm@11.6.2",

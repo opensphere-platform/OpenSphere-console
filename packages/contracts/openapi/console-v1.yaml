@@ -16,6 +16,38 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /console-index/content.json:
+    get:
+      operationId: getConsoleIndexContent
+      tags: [Catalog]
+      security: []
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-owner: C_WEB
+      x-opensphere-idempotency: read-only-no-state-transition
+      description: >-
+        Public explanatory text/data only, like existing public web assets. Contains no identity,
+        live status, credential or navigation authority. One response binds data to renderer contract,
+        source revision and KST version. Maximum 1 MiB; Cache-Control no-cache. No cookie required or consumed.
+        Browser validates shape, fixed coordinate IDs, required keys and SHA-256, and uses Angular text escaping.
+        Integrity hashing does not authenticate a publisher; the approved OCI digest is deployment authority.
+        HEAD returns headers without a body. Other methods return 405 and never mutate state.
+      responses:
+        "200":
+          description: Atomic versioned content envelope
+          content:
+            application/json:
+              schema: { $ref: "../schemas/console-index-envelope.schema.json" }
+        "503":
+          description: Content volume missing; no compiled fallback or false Ready claim
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, message]
+                properties:
+                  error: { type: string, const: index_content_unavailable }
+                  message: { type: string }
+
   /api/identity/bootstrap/status:
     get:
       operationId: getInitialAdministratorBootstrapStatus

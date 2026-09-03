@@ -7,26 +7,125 @@
     "bootstrap-core": {
       "status": "release-ready",
       "scope": "bootstrap-runtime",
-      "requiredComponentIds": ["C_WEB", "C_API", "C_EXT", "C_REG", "C_CLI"],
-      "inactiveComponentIds": ["C_AI", "C_DST", "C_SCTL", "C_BAK", "C_NOTIFY"],
+      "requiredComponentIds": [
+        "C_WEB",
+        "C_API",
+        "C_EXT",
+        "C_REG",
+        "C_CLI"
+      ],
+      "inactiveComponentIds": [
+        "C_AI",
+        "C_DST",
+        "C_SCTL",
+        "C_BAK",
+        "C_NOTIFY"
+      ],
       "artifactActivation": {
-        "bootstrapCore": ["console", "consoleApi", "extensionController", "registry", "gitea", "giteaPostgres", "supabasePostgres", "supabaseAuth", "supabaseRest", "supabaseStorage", "beszelHub", "beszelAgent", "beszelBootstrap"],
-        "availableModules": ["osaaGateway", "osdst", "osaaGovernedAdapter", "notificationDispatcher", "recovery"],
-        "bootstrapAuxiliaryArtifacts": ["cliArtifacts"],
-        "availableAuxiliaryArtifacts": ["osShellControl", "osShellRuntime"]
+        "bootstrapCore": [
+          "console",
+          "consoleApi",
+          "extensionController",
+          "registry",
+          "gitea",
+          "giteaPostgres",
+          "supabasePostgres",
+          "supabaseAuth",
+          "supabaseRest",
+          "supabaseStorage",
+          "beszelHub",
+          "beszelAgent",
+          "beszelBootstrap"
+        ],
+        "availableModules": [
+          "osaaGateway",
+          "osdst",
+          "osaaGovernedAdapter",
+          "notificationDispatcher",
+          "recovery"
+        ],
+        "bootstrapAuxiliaryArtifacts": [
+          "cliArtifacts",
+          "consoleIndexContent"
+        ],
+        "availableAuxiliaryArtifacts": [
+          "osShellControl",
+          "osShellRuntime"
+        ]
       }
     }
   },
   "components": [
-    { "id": "C_WEB", "path": "apps/console-web", "artifact": "opensphere-console", "legacySources": [] },
-    { "id": "C_API", "path": "apps/console-api", "artifact": "opensphere-console-api", "auxiliaryArtifacts": ["opensphere-console-beszel-hub", "opensphere-console-beszel-agent", "opensphere-console-beszel-bootstrap"], "legacySources": [] },
-    { "id": "C_EXT", "path": "apps/extension-controller", "artifact": "opensphere-extension-controller", "legacySources": [] },
-    { "id": "C_REG", "path": "backend/registry", "artifact": "opensphere-registry", "legacySources": [] },
-    { "id": "C_AI", "path": "apps/osaa-gateway", "artifact": "opensphere-console-osaa-gateway", "legacySources": [] },
-    { "id": "C_DST", "path": "apps/osdst", "artifact": "opensphere-osdst", "legacySources": [] },
-    { "id": "C_SCTL", "path": "apps/os-shell-control", "artifact": "opensphere-console-os-shell-control", "auxiliaryArtifacts": ["opensphere-os-shell-runtime"], "legacySources": [] },
-    { "id": "C_BAK", "path": "apps/recovery-owner", "artifact": "opensphere-console-recovery", "legacySources": [] },
-    { "id": "C_NOTIFY", "path": "apps/notification-dispatcher", "artifact": "opensphere-console-notification-dispatcher", "legacySources": [] },
-    { "id": "C_CLI", "path": "cmd/os-cli", "artifact": "opensphere-os-cli", "legacySources": [] }
+    {
+      "id": "C_WEB",
+      "path": "apps/console-web",
+      "artifact": "opensphere-console",
+      "legacySources": [],
+      "auxiliaryArtifacts": [
+        "opensphere-console-index-content"
+      ]
+    },
+    {
+      "id": "C_API",
+      "path": "apps/console-api",
+      "artifact": "opensphere-console-api",
+      "auxiliaryArtifacts": [
+        "opensphere-console-beszel-hub",
+        "opensphere-console-beszel-agent",
+        "opensphere-console-beszel-bootstrap"
+      ],
+      "legacySources": []
+    },
+    {
+      "id": "C_EXT",
+      "path": "apps/extension-controller",
+      "artifact": "opensphere-extension-controller",
+      "legacySources": []
+    },
+    {
+      "id": "C_REG",
+      "path": "backend/registry",
+      "artifact": "opensphere-registry",
+      "legacySources": []
+    },
+    {
+      "id": "C_AI",
+      "path": "apps/osaa-gateway",
+      "artifact": "opensphere-console-osaa-gateway",
+      "legacySources": []
+    },
+    {
+      "id": "C_DST",
+      "path": "apps/osdst",
+      "artifact": "opensphere-osdst",
+      "legacySources": []
+    },
+    {
+      "id": "C_SCTL",
+      "path": "apps/os-shell-control",
+      "artifact": "opensphere-console-os-shell-control",
+      "auxiliaryArtifacts": [
+        "opensphere-os-shell-runtime"
+      ],
+      "legacySources": []
+    },
+    {
+      "id": "C_BAK",
+      "path": "apps/recovery-owner",
+      "artifact": "opensphere-console-recovery",
+      "legacySources": []
+    },
+    {
+      "id": "C_NOTIFY",
+      "path": "apps/notification-dispatcher",
+      "artifact": "opensphere-console-notification-dispatcher",
+      "legacySources": []
+    },
+    {
+      "id": "C_CLI",
+      "path": "cmd/os-cli",
+      "artifact": "opensphere-os-cli",
+      "legacySources": []
+    }
   ]
 }

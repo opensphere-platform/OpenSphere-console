@@ -1,0 +1,101 @@
+{
+  "DIALOGUE_STATE_FIELDS": [
+    {
+      "name": "domain",
+      "meaning": "현재 대화가 다루는 서비스 영역",
+      "example": "pfss.postgresql"
+    },
+    {
+      "name": "activeIntent",
+      "meaning": "현재 사용자가 확인하거나 수행하려는 일",
+      "example": "create.capability.check"
+    },
+    {
+      "name": "activeResourceRefs[]",
+      "meaning": "이름이 아니라 canonical ID로 식별한 대상",
+      "example": "PostgresClaim/.../foundation-data-pg"
+    },
+    {
+      "name": "slotValues",
+      "meaning": "스키마가 요구하는 입력과 이미 확인된 값",
+      "example": "version · replicas · storageClass"
+    },
+    {
+      "name": "authorityRef",
+      "meaning": "실제 상태와 변경을 소유하는 Owner",
+      "example": "PFSS PostgreSQL Owner"
+    },
+    {
+      "name": "capabilityRefs[]",
+      "meaning": "현재 Owner가 광고한 조회·계획·실행 기능",
+      "example": "status · create.plan · create.apply"
+    },
+    {
+      "name": "evidenceRefs[]",
+      "meaning": "해당 턴에서 얻은 관측 결과와 freshness",
+      "example": "observationId · observedAt"
+    },
+    {
+      "name": "operationRef",
+      "meaning": "승인·실행·검증을 잇는 내구 작업 식별자",
+      "example": "operationId · planDigest"
+    }
+  ],
+  "EXAMPLE_DIALOGUE_STATE": "{\n  \"schema\": \"osaa.dialogue-state/v1\",\n  \"revision\": 12,\n  \"domain\": \"pfss.postgresql\",\n  \"activeIntent\": \"create.capability.check\",\n  \"activeResourceRefs\": [\n    \"opensphere://pfss/postgresql/foundation-data-pg\"\n  ],\n  \"slotValues\": { \"version\": \"18\", \"replicas\": 2 },\n  \"authorityRef\": \"owner://pfss/postgresql\",\n  \"capabilityRefs\": [\"status\", \"create.plan\", \"create.apply\"],\n  \"evidenceRefs\": [\n    { \"id\": \"observation:...\", \"observedAt\": \"...\", \"expiresAt\": \"...\" }\n  ],\n  \"operationRef\": null\n}",
+  "UPSTREAM_REFERENCES": [
+    {
+      "name": "Dialogue State Tracking",
+      "contribution": "의도·대상·필요 입력을 매 턴의 구조화된 상태로 유지합니다.",
+      "decision": "핵심 개념 채택",
+      "href": "https://aclanthology.org/2021.sigdial-1.25/"
+    },
+    {
+      "name": "Schema-Guided Dialogue",
+      "contribution": "고정된 명령 목록 대신 서비스/API 스키마로 intent와 slot을 해석합니다.",
+      "decision": "OSCE Capability Schema와 결합",
+      "href": "https://research.google/pubs/towards-scalable-multi-domain-conversational-agents-the-schema-guided-dialogue-dataset/"
+    },
+    {
+      "name": "Google Description-Driven DST",
+      "contribution": "intent·slot의 내부 이름보다 자연어 설명을 이용해 새로운 task로 일반화합니다.",
+      "decision": "Capability description을 resolver 입력으로 채택",
+      "href": "https://research.google/pubs/description-driven-task-oriented-dialog-modeling/"
+    },
+    {
+      "name": "Google ADK Session · State · Memory",
+      "contribution": "대화 이벤트, 세션 임시 상태와 세션 간 장기 기억의 lifecycle을 분리합니다.",
+      "decision": "분리 원칙 채택, ADK runtime은 도입하지 않음",
+      "href": "https://adk.dev/sessions/"
+    },
+    {
+      "name": "Dialogflow CX Session Parameters",
+      "contribution": "자연어 원문과 별개로 추출·정규화된 parameter를 session 범위에서 유지합니다.",
+      "decision": "slot 원문·정규값 분리 방식 참고",
+      "href": "https://docs.cloud.google.com/dialogflow/cx/docs/concept/parameter"
+    },
+    {
+      "name": "Rasa Tracker",
+      "contribution": "대화 이벤트와 slot을 세션을 넘어 저장하는 실용적인 tracker 모델을 제공합니다.",
+      "decision": "상태 모델만 참고",
+      "href": "https://rasa.com/docs/reference/integrations/action-server/sdk-tracker/"
+    },
+    {
+      "name": "Agent Session & Checkpoint",
+      "contribution": "대화 이력과 실행 상태를 thread/checkpoint 단위로 보존하고 재개합니다.",
+      "decision": "기존 Supabase 저장 구조로 충족",
+      "href": "https://docs.langchain.com/oss/javascript/langgraph/persistence"
+    },
+    {
+      "name": "Resource Graph & State Binding",
+      "contribution": "논리 객체와 실제 운영 객체, 그리고 객체 사이의 관계를 안정된 참조로 연결합니다.",
+      "decision": "OSAA Operational Resource Graph 재사용",
+      "href": "https://developer.hashicorp.com/terraform/language/state/purpose"
+    },
+    {
+      "name": "MCP Resources & Tools",
+      "contribution": "AI가 읽을 리소스와 호출할 도구를 표준 인터페이스로 노출합니다.",
+      "decision": "향후 외부 연동 adapter로만 검토",
+      "href": "https://modelcontextprotocol.io/specification/2025-06-18/server/index"
+    }
+  ]
+}

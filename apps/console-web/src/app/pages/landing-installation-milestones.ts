@@ -1,3 +1,4 @@
+import { ConsoleIndexContentService } from '../core/console-index-content.service';
 import { ChangeDetectionStrategy, Component, ElementRef, inject } from '@angular/core';
 
 /** CON-FR-007/014/017 · C_WEB · read-only installation/acceptance explanation, not runtime health. */
@@ -8,6 +9,9 @@ import { ChangeDetectionStrategy, Component, ElementRef, inject } from '@angular
   styleUrl: './landing-installation-milestones.scss',
 })
 export class LandingInstallationMilestones {
+  readonly content = inject(ConsoleIndexContentService);
+  readonly copy = (key: string): string => this.content.text('installation-milestones', key);
+
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 
   jumpTo(id: string): void {

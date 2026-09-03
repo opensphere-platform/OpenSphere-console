@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ConsoleIndexContentService } from '../core/console-index-content.service';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 
 interface DialogueStateField {
   name: string;
@@ -13,118 +14,11 @@ interface UpstreamReference {
   href: string;
 }
 
-const DIALOGUE_STATE_FIELDS: readonly DialogueStateField[] = [
-  { name: 'domain', meaning: '현재 대화가 다루는 서비스 영역', example: 'pfss.postgresql' },
-  {
-    name: 'activeIntent',
-    meaning: '현재 사용자가 확인하거나 수행하려는 일',
-    example: 'create.capability.check',
-  },
-  {
-    name: 'activeResourceRefs[]',
-    meaning: '이름이 아니라 canonical ID로 식별한 대상',
-    example: 'PostgresClaim/.../foundation-data-pg',
-  },
-  {
-    name: 'slotValues',
-    meaning: '스키마가 요구하는 입력과 이미 확인된 값',
-    example: 'version · replicas · storageClass',
-  },
-  {
-    name: 'authorityRef',
-    meaning: '실제 상태와 변경을 소유하는 Owner',
-    example: 'PFSS PostgreSQL Owner',
-  },
-  {
-    name: 'capabilityRefs[]',
-    meaning: '현재 Owner가 광고한 조회·계획·실행 기능',
-    example: 'status · create.plan · create.apply',
-  },
-  {
-    name: 'evidenceRefs[]',
-    meaning: '해당 턴에서 얻은 관측 결과와 freshness',
-    example: 'observationId · observedAt',
-  },
-  {
-    name: 'operationRef',
-    meaning: '승인·실행·검증을 잇는 내구 작업 식별자',
-    example: 'operationId · planDigest',
-  },
-] as const;
+declare const DIALOGUE_STATE_FIELDS: readonly DialogueStateField[];
 
-const EXAMPLE_DIALOGUE_STATE = `{
-  "schema": "osaa.dialogue-state/v1",
-  "revision": 12,
-  "domain": "pfss.postgresql",
-  "activeIntent": "create.capability.check",
-  "activeResourceRefs": [
-    "opensphere://pfss/postgresql/foundation-data-pg"
-  ],
-  "slotValues": { "version": "18", "replicas": 2 },
-  "authorityRef": "owner://pfss/postgresql",
-  "capabilityRefs": ["status", "create.plan", "create.apply"],
-  "evidenceRefs": [
-    { "id": "observation:...", "observedAt": "...", "expiresAt": "..." }
-  ],
-  "operationRef": null
-}`;
+declare const EXAMPLE_DIALOGUE_STATE: string;
 
-const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
-  {
-    name: 'Dialogue State Tracking',
-    contribution: '의도·대상·필요 입력을 매 턴의 구조화된 상태로 유지합니다.',
-    decision: '핵심 개념 채택',
-    href: 'https://aclanthology.org/2021.sigdial-1.25/',
-  },
-  {
-    name: 'Schema-Guided Dialogue',
-    contribution: '고정된 명령 목록 대신 서비스/API 스키마로 intent와 slot을 해석합니다.',
-    decision: 'OSCE Capability Schema와 결합',
-    href: 'https://research.google/pubs/towards-scalable-multi-domain-conversational-agents-the-schema-guided-dialogue-dataset/',
-  },
-  {
-    name: 'Google Description-Driven DST',
-    contribution: 'intent·slot의 내부 이름보다 자연어 설명을 이용해 새로운 task로 일반화합니다.',
-    decision: 'Capability description을 resolver 입력으로 채택',
-    href: 'https://research.google/pubs/description-driven-task-oriented-dialog-modeling/',
-  },
-  {
-    name: 'Google ADK Session · State · Memory',
-    contribution: '대화 이벤트, 세션 임시 상태와 세션 간 장기 기억의 lifecycle을 분리합니다.',
-    decision: '분리 원칙 채택, ADK runtime은 도입하지 않음',
-    href: 'https://adk.dev/sessions/',
-  },
-  {
-    name: 'Dialogflow CX Session Parameters',
-    contribution: '자연어 원문과 별개로 추출·정규화된 parameter를 session 범위에서 유지합니다.',
-    decision: 'slot 원문·정규값 분리 방식 참고',
-    href: 'https://docs.cloud.google.com/dialogflow/cx/docs/concept/parameter',
-  },
-  {
-    name: 'Rasa Tracker',
-    contribution: '대화 이벤트와 slot을 세션을 넘어 저장하는 실용적인 tracker 모델을 제공합니다.',
-    decision: '상태 모델만 참고',
-    href: 'https://rasa.com/docs/reference/integrations/action-server/sdk-tracker/',
-  },
-  {
-    name: 'Agent Session & Checkpoint',
-    contribution: '대화 이력과 실행 상태를 thread/checkpoint 단위로 보존하고 재개합니다.',
-    decision: '기존 Supabase 저장 구조로 충족',
-    href: 'https://docs.langchain.com/oss/javascript/langgraph/persistence',
-  },
-  {
-    name: 'Resource Graph & State Binding',
-    contribution: '논리 객체와 실제 운영 객체, 그리고 객체 사이의 관계를 안정된 참조로 연결합니다.',
-    decision: 'OSAA Operational Resource Graph 재사용',
-    href: 'https://developer.hashicorp.com/terraform/language/state/purpose',
-  },
-  {
-    name: 'MCP Resources & Tools',
-    contribution: 'AI가 읽을 리소스와 호출할 도구를 표준 인터페이스로 노출합니다.',
-    decision: '향후 외부 연동 adapter로만 검토',
-    href: 'https://modelcontextprotocol.io/specification/2025-06-18/server/index',
-  },
-] as const;
+declare const UPSTREAM_REFERENCES: readonly UpstreamReference[];
 
 @Component({
   selector: 'os-landing-osaa-dialogue-state',
@@ -135,111 +29,106 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
         <div class="intro-lockup">
           <img
             src="/assets/pictograms/intelligence.svg"
-            alt="AI reasoning connected to structured system state"
+            [attr.alt]="copy('ai-reasoning-connected-to-structured-system-state')"
             width="76"
             height="76"
           />
           <div>
-            <p class="eyebrow">OSDST · CBSS Core Service</p>
-            <h1 id="dialogue-state-title">OSDST</h1>
+            <p class="eyebrow">{{ copy('osdst-cbss-core-service') }}</p>
+            <h1 id="dialogue-state-title">{{ copy('osdst') }}</h1>
             <p>
-              <strong>OSAA Dialogue State Tracker</strong>는 일반 LLM 대화 이력을 OpenSphere의
-              서비스·리소스·권위·근거에 결속된 운영 대화로 바꾸는 CBSS 핵심 서비스입니다. 정식 방법론은
-              <strong>Schema-Guided Dialogue State Tracking</strong>입니다.
+              <strong>{{ copy('osaa-dialogue-state-tracker') }}</strong>{{ copy('는-일반-llm-대화-이력을-opensphere의-서비스-리소스-권위-근거에-결속된-운영-대화로-바꾸는-cbss-핵심-서비스입') }}
+              <strong>{{ copy('schema-guided-dialogue-state-tracking') }}</strong>{{ copy('입니다') }}
             </p>
           </div>
         </div>
         <dl class="naming-decision">
           <div>
-            <dt>Canonical name</dt>
-            <dd>OSAA Dialogue State Tracker</dd>
+            <dt>{{ copy('canonical-name') }}</dt>
+            <dd>{{ copy('osaa-dialogue-state-tracker') }}</dd>
           </div>
           <div>
-            <dt>Acronym</dt>
-            <dd>OSDST</dd>
+            <dt>{{ copy('acronym') }}</dt>
+            <dd>{{ copy('osdst') }}</dd>
           </div>
           <div>
-            <dt>Classification</dt>
-            <dd>CBSS Core Service · Agent Core Engine</dd>
+            <dt>{{ copy('classification') }}</dt>
+            <dd>{{ copy('cbss-core-service-agent-core-engine') }}</dd>
           </div>
           <div>
-            <dt>Deployment</dt>
-            <dd>Platform-bundled core component</dd>
+            <dt>{{ copy('deployment') }}</dt>
+            <dd>{{ copy('platform-bundled-core-component') }}</dd>
           </div>
           <div>
-            <dt>Extension</dt>
-            <dd>SubShell · Console Plugin · Binding 아님</dd>
+            <dt>{{ copy('extension') }}</dt>
+            <dd>{{ copy('subshell-console-plugin-binding-아님') }}</dd>
           </div>
           <div>
-            <dt>폐기한 표현</dt>
-            <dd>System Context Binding — 업스트림 표준 용어가 아님</dd>
+            <dt>{{ copy('폐기한-표현') }}</dt>
+            <dd>{{ copy('system-context-binding-업스트림-표준-용어가-아님') }}</dd>
           </div>
         </dl>
       </section>
 
       <section class="strategy-overview" aria-labelledby="strategy-overview-title">
         <div class="strategy-heading">
-          <p class="eyebrow">Goal and development strategy</p>
-          <h2 id="strategy-overview-title">대화 이력을 운영 가능한 상태로 바꿉니다</h2>
+          <p class="eyebrow">{{ copy('goal-and-development-strategy') }}</p>
+          <h2 id="strategy-overview-title">{{ copy('대화-이력을-운영-가능한-상태로-바꿉니다') }}</h2>
           <p>
-            새 대화 프레임워크를 만드는 것이 목표가 아닙니다. 이미 존재하는
-            Conversation·OSCE·Owner·증거 체계를 구조화된 대화 상태로 연결해, R2D2가 맥락을
-            유지하면서도 현재 사실을 추측하지 않게 합니다.
+            {{ copy('새-대화-프레임워크를-만드는-것이-목표가-아닙니다-이미-존재하는-conversation-osce-owner-증거-체계를-구조화') }}
           </p>
         </div>
         <div class="strategy-strip">
           <article>
-            <span>현재 기반</span>
+            <span>{{ copy('현재-기반') }}</span>
             <img
               src="/assets/pictograms/console.svg"
-              alt="Durable conversation baseline"
+              [attr.alt]="copy('durable-conversation-baseline')"
               width="44"
               height="44"
             />
-            <strong>Durable Conversation</strong>
+            <strong>{{ copy('durable-conversation') }}</strong>
             <p>
-              Supabase에 사용자별 대화·메시지를 저장하고 최근 80개·60,000자 문맥을 재구성합니다.
+              {{ copy('supabase에-사용자별-대화-메시지를-저장하고-최근-80개-60-000자-문맥을-재구성합니다') }}
             </p>
           </article>
           <article>
-            <span>현재 공백</span>
+            <span>{{ copy('현재-공백') }}</span>
             <img
               src="/assets/pictograms/code-syntax.svg"
-              alt="Missing typed dialogue state"
+              [attr.alt]="copy('missing-typed-dialogue-state')"
               width="44"
               height="44"
             />
-            <strong>Typed State 미구현</strong>
+            <strong>{{ copy('typed-state-미구현') }}</strong>
             <p>
-              intent·resource·slot이 검증된 객체가 아니라 아직 과거 메시지 안의 자연어로만 남아
-              있습니다.
+              {{ copy('intent-resource-slot이-검증된-객체가-아니라-아직-과거-메시지-안의-자연어로만-남아-있습니다') }}
             </p>
           </article>
           <article>
-            <span>개발 목표</span>
+            <span>{{ copy('개발-목표') }}</span>
             <img
               src="/assets/pictograms/connected-ecosystem.svg"
-              alt="Schema guided operating dialogue"
+              [attr.alt]="copy('schema-guided-operating-dialogue')"
               width="44"
               height="44"
             />
-            <strong>Schema-guided Control</strong>
+            <strong>{{ copy('schema-guided-control') }}</strong>
             <p>
-              Google식 intent·slot 추적을 OSCE Capability Schema와 canonical resource에 결속합니다.
+              {{ copy('google식-intent-slot-추적을-osce-capability-schema와-canonical-resource에-결속') }}
             </p>
           </article>
           <article>
-            <span>완료 기준</span>
+            <span>{{ copy('완료-기준') }}</span>
             <img
               src="/assets/pictograms/ai-governance-lifecycle-factsheet.svg"
-              alt="Evidence backed operation"
+              [attr.alt]="copy('evidence-backed-operation')"
               width="44"
               height="44"
             />
-            <strong>Evidence-backed Action</strong>
+            <strong>{{ copy('evidence-backed-action') }}</strong>
             <p>
-              상태 유지, live 관측, 승인된 실행과 postcondition이 하나의 operation으로 이어져야
-              합니다.
+              {{ copy('상태-유지-live-관측-승인된-실행과-postcondition이-하나의-operation으로-이어져야-합니다') }}
             </p>
           </article>
         </div>
@@ -250,56 +139,55 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/connected-ecosystem.svg"
-              alt="Dialogue state connected to system capabilities and resources"
+              [attr.alt]="copy('dialogue-state-connected-to-system-capabilities-and-resources')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">One state · three sources</p>
-              <h2 id="structure-title">대화는 세 종류의 상태를 구분해서 연결합니다</h2>
+              <p class="eyebrow">{{ copy('one-state-three-sources') }}</p>
+              <h2 id="structure-title">{{ copy('대화는-세-종류의-상태를-구분해서-연결합니다') }}</h2>
             </div>
           </div>
           <p>
-            대화 상태는 운영 현실의 복사본이 아닙니다. 무엇을 묻는지 기억하고, 실제 사실은 매번 권위
-            있는 Owner에서 다시 읽습니다.
+            {{ copy('대화-상태는-운영-현실의-복사본이-아닙니다-무엇을-묻는지-기억하고-실제-사실은-매번-권위-있는-owner에서-다시-읽습니다') }}
           </p>
         </div>
         <div class="definition-grid">
           <article>
-            <span class="definition-number">01</span>
+            <span class="definition-number">{{ copy('01') }}</span>
             <img
               src="/assets/pictograms/intelligence.svg"
-              alt="Structured dialogue state"
+              [attr.alt]="copy('structured-dialogue-state')"
               width="48"
               height="48"
             />
-            <h3>Dialogue State</h3>
-            <p>현재 domain, intent, 대상 리소스와 입력값을 턴 사이에 유지합니다.</p>
-            <small>기억하는 것: “무엇에 관해 무엇을 하려는가”</small>
+            <h3>{{ copy('dialogue-state') }}</h3>
+            <p>{{ copy('현재-domain-intent-대상-리소스와-입력값을-턴-사이에-유지합니다') }}</p>
+            <small>{{ copy('기억하는-것-무엇에-관해-무엇을-하려는가') }}</small>
           </article>
           <article>
-            <span class="definition-number">02</span>
+            <span class="definition-number">{{ copy('02') }}</span>
             <img
               src="/assets/pictograms/api.svg"
-              alt="OSCE capability schema"
+              [attr.alt]="copy('osce-capability-schema')"
               width="48"
               height="48"
             />
-            <h3>OSCE Capability Schema</h3>
-            <p>Owner가 실제로 제공하는 status·plan·apply·watch 기능과 필요한 입력을 정의합니다.</p>
-            <small>결정하는 것: “어떤 공식 기능을 호출할 수 있는가”</small>
+            <h3>{{ copy('osce-capability-schema-2') }}</h3>
+            <p>{{ copy('owner가-실제로-제공하는-status-plan-apply-watch-기능과-필요한-입력을-정의합니다') }}</p>
+            <small>{{ copy('결정하는-것-어떤-공식-기능을-호출할-수-있는가') }}</small>
           </article>
           <article>
-            <span class="definition-number">03</span>
+            <span class="definition-number">{{ copy('03') }}</span>
             <img
               src="/assets/pictograms/systems.svg"
-              alt="Operational resource graph and evidence"
+              [attr.alt]="copy('operational-resource-graph-and-evidence')"
               width="48"
               height="48"
             />
-            <h3>Resource Graph & Evidence</h3>
-            <p>canonical resource 관계와 해당 턴에서 관측한 실제 상태·freshness를 연결합니다.</p>
-            <small>증명하는 것: “현재 실제로 무엇이 확인되었는가”</small>
+            <h3>{{ copy('resource-graph-evidence') }}</h3>
+            <p>{{ copy('canonical-resource-관계와-해당-턴에서-관측한-실제-상태-freshness를-연결합니다') }}</p>
+            <small>{{ copy('증명하는-것-현재-실제로-무엇이-확인되었는가') }}</small>
           </article>
         </div>
       </section>
@@ -309,123 +197,118 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/developer-tools.svg"
-              alt="Google dialogue methods adapted to OpenSphere"
+              [attr.alt]="copy('google-dialogue-methods-adapted-to-opensphere')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Upstream method · native control</p>
+              <p class="eyebrow">{{ copy('upstream-method-native-control') }}</p>
               <h2 id="google-method-title">
-                Google의 구조를 대화 계층에 적용하고 운영 계층은 OSCE로 확장합니다
+                {{ copy('google의-구조를-대화-계층에-적용하고-운영-계층은-osce로-확장합니다') }}
               </h2>
             </div>
           </div>
           <p>
-            Google SGD는 서비스·intent·slot을 동적으로 해석하고, ADK는 Session·State·Memory를
-            분리합니다. OpenSphere는 그 위에 Owner 권위, live evidence, 승인과 operation receipt를
-            추가합니다.
+            {{ copy('google-sgd는-서비스-intent-slot을-동적으로-해석하고-adk는-session-state-memory를-분리합니') }}
           </p>
         </div>
 
         <div class="method-layers">
           <article>
-            <span>Google SGD · D3ST</span>
+            <span>{{ copy('google-sgd-d3st') }}</span>
             <img
               src="/assets/pictograms/intelligence.svg"
-              alt="Schema guided dialogue understanding"
+              [attr.alt]="copy('schema-guided-dialogue-understanding')"
               width="48"
               height="48"
             />
-            <h3>대화 이해</h3>
+            <h3>{{ copy('대화-이해') }}</h3>
             <p>
-              자연어 설명이 포함된 service schema를 보고 active intent와 필요한 slot을 추적합니다.
+              {{ copy('자연어-설명이-포함된-service-schema를-보고-active-intent와-필요한-slot을-추적합니다') }}
             </p>
-            <small>채택: schema · intent · required/optional/result slots</small>
+            <small>{{ copy('채택-schema-intent-required-optional-result-slots') }}</small>
           </article>
           <article>
-            <span>Google ADK · Dialogflow CX</span>
+            <span>{{ copy('google-adk-dialogflow-cx') }}</span>
             <img
               src="/assets/pictograms/microservices.svg"
-              alt="Session state and memory separation"
+              [attr.alt]="copy('session-state-and-memory-separation')"
               width="48"
               height="48"
             />
-            <h3>상태 lifecycle</h3>
+            <h3>{{ copy('상태-lifecycle') }}</h3>
             <p>
-              메시지 이벤트, 세션 상태, 세션을 넘는 지식을 서로 다른 수명과 저장 책임으로
-              분리합니다.
+              {{ copy('메시지-이벤트-세션-상태-세션을-넘는-지식을-서로-다른-수명과-저장-책임으로-분리합니다') }}
             </p>
-            <small>채택: Session · State · Memory 및 parameter 정규화</small>
+            <small>{{ copy('채택-session-state-memory-및-parameter-정규화') }}</small>
           </article>
           <article>
-            <span>OpenSphere native</span>
+            <span>{{ copy('opensphere-native') }}</span>
             <img
               src="/assets/pictograms/control-tower.svg"
-              alt="OpenSphere operational authority"
+              [attr.alt]="copy('opensphere-operational-authority')"
               width="48"
               height="48"
             />
-            <h3>운영 권위와 증거</h3>
-            <p>OSCE가 capability를 검증하고 Owner가 실제 상태·계획·실행·사후 검증을 소유합니다.</p>
-            <small>추가: authority · evidence · approval · operation</small>
+            <h3>{{ copy('운영-권위와-증거') }}</h3>
+            <p>{{ copy('osce가-capability를-검증하고-owner가-실제-상태-계획-실행-사후-검증을-소유합니다') }}</p>
+            <small>{{ copy('추가-authority-evidence-approval-operation') }}</small>
           </article>
         </div>
 
         <div
           class="schema-mapping-wrap"
           tabindex="0"
-          aria-label="Google schema to OpenSphere mapping"
+          [attr.aria-label]="copy('google-schema-to-opensphere-mapping')"
         >
           <table class="schema-mapping">
             <thead>
               <tr>
-                <th scope="col">Google schema</th>
-                <th scope="col">OpenSphere 계약</th>
-                <th scope="col">PFSS PostgreSQL 예</th>
-                <th scope="col">추가 검증</th>
+                <th scope="col">{{ copy('google-schema') }}</th>
+                <th scope="col">{{ copy('opensphere-계약') }}</th>
+                <th scope="col">{{ copy('pfss-postgresql-예') }}</th>
+                <th scope="col">{{ copy('추가-검증') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <th scope="row"><code>service_name</code></th>
-                <td><code>domain + authorityRef</code></td>
-                <td>pfss.postgresql · PFSS PostgreSQL Owner</td>
-                <td>등록된 Owner와 schema version 일치</td>
+                <th scope="row"><code>{{ copy('service-name') }}</code></th>
+                <td><code>{{ copy('domain-authorityref') }}</code></td>
+                <td>{{ copy('pfss-postgresql-pfss-postgresql-owner') }}</td>
+                <td>{{ copy('등록된-owner와-schema-version-일치') }}</td>
               </tr>
               <tr>
-                <th scope="row"><code>intent</code></th>
-                <td><code>activeIntent + capabilityRef</code></td>
-                <td>status · create.plan · create.apply</td>
-                <td>Owner가 현재 광고한 capability인지 확인</td>
+                <th scope="row"><code>{{ copy('intent') }}</code></th>
+                <td><code>{{ copy('activeintent-capabilityref') }}</code></td>
+                <td>{{ copy('status-create-plan-create-apply') }}</td>
+                <td>{{ copy('owner가-현재-광고한-capability인지-확인') }}</td>
               </tr>
               <tr>
-                <th scope="row"><code>required_slots</code></th>
-                <td><code>slotValues</code></td>
-                <td>name · version · replicas · storageClass</td>
-                <td>형식·정책·기본값과 누락 입력 검증</td>
+                <th scope="row"><code>{{ copy('required-slots') }}</code></th>
+                <td><code>{{ copy('slotvalues') }}</code></td>
+                <td>{{ copy('name-version-replicas-storageclass') }}</td>
+                <td>{{ copy('형식-정책-기본값과-누락-입력-검증') }}</td>
               </tr>
               <tr>
-                <th scope="row"><code>service_call</code></th>
-                <td><code>owner operation</code></td>
-                <td>PostgresClaim status 또는 create plan</td>
-                <td>읽기/변경 분리 · 승인 · plan digest</td>
+                <th scope="row"><code>{{ copy('service-call') }}</code></th>
+                <td><code>{{ copy('owner-operation') }}</code></td>
+                <td>{{ copy('postgresclaim-status-또는-create-plan') }}</td>
+                <td>{{ copy('읽기-변경-분리-승인-plan-digest') }}</td>
               </tr>
               <tr>
-                <th scope="row"><code>service_results</code></th>
-                <td><code>evidenceRefs + operationRef</code></td>
-                <td>observationId · operationId · receipt</td>
-                <td>observedAt · expiresAt · postcondition</td>
+                <th scope="row"><code>{{ copy('service-results') }}</code></th>
+                <td><code>{{ copy('evidencerefs-operationref') }}</code></td>
+                <td>{{ copy('observationid-operationid-receipt') }}</td>
+                <td>{{ copy('observedat-expiresat-postcondition') }}</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <div class="method-boundary">
-          <strong>도입 경계</strong>
+          <strong>{{ copy('도입-경계') }}</strong>
           <p>
-            Google dataset·모델·ADK runtime을 제품 의존성으로 넣지 않습니다. 검증된 데이터 모델과
-            lifecycle 분리 원칙만 수용하고, 구현은 기존 OSAA Gateway·Supabase·OSCE 안에서
-            네이티브하게 수행합니다.
+            {{ copy('google-dataset-모델-adk-runtime을-제품-의존성으로-넣지-않습니다-검증된-데이터-모델과-lifecycle') }}
           </p>
         </div>
       </section>
@@ -435,74 +318,73 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/control-tower.svg"
-              alt="Closed operational dialogue flow"
+              [attr.alt]="copy('closed-operational-dialogue-flow')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Closed operational flow</p>
-              <h2 id="flow-title">질문에서 근거가 있는 답변까지</h2>
+              <p class="eyebrow">{{ copy('closed-operational-flow') }}</p>
+              <h2 id="flow-title">{{ copy('질문에서-근거가-있는-답변까지') }}</h2>
             </div>
           </div>
           <p>
-            OSAA가 추론을 담당하지만 실제 상태의 권위와 변경 권한은 OSCE와 각 component Owner에
-            남습니다.
+            {{ copy('osaa가-추론을-담당하지만-실제-상태의-권위와-변경-권한은-osce와-각-component-owner에-남습니다') }}
           </p>
         </div>
-        <div class="operational-flow" aria-label="User utterance to verified response flow">
+        <div class="operational-flow" [attr.aria-label]="copy('user-utterance-to-verified-response-flow')">
           <article>
             <img
               src="/assets/pictograms/console.svg"
-              alt="User conversation surface"
+              [attr.alt]="copy('user-conversation-surface')"
               width="46"
               height="46"
-            /><span>01</span>
-            <h3>User utterance</h3>
-            <p>자연어 질문과 후속 지시</p>
+            /><span>{{ copy('01') }}</span>
+            <h3>{{ copy('user-utterance') }}</h3>
+            <p>{{ copy('자연어-질문과-후속-지시') }}</p>
           </article>
-          <b aria-hidden="true">→</b>
+          <b aria-hidden="true">{{ copy('symbol') }}</b>
           <article>
             <img
               src="/assets/pictograms/intelligence.svg"
-              alt="Dialogue state tracker"
+              [attr.alt]="copy('dialogue-state-tracker')"
               width="46"
               height="46"
-            /><span>02</span>
-            <h3>State resolve</h3>
-            <p>domain · intent · resource · slots</p>
+            /><span>{{ copy('02') }}</span>
+            <h3>{{ copy('state-resolve') }}</h3>
+            <p>{{ copy('domain-intent-resource-slots') }}</p>
           </article>
-          <b aria-hidden="true">→</b>
+          <b aria-hidden="true">{{ copy('symbol') }}</b>
           <article>
             <img
               src="/assets/pictograms/api.svg"
-              alt="OSCE capability resolution"
+              [attr.alt]="copy('osce-capability-resolution')"
               width="46"
               height="46"
-            /><span>03</span>
-            <h3>Capability resolve</h3>
-            <p>Owner · action · policy · risk</p>
+            /><span>{{ copy('03') }}</span>
+            <h3>{{ copy('capability-resolve') }}</h3>
+            <p>{{ copy('owner-action-policy-risk') }}</p>
           </article>
-          <b aria-hidden="true">→</b>
+          <b aria-hidden="true">{{ copy('symbol') }}</b>
           <article>
             <img
               src="/assets/pictograms/control-panel.svg"
-              alt="Owner read plan or execute"
+              [attr.alt]="copy('owner-read-plan-or-execute')"
               width="46"
               height="46"
-            /><span>04</span>
-            <h3>Owner operation</h3>
-            <p>live read · plan · apply · watch</p>
+            /><span>{{ copy('04') }}</span>
+            <h3>{{ copy('owner-operation-2') }}</h3>
+            <p>{{ copy('live-read-plan-apply-watch') }}</p>
           </article>
-          <b aria-hidden="true">→</b>
+          <b aria-hidden="true">{{ copy('symbol') }}</b>
           <article>
             <img
               src="/assets/pictograms/ai-governance-lifecycle-factsheet.svg"
-              alt="Verified evidence response"
+              [attr.alt]="copy('verified-evidence-response')"
               width="46"
               height="46"
-            /><span>05</span>
-            <h3>Evidence response</h3>
-            <p>result · freshness · uncertainty</p>
+            /><span>{{ copy('05') }}</span>
+            <h3>{{ copy('evidence-response') }}</h3>
+            <p>{{ copy('result-freshness-uncertainty') }}</p>
           </article>
         </div>
       </section>
@@ -512,18 +394,17 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/code-syntax.svg"
-              alt="Typed dialogue state contract"
+              [attr.alt]="copy('typed-dialogue-state-contract')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Minimum state contract</p>
-              <h2 id="contract-title">저장해야 할 것은 사실의 사본이 아니라 안정된 참조입니다</h2>
+              <p class="eyebrow">{{ copy('minimum-state-contract') }}</p>
+              <h2 id="contract-title">{{ copy('저장해야-할-것은-사실의-사본이-아니라-안정된-참조입니다') }}</h2>
             </div>
           </div>
           <p>
-            운영 사실은 시간이 지나면 낡습니다. Dialogue State는 canonical reference를 유지하고,
-            답변 시점의 live evidence를 새로 결속합니다.
+            {{ copy('운영-사실은-시간이-지나면-낡습니다-dialogue-state는-canonical-reference를-유지하고-답변-시점의-l') }}
           </p>
         </div>
         <div class="state-contract">
@@ -542,100 +423,98 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/code-syntax.svg"
-              alt="Concrete dialogue state implementation contract"
+              [attr.alt]="copy('concrete-dialogue-state-implementation-contract')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Concrete native implementation</p>
+              <p class="eyebrow">{{ copy('concrete-native-implementation') }}</p>
               <h2 id="implementation-contract-title">
-                현재 저장 구조를 유지하고 typed projection만 추가합니다
+                {{ copy('현재-저장-구조를-유지하고-typed-projection만-추가합니다') }}
               </h2>
             </div>
           </div>
           <p>
-            Conversation 전체를 새 엔진으로 옮기지 않습니다. 현재 메시지 원장은 그대로 두고, 빠르게
-            읽는 현재 상태 projection과 매 턴의 검증된 state delta를 추가합니다.
+            {{ copy('conversation-전체를-새-엔진으로-옮기지-않습니다-현재-메시지-원장은-그대로-두고-빠르게-읽는-현재-상태-projec') }}
           </p>
         </div>
 
         <div class="implementation-baseline">
           <article class="implemented">
-            <span>이미 구현됨</span>
-            <h3>OSAA durable conversation</h3>
+            <span>{{ copy('이미-구현됨') }}</span>
+            <h3>{{ copy('osaa-durable-conversation') }}</h3>
             <ul>
-              <li><code>osaa.conversation</code> · <code>conversation_message</code></li>
-              <li>사용자 소유권과 Supabase RLS</li>
-              <li><code>conversationId</code>와 turn request 중복 방지</li>
-              <li>최근 80개·60,000자 server-owned context</li>
-              <li>AgentRun · ToolRun · evidence · operation ledger</li>
+              <li><code>{{ copy('osaa-conversation') }}</code> {{ copy('symbol-2') }} <code>{{ copy('conversation-message') }}</code></li>
+              <li>{{ copy('사용자-소유권과-supabase-rls') }}</li>
+              <li><code>{{ copy('conversationid') }}</code>{{ copy('와-turn-request-중복-방지') }}</li>
+              <li>{{ copy('최근-80개-60-000자-server-owned-context') }}</li>
+              <li>{{ copy('agentrun-toolrun-evidence-operation-ledger') }}</li>
             </ul>
           </article>
           <article class="to-build">
-            <span>이번 전략의 구현 대상</span>
-            <h3>Typed dialogue state projection</h3>
+            <span>{{ copy('이번-전략의-구현-대상') }}</span>
+            <h3>{{ copy('typed-dialogue-state-projection') }}</h3>
             <ul>
-              <li><code>osaa.conversation_state</code> 현재 projection과 revision</li>
-              <li><code>conversation_message.metadata.stateDelta</code> 턴별 변경 이력</li>
-              <li>OSCE schema version과 Owner authority binding</li>
-              <li>LLM 제안 뒤 deterministic validator 통과</li>
-              <li>live evidence와 active operation reference 연결</li>
+              <li><code>{{ copy('osaa-conversation-state') }}</code> {{ copy('현재-projection과-revision') }}</li>
+              <li><code>{{ copy('conversation-message-metadata-statedelta') }}</code> {{ copy('턴별-변경-이력') }}</li>
+              <li>{{ copy('osce-schema-version과-owner-authority-binding') }}</li>
+              <li>{{ copy('llm-제안-뒤-deterministic-validator-통과') }}</li>
+              <li>{{ copy('live-evidence와-active-operation-reference-연결') }}</li>
             </ul>
           </article>
         </div>
 
         <div class="contract-detail">
           <div>
-            <p class="eyebrow">Target projection · v1</p>
-            <h3>PFSS PostgreSQL 상태 예시</h3>
+            <p class="eyebrow">{{ copy('target-projection-v1') }}</p>
+            <h3>{{ copy('pfss-postgresql-상태-예시') }}</h3>
             <pre tabindex="0"><code>{{ exampleState }}</code></pre>
           </div>
           <div class="storage-rules">
             <article>
-              <strong><code>slotValues</code>에 저장</strong>
-              <p>사용자가 요청한 desired input과 schema가 정규화한 값만 저장합니다.</p>
-              <small>예: PostgreSQL 18 · replicas 2</small>
+              <strong><code>{{ copy('slotvalues') }}</code>{{ copy('에-저장') }}</strong>
+              <p>{{ copy('사용자가-요청한-desired-input과-schema가-정규화한-값만-저장합니다') }}</p>
+              <small>{{ copy('예-postgresql-18-replicas-2') }}</small>
             </article>
             <article>
-              <strong>운영 사실은 저장하지 않음</strong>
+              <strong>{{ copy('운영-사실은-저장하지-않음') }}</strong>
               <p>
-                Ready·Pod 수·Owner 응답은 state의 사실 값이 아니라 유효기간이 있는 evidence
-                reference입니다.
+                {{ copy('ready-pod-수-owner-응답은-state의-사실-값이-아니라-유효기간이-있는-evidence-reference입니다') }}
               </p>
-              <small>매 답변 시 live read 또는 명시적 last-known 판정</small>
+              <small>{{ copy('매-답변-시-live-read-또는-명시적-last-known-판정') }}</small>
             </article>
             <article>
-              <strong>동시성은 revision으로 차단</strong>
-              <p>현재 revision과 turn request를 비교해 중복·순서 역전 상태 변경을 거부합니다.</p>
-              <small>optimistic state transition · idempotent turn</small>
+              <strong>{{ copy('동시성은-revision으로-차단') }}</strong>
+              <p>{{ copy('현재-revision과-turn-request를-비교해-중복-순서-역전-상태-변경을-거부합니다') }}</p>
+              <small>{{ copy('optimistic-state-transition-idempotent-turn') }}</small>
             </article>
           </div>
         </div>
 
-        <div class="state-transaction" aria-label="Dialogue state transaction steps">
+        <div class="state-transaction" [attr.aria-label]="copy('dialogue-state-transaction-steps')">
           <article>
-            <span>01</span><strong>Load</strong>
-            <p>현재 projection과 새 utterance를 읽음</p>
+            <span>{{ copy('01') }}</span><strong>{{ copy('load') }}</strong>
+            <p>{{ copy('현재-projection과-새-utterance를-읽음') }}</p>
           </article>
           <article>
-            <span>02</span><strong>Propose</strong>
-            <p>LLM이 intent·resource·slot delta를 제안</p>
+            <span>{{ copy('02') }}</span><strong>{{ copy('propose') }}</strong>
+            <p>{{ copy('llm이-intent-resource-slot-delta를-제안') }}</p>
           </article>
           <article>
-            <span>03</span><strong>Validate</strong>
-            <p>OSCE schema·Owner·canonical ID로 결정 검증</p>
+            <span>{{ copy('03') }}</span><strong>{{ copy('validate') }}</strong>
+            <p>{{ copy('osce-schema-owner-canonical-id로-결정-검증') }}</p>
           </article>
           <article>
-            <span>04</span><strong>Observe / Plan</strong>
-            <p>Owner가 live read 또는 변경 계획 수행</p>
+            <span>{{ copy('04') }}</span><strong>{{ copy('observe-plan') }}</strong>
+            <p>{{ copy('owner가-live-read-또는-변경-계획-수행') }}</p>
           </article>
           <article>
-            <span>05</span><strong>Commit</strong>
-            <p>state revision·delta·evidence·operation을 원자 기록</p>
+            <span>{{ copy('05') }}</span><strong>{{ copy('commit') }}</strong>
+            <p>{{ copy('state-revision-delta-evidence-operation을-원자-기록') }}</p>
           </article>
           <article>
-            <span>06</span><strong>Respond</strong>
-            <p>검증된 상태와 해당 턴 증거로만 답변</p>
+            <span>{{ copy('06') }}</span><strong>{{ copy('respond') }}</strong>
+            <p>{{ copy('검증된-상태와-해당-턴-증거로만-답변') }}</p>
           </article>
         </div>
       </section>
@@ -645,68 +524,68 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/microservices.svg"
-              alt="Three related conversation turns"
+              [attr.alt]="copy('three-related-conversation-turns')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Reference continuity</p>
-              <h2 id="continuity-title">PFSS PostgreSQL 대화는 이렇게 이어져야 합니다</h2>
+              <p class="eyebrow">{{ copy('reference-continuity') }}</p>
+              <h2 id="continuity-title">{{ copy('pfss-postgresql-대화는-이렇게-이어져야-합니다') }}</h2>
             </div>
           </div>
         </div>
         <div class="turn-sequence">
           <article>
-            <span>TURN 01</span>
-            <h3>“현재 운영 인스턴스가 있는가?”</h3>
+            <span>{{ copy('turn-01') }}</span>
+            <h3>{{ copy('현재-운영-인스턴스가-있는가') }}</h3>
             <dl>
               <div>
-                <dt>domain</dt>
-                <dd>pfss.postgresql</dd>
+                <dt>{{ copy('domain') }}</dt>
+                <dd>{{ copy('pfss-postgresql') }}</dd>
               </div>
               <div>
-                <dt>intent</dt>
-                <dd>status</dd>
+                <dt>{{ copy('intent') }}</dt>
+                <dd>{{ copy('status') }}</dd>
               </div>
               <div>
-                <dt>resource</dt>
-                <dd>foundation-data-pg</dd>
+                <dt>{{ copy('resource') }}</dt>
+                <dd>{{ copy('foundation-data-pg') }}</dd>
               </div>
             </dl>
           </article>
           <article>
-            <span>TURN 02</span>
-            <h3>“삭제할 수 있나?”</h3>
+            <span>{{ copy('turn-02') }}</span>
+            <h3>{{ copy('삭제할-수-있나') }}</h3>
             <dl>
               <div>
-                <dt>유지</dt>
-                <dd>domain · resource</dd>
+                <dt>{{ copy('유지') }}</dt>
+                <dd>{{ copy('domain-resource') }}</dd>
               </div>
               <div>
-                <dt>변경</dt>
-                <dd>release.capability.check</dd>
+                <dt>{{ copy('변경') }}</dt>
+                <dd>{{ copy('release-capability-check') }}</dd>
               </div>
               <div>
-                <dt>재검증</dt>
-                <dd>Owner capability · protection</dd>
+                <dt>{{ copy('재검증') }}</dt>
+                <dd>{{ copy('owner-capability-protection') }}</dd>
               </div>
             </dl>
           </article>
           <article>
-            <span>TURN 03</span>
-            <h3>“새로운 인스턴스 생성은?”</h3>
+            <span>{{ copy('turn-03') }}</span>
+            <h3>{{ copy('새로운-인스턴스-생성은') }}</h3>
             <dl>
               <div>
-                <dt>유지</dt>
-                <dd>pfss.postgresql</dd>
+                <dt>{{ copy('유지') }}</dt>
+                <dd>{{ copy('pfss-postgresql') }}</dd>
               </div>
               <div>
-                <dt>변경</dt>
-                <dd>create.capability.check</dd>
+                <dt>{{ copy('변경') }}</dt>
+                <dd>{{ copy('create-capability-check') }}</dd>
               </div>
               <div>
-                <dt>대상</dt>
-                <dd>기존 claim → PFSS service</dd>
+                <dt>{{ copy('대상') }}</dt>
+                <dd>{{ copy('기존-claim-pfss-service') }}</dd>
               </div>
             </dl>
           </article>
@@ -718,37 +597,36 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/ai-governance-lifecycle-factsheet.svg"
-              alt="Evidence-backed answer rules"
+              [attr.alt]="copy('evidence-backed-answer-rules')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Truth and evidence gates</p>
-              <h2 id="truth-title">R2D2가 지켜야 할 답변 규칙</h2>
+              <p class="eyebrow">{{ copy('truth-and-evidence-gates') }}</p>
+              <h2 id="truth-title">{{ copy('r2d2가-지켜야-할-답변-규칙') }}</h2>
             </div>
           </div>
           <p>
-            말이 그럴듯한지가 아니라 해당 턴의 도구 호출, Owner 응답과 증거 참조가 답변을
-            지지하는지로 판정합니다.
+            {{ copy('말이-그럴듯한지가-아니라-해당-턴의-도구-호출-owner-응답과-증거-참조가-답변을-지지하는지로-판정합니다') }}
           </p>
         </div>
         <div class="truth-grid">
           <article class="required">
-            <strong>반드시</strong>
+            <strong>{{ copy('반드시') }}</strong>
             <ul>
-              <li>live 조회를 주장하면 해당 턴의 evidenceRef를 제시</li>
-              <li>조회 실패를 “관찰 불가능”으로 표현</li>
-              <li>Owner가 광고한 capability로 실행 가능성 판정</li>
-              <li>실행 후 postcondition과 receipt까지 연결</li>
+              <li>{{ copy('live-조회를-주장하면-해당-턴의-evidenceref를-제시') }}</li>
+              <li>{{ copy('조회-실패를-관찰-불가능-으로-표현') }}</li>
+              <li>{{ copy('owner가-광고한-capability로-실행-가능성-판정') }}</li>
+              <li>{{ copy('실행-후-postcondition과-receipt까지-연결') }}</li>
             </ul>
           </article>
           <article class="forbidden">
-            <strong>금지</strong>
+            <strong>{{ copy('금지') }}</strong>
             <ul>
-              <li>tool call 없이 “확인했습니다”라고 답변</li>
-              <li>오래된 snapshot을 현재 사실로 재사용</li>
-              <li>API 실패를 리소스 부재로 해석</li>
-              <li>모델 추론을 mutation 권위로 사용</li>
+              <li>{{ copy('tool-call-없이-확인했습니다-라고-답변') }}</li>
+              <li>{{ copy('오래된-snapshot을-현재-사실로-재사용') }}</li>
+              <li>{{ copy('api-실패를-리소스-부재로-해석') }}</li>
+              <li>{{ copy('모델-추론을-mutation-권위로-사용') }}</li>
             </ul>
           </article>
         </div>
@@ -759,92 +637,91 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/control-panel.svg"
-              alt="OSAA dialogue state delivery plan"
+              [attr.alt]="copy('osaa-dialogue-state-delivery-plan')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Delivery plan · bounded increments</p>
+              <p class="eyebrow">{{ copy('delivery-plan-bounded-increments') }}</p>
               <h2 id="delivery-plan-title">
-                다섯 단계로 구현하고 각 단계에서 독립적으로 판정합니다
+                {{ copy('다섯-단계로-구현하고-각-단계에서-독립적으로-판정합니다') }}
               </h2>
             </div>
           </div>
           <p>
-            프레임워크 도입부터 시작하지 않습니다. 데이터 계약, schema adapter, validator, evidence
-            결속, 사용자 검증 순으로 작은 기능 단위를 완성합니다.
+            {{ copy('프레임워크-도입부터-시작하지-않습니다-데이터-계약-schema-adapter-validator-evidence-결속-사용자-검') }}
           </p>
         </div>
 
         <ol class="delivery-phases">
           <li>
-            <span>01</span>
+            <span>{{ copy('01') }}</span>
             <img
               src="/assets/pictograms/code-syntax.svg"
-              alt="State contract and migration"
+              [attr.alt]="copy('state-contract-and-migration')"
               width="42"
               height="42"
             />
             <div>
-              <strong>State contract & migration</strong>
-              <p><code>conversation_state</code>, revision, stateDelta와 RLS를 추가합니다.</p>
-              <small>Gate: 재시작 후 같은 conversation state 복구</small>
+              <strong>{{ copy('state-contract-migration') }}</strong>
+              <p><code>{{ copy('conversation-state') }}</code>{{ copy('revision-statedelta와-rls를-추가합니다') }}</p>
+              <small>{{ copy('gate-재시작-후-같은-conversation-state-복구') }}</small>
             </div>
           </li>
           <li>
-            <span>02</span>
+            <span>{{ copy('02') }}</span>
             <img
               src="/assets/pictograms/api.svg"
-              alt="OSCE schema adapter"
+              [attr.alt]="copy('osce-schema-adapter')"
               width="42"
               height="42"
             />
             <div>
-              <strong>OSCE schema adapter</strong>
-              <p>Owner capability를 service·intent·slot schema로 투영합니다.</p>
-              <small>Gate: 새 capability가 모델 재학습 없이 노출</small>
+              <strong>{{ copy('osce-schema-adapter') }}</strong>
+              <p>{{ copy('owner-capability를-service-intent-slot-schema로-투영합니다') }}</p>
+              <small>{{ copy('gate-새-capability가-모델-재학습-없이-노출') }}</small>
             </div>
           </li>
           <li>
-            <span>03</span>
+            <span>{{ copy('03') }}</span>
             <img
               src="/assets/pictograms/intelligence.svg"
-              alt="State resolver and validator"
+              [attr.alt]="copy('state-resolver-and-validator')"
               width="42"
               height="42"
             />
             <div>
-              <strong>Resolver & deterministic validator</strong>
-              <p>LLM은 delta를 제안하고 서버가 schema·ID·정책으로 확정합니다.</p>
-              <small>Gate: 미등록 intent·resource·slot 거부</small>
+              <strong>{{ copy('resolver-deterministic-validator') }}</strong>
+              <p>{{ copy('llm은-delta를-제안하고-서버가-schema-id-정책으로-확정합니다') }}</p>
+              <small>{{ copy('gate-미등록-intent-resource-slot-거부') }}</small>
             </div>
           </li>
           <li>
-            <span>04</span>
+            <span>{{ copy('04') }}</span>
             <img
               src="/assets/pictograms/control-tower.svg"
-              alt="Evidence and operation binding"
+              [attr.alt]="copy('evidence-and-operation-binding')"
               width="42"
               height="42"
             />
             <div>
-              <strong>Evidence & operation binding</strong>
-              <p>live read, plan, approval, apply와 postcondition을 같은 턴에 연결합니다.</p>
-              <small>Gate: 근거 없는 현재 사실·완료 주장 차단</small>
+              <strong>{{ copy('evidence-operation-binding') }}</strong>
+              <p>{{ copy('live-read-plan-approval-apply와-postcondition을-같은-턴에-연결합니다') }}</p>
+              <small>{{ copy('gate-근거-없는-현재-사실-완료-주장-차단') }}</small>
             </div>
           </li>
           <li>
-            <span>05</span>
+            <span>{{ copy('05') }}</span>
             <img
               src="/assets/pictograms/console.svg"
-              alt="Console state inspection and evaluation"
+              [attr.alt]="copy('console-state-inspection-and-evaluation')"
               width="42"
               height="42"
             />
             <div>
-              <strong>Console inspection & evaluation</strong>
-              <p>운영자는 현재 intent·resource·evidence·operation을 대화에서 확인합니다.</p>
-              <small>Gate: PFSS 기준 시나리오와 장애 시나리오 통과</small>
+              <strong>{{ copy('console-inspection-evaluation') }}</strong>
+              <p>{{ copy('운영자는-현재-intent-resource-evidence-operation을-대화에서-확인합니다') }}</p>
+              <small>{{ copy('gate-pfss-기준-시나리오와-장애-시나리오-통과') }}</small>
             </div>
           </li>
         </ol>
@@ -853,58 +730,58 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="acceptance-heading">
             <img
               src="/assets/pictograms/ai-governance-lifecycle-factsheet.svg"
-              alt="Acceptance test contract"
+              [attr.alt]="copy('acceptance-test-contract')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Acceptance contract</p>
-              <h3>R2D2 완성도는 실제 대화 결과로 판정합니다</h3>
+              <p class="eyebrow">{{ copy('acceptance-contract') }}</p>
+              <h3>{{ copy('r2d2-완성도는-실제-대화-결과로-판정합니다') }}</h3>
             </div>
           </div>
           <div
             class="acceptance-table-wrap"
             tabindex="0"
-            aria-label="Dialogue state acceptance scenarios"
+            [attr.aria-label]="copy('dialogue-state-acceptance-scenarios')"
           >
             <table class="acceptance-table">
               <thead>
                 <tr>
-                  <th scope="col">시나리오</th>
-                  <th scope="col">반드시 유지할 상태</th>
-                  <th scope="col">합격 판정</th>
+                  <th scope="col">{{ copy('시나리오') }}</th>
+                  <th scope="col">{{ copy('반드시-유지할-상태') }}</th>
+                  <th scope="col">{{ copy('합격-판정') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <th scope="row">운영 인스턴스가 있는가?</th>
-                  <td>pfss.postgresql · status</td>
-                  <td>같은 턴의 Owner evidence로 대상·Ready·관측 시각 제시</td>
+                  <th scope="row">{{ copy('운영-인스턴스가-있는가') }}</th>
+                  <td>{{ copy('pfss-postgresql-status') }}</td>
+                  <td>{{ copy('같은-턴의-owner-evidence로-대상-ready-관측-시각-제시') }}</td>
                 </tr>
                 <tr>
-                  <th scope="row">삭제할 수 있나?</th>
-                  <td>기존 resource 유지 · intent만 delete capability로 전환</td>
-                  <td>보호·백업·권한을 별도 조회하고 plan 가능 여부를 판정</td>
+                  <th scope="row">{{ copy('삭제할-수-있나-2') }}</th>
+                  <td>{{ copy('기존-resource-유지-intent만-delete-capability로-전환') }}</td>
+                  <td>{{ copy('보호-백업-권한을-별도-조회하고-plan-가능-여부를-판정') }}</td>
                 </tr>
                 <tr>
-                  <th scope="row">새 인스턴스 생성은?</th>
-                  <td>domain 유지 · 기존 resource는 생성 대상에서 해제</td>
-                  <td>create schema의 누락 slot만 질문하고 기존 장애를 복사하지 않음</td>
+                  <th scope="row">{{ copy('새-인스턴스-생성은') }}</th>
+                  <td>{{ copy('domain-유지-기존-resource는-생성-대상에서-해제') }}</td>
+                  <td>{{ copy('create-schema의-누락-slot만-질문하고-기존-장애를-복사하지-않음') }}</td>
                 </tr>
                 <tr>
-                  <th scope="row">Owner API 500</th>
-                  <td>canonical resource reference 유지</td>
-                  <td>“없음”이 아니라 “현재 관찰 불가능”으로 답변</td>
+                  <th scope="row">{{ copy('owner-api-500') }}</th>
+                  <td>{{ copy('canonical-resource-reference-유지') }}</td>
+                  <td>{{ copy('없음-이-아니라-현재-관찰-불가능-으로-답변') }}</td>
                 </tr>
                 <tr>
-                  <th scope="row">변경 실행</th>
-                  <td>planDigest · approval · operationRef</td>
-                  <td>receipt와 postcondition 전에는 완료라고 답하지 않음</td>
+                  <th scope="row">{{ copy('변경-실행') }}</th>
+                  <td>{{ copy('plandigest-approval-operationref') }}</td>
+                  <td>{{ copy('receipt와-postcondition-전에는-완료라고-답하지-않음') }}</td>
                 </tr>
                 <tr>
-                  <th scope="row">새 Owner capability 설치</th>
-                  <td>새 schemaRef revision</td>
-                  <td>LLM 재학습 없이 새로운 intent·slot을 해석</td>
+                  <th scope="row">{{ copy('새-owner-capability-설치') }}</th>
+                  <td>{{ copy('새-schemaref-revision') }}</td>
+                  <td>{{ copy('llm-재학습-없이-새로운-intent-slot을-해석') }}</td>
                 </tr>
               </tbody>
             </table>
@@ -917,29 +794,28 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
           <div class="section-title-lockup">
             <img
               src="/assets/pictograms/cloud-infrastructure-management.svg"
-              alt="Upstream concepts assessed for OpenSphere"
+              [attr.alt]="copy('upstream-concepts-assessed-for-opensphere')"
               width="52"
               height="52"
             />
             <div>
-              <p class="eyebrow">Upstream assessment</p>
+              <p class="eyebrow">{{ copy('upstream-assessment') }}</p>
               <h2 id="upstream-title">
-                검증된 개념은 수용하고 실행 프레임워크는 중복 도입하지 않습니다
+                {{ copy('검증된-개념은-수용하고-실행-프레임워크는-중복-도입하지-않습니다') }}
               </h2>
             </div>
           </div>
           <p>
-            현재 OSAA Gateway·Supabase·OSCE operation ledger를 유지하면서 필요한 상태 모델만 얇게
-            추가합니다.
+            {{ copy('현재-osaa-gateway-supabase-osce-operation-ledger를-유지하면서-필요한-상태-모델만-얇게-추가') }}
           </p>
         </div>
-        <div class="upstream-table-wrap" tabindex="0" aria-label="Upstream reference assessment">
+        <div class="upstream-table-wrap" tabindex="0" [attr.aria-label]="copy('upstream-reference-assessment')">
           <table class="upstream-table">
             <thead>
               <tr>
-                <th scope="col">Upstream</th>
-                <th scope="col">가져올 개념</th>
-                <th scope="col">OpenSphere 결정</th>
+                <th scope="col">{{ copy('upstream') }}</th>
+                <th scope="col">{{ copy('가져올-개념') }}</th>
+                <th scope="col">{{ copy('opensphere-결정') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -960,17 +836,15 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
         <div class="implementation-decision">
           <img
             src="/assets/pictograms/control-panel.svg"
-            alt="Bounded implementation decision"
+            [attr.alt]="copy('bounded-implementation-decision')"
             width="58"
             height="58"
           />
           <div>
-            <p class="eyebrow">Implementation boundary</p>
-            <h3>개념은 채택, 새 orchestration framework는 보류</h3>
+            <p class="eyebrow">{{ copy('implementation-boundary') }}</p>
+            <h3>{{ copy('개념은-채택-새-orchestration-framework는-보류') }}</h3>
             <p>
-              Rasa·LangGraph·Temporal을 지금 추가하지 않습니다. 먼저 typed Dialogue State Tracker를
-              OSAA Gateway에 두고 Supabase, OSCE Capability Schema, Operational Resource Graph와
-              기존 operation ledger를 연결합니다.
+              {{ copy('rasa-langgraph-temporal을-지금-추가하지-않습니다-먼저-typed-dialogue-state-tracker를') }}
             </p>
           </div>
         </div>
@@ -1468,7 +1342,10 @@ const UPSTREAM_REFERENCES: readonly UpstreamReference[] = [
   ],
 })
 export class LandingOsaaDialogueState {
-  readonly stateFields = DIALOGUE_STATE_FIELDS;
-  readonly upstreamReferences = UPSTREAM_REFERENCES;
-  readonly exampleState = EXAMPLE_DIALOGUE_STATE;
+  readonly content = inject(ConsoleIndexContentService);
+  readonly copy = (key: string): string => this.content.text('osaa-dialogue-state', key);
+
+  get stateFields(): typeof DIALOGUE_STATE_FIELDS { return this.content.model('DIALOGUE_STATE_FIELDS'); }
+  get upstreamReferences(): typeof UPSTREAM_REFERENCES { return this.content.model('UPSTREAM_REFERENCES'); }
+  get exampleState(): typeof EXAMPLE_DIALOGUE_STATE { return this.content.model('EXAMPLE_DIALOGUE_STATE'); }
 }

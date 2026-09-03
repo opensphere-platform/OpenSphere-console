@@ -1,27 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {inspect} from 'node:util';
+const contentRoot=new URL('../../../../console-index-content/content/',import.meta.url);
+function contentFile(file){return JSON.parse(fs.readFileSync(new URL(file,contentRoot),'utf8'));}
+function withContent(file,group){
+  const dict=contentFile(group+'.copy.json');
+  const escape=s=>s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+  return fs.readFileSync(new URL(file,import.meta.url),'utf8').replace(/\{\{ copy\('([^']+)'\) \}\}/g,(_,key)=>escape(dict[key])) + '\n' + inspect(dict,{depth:null});
+}
+function modelSource(file){return Object.entries(contentFile(file)).map(([name,value])=>'export const '+name+' = '+inspect(value,{depth:null,maxArrayLength:null,breakLength:Infinity,compact:true})).join('\n');}
 
-const source = fs.readFileSync(new URL('./landing.ts', import.meta.url), 'utf8');
-const realizationModel = fs.readFileSync(
-  new URL('../architecture/service-realization.model.ts', import.meta.url),
-  'utf8',
-);
-const foundationSource = fs.readFileSync(new URL('./landing-foundations.ts', import.meta.url), 'utf8');
-const dialogueStateSource = fs.readFileSync(new URL('./landing-osaa-dialogue-state.ts', import.meta.url), 'utf8');
-const registryCatalogSource = fs.readFileSync(new URL('./landing-registry-catalog.ts', import.meta.url), 'utf8');
-const pfssDeliverySource = fs.readFileSync(new URL('./landing-pfss-delivery.ts', import.meta.url), 'utf8');
+
+const source = withContent('./landing.ts','architecture');
+const realizationModel = modelSource('architecture.models.json');
+const foundationSource = withContent('./landing-foundations.ts','foundations');
+const dialogueStateSource = withContent('./landing-osaa-dialogue-state.ts','osaa-dialogue-state') + modelSource('dialogue-state.models.json');
+const registryCatalogSource = withContent('./landing-registry-catalog.ts','registry-catalog');
+const pfssDeliverySource = withContent('./landing-pfss-delivery.ts','pfss-delivery');
 const globalStylesSource = fs.readFileSync(new URL('../../styles.scss', import.meta.url), 'utf8');
-const foundationModel = fs.readFileSync(
-  new URL('../architecture/foundation-concepts.model.ts', import.meta.url),
-  'utf8',
-);
+const foundationModel = modelSource('foundations.models.json');
 const shell = fs.readFileSync(new URL('../os/os-shell.ts', import.meta.url), 'utf8');
 const search = fs.readFileSync(new URL('../core/search.service.ts', import.meta.url), 'utf8');
 
 const perspectiveStart = source.indexOf('const PERSPECTIVES');
 const componentStart = source.indexOf('@Component');
-const perspectiveModel = source.slice(perspectiveStart, componentStart);
+const perspectiveModel = inspect(contentFile('architecture.models.json').PERSPECTIVES,{depth:null,breakLength:Infinity,compact:true});
 
 test('main index defines exactly ten horizontal Perspectives', () => {
   assert.equal((perspectiveModel.match(/\{ num: \d+/g) || []).length, 10);
@@ -410,7 +414,7 @@ test('Control Engine page defines OSCE as the shared engine without absorbing co
   assert.match(foundationSource, /구조화된 API가 기본, OSC는 공식 command adapter/);
   assert.match(foundationSource, /OSCE가 소유하는 것과 소유하지 않는 것/);
   assert.match(foundationSource, /raw kubectl·SQL/);
-  assert.equal((foundationModel.match(/step: '0[1-5]',\r?\n    title: '(?:Observe & Understand|Plan|Authorize|Execute|Verify & Recover)'/g) || []).length, 5);
+  assert.deepEqual(contentFile('foundations.models.json').CONTROL_ENGINE_STAGES.map(s=>s.title), ['Observe & Understand','Plan','Authorize','Execute','Verify & Recover']);
 });
 
 test('AI lifecycle distinguishes current runtime from target model and playground contracts', () => {

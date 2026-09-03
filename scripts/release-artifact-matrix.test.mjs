@@ -31,6 +31,7 @@ const auxiliary = [
   ['cliArtifacts', 'opensphere-os-cli', 'cmd/os-cli/Dockerfile'],
   ['osShellControl', 'opensphere-console-os-shell-control', 'apps/os-shell-control/Dockerfile'],
   ['osShellRuntime', 'opensphere-os-shell-runtime', 'apps/os-shell-control/Dockerfile.runtime'],
+  ['consoleIndexContent', 'opensphere-console-index-content', 'apps/console-index-content/Dockerfile'],
 ];
 
 const canonicalKeys = canonical.map(([key]) => key);
@@ -62,17 +63,17 @@ function stepRun(job, name) {
   return step.run;
 }
 
-test('candidate matrix has 18 canonical and three signed auxiliary artifacts', async () => {
+test('candidate matrix has 18 canonical and four signed auxiliary artifacts', async () => {
   const workflow = yaml.load(await read('.github/workflows/publish-candidate-images.yml'));
   const publish = workflow.jobs.publish;
   assert.equal(publish.if, '${{ false }}', 'candidate publication HOLD must remain fail-closed');
 
   const matrix = publish.strategy.matrix.include;
-  assert.equal(matrix.length, 21);
+  assert.equal(matrix.length, 22);
   const canonicalMatrix = matrix.filter(({ scope }) => scope === 'canonical');
   const auxiliaryMatrix = matrix.filter(({ scope }) => scope === 'auxiliary');
   assert.equal(canonicalMatrix.length, 18);
-  assert.equal(auxiliaryMatrix.length, 3);
+  assert.equal(auxiliaryMatrix.length, 4);
   assert.deepEqual(sorted(canonicalMatrix.map(({ image }) => image)), sorted(canonicalImages));
   assert.deepEqual(sorted(auxiliaryMatrix.map(({ image }) => image)), sorted(auxiliaryImages));
 
@@ -137,7 +138,7 @@ test('stable and GA stay held and describe only an 18-component canonical promot
   );
 });
 
-test('local edge moves its anchor only with canonical 18 and auxiliary three at one revision', async () => {
+test('local edge moves its anchor only with canonical 18 and auxiliary four at one revision', async () => {
   const source = await read('scripts/Publish-LocalEdge.ps1');
   assert.deepEqual(quotedPowerShellArray(source, '[string[]]$Components'), [...canonicalKeys, ...auxiliaryKeys]);
   assert.deepEqual(quotedPowerShellArray(source, '$canonicalComponentKeys'), canonicalKeys);
@@ -149,7 +150,7 @@ test('local edge moves its anchor only with canonical 18 and auxiliary three at 
   assert.ok(source.indexOf("if ($Components -contains 'cliArtifacts')") < source.indexOf('New-Item -ItemType Directory'));
   assert.match(source, /\$canonicalImages\.Count -ne 18/u);
   assert.match(source, /\$componentEvidence\.Count -ne 18/u);
-  assert.match(source, /\$auxiliaryArtifactEvidence\.Count -ne 3/u);
+  assert.match(source, /\$auxiliaryArtifactEvidence\.Count -ne 4/u);
   assert.match(source, /\$bom\['auxiliaryArtifacts'\] = \$auxiliaryArtifactEvidence/u);
   assert.match(source, /\$canonicalAnchorMayMove = \$integratedRequest -or \$AdvanceOsShellUxConsoleEdge/u);
   assert.match(source, /if \(\$integratedRequest\) \{[\s\S]*'--release-ready', '--release-profile=bootstrap-core'/u);

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Atomic Console index content envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sha256",
+    "data"
+  ],
+  "properties": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of UTF-8 JSON.stringify(data); integrity, not publisher authentication."
+    },
+    "data": {
+      "$ref": "console-index-content.schema.json"
+    }
+  }
+}

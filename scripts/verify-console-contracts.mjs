@@ -18,7 +18,7 @@ const BOOTSTRAP_CORE_RELEASE_PROFILE = Object.freeze({
   availableModules: Object.freeze([
     'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'recovery',
   ]),
-  bootstrapAuxiliaryArtifacts: Object.freeze(['cliArtifacts']),
+  bootstrapAuxiliaryArtifacts: Object.freeze(['cliArtifacts', 'consoleIndexContent']),
   availableAuxiliaryArtifacts: Object.freeze(['osShellControl', 'osShellRuntime']),
   inactiveBrowserFamilies: Object.freeze([
     ['notifications', 'C_NOTIFY'],

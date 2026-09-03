@@ -1,0 +1,4 @@
+
+# Console content bytes and POSIX init script are reproducible across Windows/Linux.
+apps/console-index-content/** text eol=lf
+apps/console-web/public/console-index-renderer-signature.txt text eol=lf

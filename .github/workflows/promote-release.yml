@@ -92,9 +92,10 @@ jobs:
             opensphere-os-cli
             opensphere-console-os-shell-control
             opensphere-os-shell-runtime
+            opensphere-console-index-content
           )
           test "${#canonical_images[@]}" -eq 18
-          test "${#auxiliary_images[@]}" -eq 3
+          test "${#auxiliary_images[@]}" -eq 4
           components='{}'
           for image in "${canonical_images[@]}"; do
             repository="ghcr.io/opensphere-platform/$image"
