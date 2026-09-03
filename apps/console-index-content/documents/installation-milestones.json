@@ -8,11 +8,11 @@
     "at": "2026-09-04 00:30–00:36 KST",
     "context": "docker-desktop",
     "runtime": "6/6 노드 · 65/65 활성 Pod Ready · 13/13 PVC Bound",
-    "result": "재부팅 후 서비스 기동 확인. Console 전체 기능과 공개 배포본의 클린 설치 재현은 미완료.",
+    "result": "재부팅 후 서비스 기동과 Console 기반 런타임을 확인했습니다. 기능 수용·공식 배포본 결속·클린 설치 재현은 진행 중입니다.",
     "access": "Console과 Developer의 HTTPS 신뢰 검증 실패가 남음. www 설계 페이지는 TLS 신뢰 검증 통과.",
     "limitation": "이 페이지는 기준 시점의 기록이며 실시간 상태판이 아닙니다. 단계 전환 전 다시 검증합니다."
   },
-  "next": "먼저 M02의 HTTPS 접근·네이티브 기능·변경/복구 경로를 완성하고, 검증한 수정만 공개 Setup 배포본에 결속합니다. 클린 설치가 같은 수용 검증을 통과한 후 M03 Cluster Manager의 상세 설계·최소 구현에 진입합니다.",
+  "next": "M02의 남은 네이티브 기능 수용과 G02 클린 재현은 최종 릴리스 게이트로 계속 진행합니다. M03 Cluster Manager의 범위·계약과 read-only 진단 slice는 지금 병행 착수할 수 있습니다. 승인 쓰기 작업은 필요한 Console Owner 경로와 G02 결과에 연계합니다.",
   "prerequisite": "M00 · 기존 Kubernetes: API·Ready 노드·CNI/DNS·StorageClass·ingress/LB 경로를 제공한다. Setup doctor는 이를 검사하며 클러스터를 임의 교체하지 않는다. 재부팅 복원 점검은 통과했지만 매 설치 직전에 재검사한다.",
   "rules": [
     "큰 박스는 책임을 가진 repository 또는 수용 단위다. 작은 박스는 작업과 통과 증거다. 박스 개수가 Pod·이미지·릴리스 수를 뜻하지 않는다.",
@@ -41,9 +41,9 @@
       "검증한 수정을 배포본에 반영하고 클린 재현"
     ],
     [
-      "G02",
+      "M02",
       "M03",
-      "Console 수용 + 공개 Setup 클린 재현 통과"
+      "Console 기반 운영 확인 후 read-only 설계·구현 병행; 승인 쓰기·최종 설치는 G02 결과 연계"
     ],
     [
       "G02",
@@ -178,14 +178,14 @@
       "id": "M02",
       "repo": "OpenSphere-Console",
       "name": "설치 완료를 증명하는 수용 단계",
-      "phase": "02 · 현재 작업",
+      "phase": "02 · 수용 마감",
       "icon": "console.svg",
       "status": "open",
-      "state": "현재 위치 · 완료 차단 항목 있음",
-      "required": "필수 · 다음 모듈 진입 게이트",
+      "state": "기반 운영 확인 · 최종 수용 진행",
+      "required": "필수 · 최종 릴리스 게이트",
       "entry": "M01으로 기동한 기존 설치를 보존하고 결함을 수정한다. 지금 클린 삭제하지 않는다.",
       "exit": "G02: 전체 필수 기능 수용 → 수정의 공식 배포본 결속 → 소유 자원만 정리한 클린 설치 → 같은 기능 수용 + 재부팅 검증 통과. 동일 바이너리/BOM/schema·설정 의미·결과로 비교하며 새 Secret 값까지 같을 필요는 없다.",
-      "current": "모든 상시 서비스가 Ready인 사실과 설치 완료는 다릅니다. Repair Runner, Platform Release 실행 경로, Recovery 통합, 실제 사용자 journey 및 공개 배포본 재현이 남아 있습니다.",
+      "current": "Console 기반 서비스와 네이티브 런타임은 운영 중입니다. Platform Release 실행 Owner, Repair Runner 실행 경로, 사용자 OS Shell·OSAA 종단 시험, 파일 Recovery, 공식 배포본 결속과 클린 재현이 남아 있습니다. 이 항목은 Cluster Manager read-only slice 착수를 막지 않습니다.",
       "scope": "Console 소유 네이티브 기능; 별도 제품으로 분리하지 않음",
       "sources": [
         "S2",
@@ -280,14 +280,14 @@
       "id": "M03",
       "repo": "OpenSphere-Cluster-Manager",
       "name": "다음 구현 대상 · 클러스터를 관리 가능한 상태로",
-      "phase": "03 · 다음 모듈",
+      "phase": "03 · 병행 착수",
       "icon": "cloud-infrastructure-management.svg",
       "status": "planned",
-      "state": "상세 설계·구현 전",
-      "required": "첫 운영 여정의 후속 대상 · 제안",
-      "entry": "G02 통과 + cluster-manager API/권한/배포/수용 명세 확정. 설계 작업은 병행 가능하나 새 설치 진입은 G02 뒤다.",
+      "state": "읽기 진단 설계·구현 착수 가능",
+      "required": "다음 구현 대상 · read-only부터",
+      "entry": "Console 기반 운영 확인 + cluster-manager API/권한/배포/수용 명세. 설계와 read-only 진단 slice는 지금 착수한다. 승인 쓰기 작업은 필요한 Console Owner 경로와 G02 결과에 연계한다.",
       "exit": "G03: 기존 cluster를 안전하게 등록·조회하고 상태의 근거·시각·장애를 설명한다. 필요한 승인 action 하나를 선택한 Owner 경로로 검증한다. read-only slice와 write slice의 완료를 구분한다.",
-      "current": "현재 경계 문서만 있으며 모듈 설계·구현 폴더는 비어 있습니다. 다음에 실행할 설치 명령이나 게시 이미지가 준비된 것으로 표시하지 않습니다.",
+      "current": "현재 경계 문서가 있으며 read-only 최소 slice의 구체 설계·구현을 착수할 수 있습니다. 아직 설치 명령이나 게시 이미지가 준비된 상태는 아닙니다.",
       "scope": "C_CLUSTER · 인프라 진단과 제한된 작업; 범용 kubectl 실행기 아님",
       "sources": [
         "S6",
@@ -633,7 +633,7 @@
     [
       "D-MILESTONE-03",
       "진행 순서 제안",
-      "G02 다음 제품 구현 대상은 Cluster Manager. 첫 read-only slice와 제한된 승인 action을 나눠 완성한다."
+      "Console 기반 운영을 확인하면 Cluster Manager read-only slice를 병행 착수한다. 승인 쓰기 slice와 전체 설치 완료는 필요한 Console Owner 경로와 G02 결과에 연계한다."
     ],
     [
       "D-MILESTONE-04",
@@ -644,8 +644,8 @@
   "openQuestions": [
     [
       "Q01",
-      "M03 진입 전",
-      "Cluster Manager의 첫 제한 action, 담당 Owner, API/배포 artifact와 rollback 범위를 확정한다. 읽기 진단이 먼저다."
+      "M03 read-only 착수 시",
+      "read-only 진단의 첫 API·화면·권한·freshness·배포 artifact와 수용 fixture를 확정한다. 첫 제한 쓰기 action의 Owner·rollback은 write slice 전에 닫는다."
     ],
     [
       "Q02",

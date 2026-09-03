@@ -8,14 +8,14 @@
 
 ## 현재 위치와 바로 다음 단계
 
-재부팅 후 서비스 기동 확인. Console 전체 기능과 공개 배포본의 클린 설치 재현은 미완료.
+재부팅 후 서비스 기동과 Console 기반 런타임을 확인했습니다. 기능 수용·공식 배포본 결속·클린 설치 재현은 진행 중입니다.
 
 - 관찰: 2026-09-04 00:30–00:36 KST / docker-desktop
 - 기동: 6/6 노드 · 65/65 활성 Pod Ready · 13/13 PVC Bound
 - 접근: Console과 Developer의 HTTPS 신뢰 검증 실패가 남음. www 설계 페이지는 TLS 신뢰 검증 통과.
 - 한계: 이 페이지는 기준 시점의 기록이며 실시간 상태판이 아닙니다. 단계 전환 전 다시 검증합니다.
 
-**먼저 M02의 HTTPS 접근·네이티브 기능·변경/복구 경로를 완성하고, 검증한 수정만 공개 Setup 배포본에 결속합니다. 클린 설치가 같은 수용 검증을 통과한 후 M03 Cluster Manager의 상세 설계·최소 구현에 진입합니다.**
+**M02의 남은 네이티브 기능 수용과 G02 클린 재현은 최종 릴리스 게이트로 계속 진행합니다. M03 Cluster Manager의 범위·계약과 read-only 진단 slice는 지금 병행 착수할 수 있습니다. 승인 쓰기 작업은 필요한 Console Owner 경로와 G02 결과에 연계합니다.**
 
 M00 · 기존 Kubernetes: API·Ready 노드·CNI/DNS·StorageClass·ingress/LB 경로를 제공한다. Setup doctor는 이를 검사하며 클러스터를 임의 교체하지 않는다. 재부팅 복원 점검은 통과했지만 매 설치 직전에 재검사한다.
 
@@ -37,22 +37,22 @@ Cluster Manager와 Foundation의 모듈 설계·구현 폴더가 비어 있는 �
 | M00 → M01 | 환경 전제 |
 | M01 → M02 | 기존 설치를 보존한 기능 수용 |
 | M02 → M01 | 검증한 수정을 배포본에 반영하고 클린 재현 |
-| G02 → M03 | Console 수용 + 공개 Setup 클린 재현 통과 |
+| M02 → M03 | Console 기반 운영 확인 후 read-only 설계·구현 병행; 승인 쓰기·최종 설치는 G02 결과 연계 |
 | G02 → M04 | 요구 자원/Owner 계약이 필요한 경우 |
 | M03 → M04 | 인프라 요구가 확인된 경우만; 읽기 진단에 Foundation 강제 의존 없음 |
 | G02 → M05–M08 | Console hosted 통합 경로 |
 | M04 → M05–M08 | 선택한 제품이 요구하는 capability만 |
 | M05 → M06–M08 | Workforce 발견·SSO·launch 통합 선택 시; standalone의 필수 선행 아님 |
 
-M01의 bootstrap과 M02의 제품 수용은 한 설치 과정의 다른 책임이다. M02가 source 수정을 검증하면 M01의 배포본에 반영하여 클린 재현한다. G02는 두 경로를 닫는 결합 gate다. M03 읽기 진단에 Foundation을 강제하지 않지만, 승인 action이 Foundation 소유 자원을 변경한다면 해당 M04 계약·capability를 먼저 갖춰야 한다.
+M01의 bootstrap과 M02의 제품 수용은 한 설치 과정의 다른 책임이다. M02가 source 수정을 검증하면 M01의 배포본에 반영하여 클린 재현한다. G02는 Console 전체 설치를 닫는 결합 gate다. M03 read-only 진단은 M02와 병행할 수 있으며 Foundation을 강제하지 않지만, 승인 action이 Foundation 소유 자원을 변경한다면 해당 M04 계약·capability를 먼저 갖춰야 한다.
 
 ## 이정표 요약
 
 | ID | 책임 단위 | 기준 시점 상태 | 다음 단계 조건 |
 |---|---|---|---|
 | M01 | OpenSphere-Setup-CLI | 기동 확인 · 수용 미완료 | 필수 |
-| M02 | OpenSphere-Console | 현재 위치 · 완료 차단 항목 있음 | 필수 · 다음 모듈 진입 게이트 |
-| M03 | OpenSphere-Cluster-Manager | 상세 설계·구현 전 | 첫 운영 여정의 후속 대상 · 제안 |
+| M02 | OpenSphere-Console | 기반 운영 확인 · 최종 수용 진행 | 필수 · 최종 릴리스 게이트 |
+| M03 | OpenSphere-Cluster-Manager | 읽기 진단 설계·구현 착수 가능 | 다음 구현 대상 · read-only부터 |
 | M04 | OpenSphere-Foundation | 필요 capability부터 상세 설계 | 제품의 자원 요구가 있을 때 |
 | M05 | OpenSphere-Workspace | 설계 있음 · 설치 수용 전 | Workforce 진입면을 제공할 때 |
 | M06 | OpenSphere-Developer | 별도 서비스 기동 확인 · 통합 미판정 | 개발 서비스를 선택할 때 |
@@ -87,12 +87,12 @@ M01의 bootstrap과 M02의 제품 수용은 한 설치 과정의 다른 책임�
 
 ## M02 · OpenSphere-Console
 
-**설치 완료를 증명하는 수용 단계** · 02 · 현재 작업 · 현재 위치 · 완료 차단 항목 있음
+**설치 완료를 증명하는 수용 단계** · 02 · 수용 마감 · 기반 운영 확인 · 최종 수용 진행
 
-- 적용: 필수 · 다음 모듈 진입 게이트
+- 적용: 필수 · 최종 릴리스 게이트
 - 범위: Console 소유 네이티브 기능; 별도 제품으로 분리하지 않음
 - 진입 조건: M01으로 기동한 기존 설치를 보존하고 결함을 수정한다. 지금 클린 삭제하지 않는다.
-- 기준 시점: 모든 상시 서비스가 Ready인 사실과 설치 완료는 다릅니다. Repair Runner, Platform Release 실행 경로, Recovery 통합, 실제 사용자 journey 및 공개 배포본 재현이 남아 있습니다.
+- 기준 시점: Console 기반 서비스와 네이티브 런타임은 운영 중입니다. Platform Release 실행 Owner, Repair Runner 실행 경로, 사용자 OS Shell·OSAA 종단 시험, 파일 Recovery, 공식 배포본 결속과 클린 재현이 남아 있습니다. 이 항목은 Cluster Manager read-only slice 착수를 막지 않습니다.
 - 완료 조건: **G02: 전체 필수 기능 수용 → 수정의 공식 배포본 결속 → 소유 자원만 정리한 클린 설치 → 같은 기능 수용 + 재부팅 검증 통과. 동일 바이너리/BOM/schema·설정 의미·결과로 비교하며 새 Secret 값까지 같을 필요는 없다.**
 - 출처: S2, S3, S4, S5
 
@@ -111,12 +111,12 @@ M01의 bootstrap과 M02의 제품 수용은 한 설치 과정의 다른 책임�
 
 ## M03 · OpenSphere-Cluster-Manager
 
-**다음 구현 대상 · 클러스터를 관리 가능한 상태로** · 03 · 다음 모듈 · 상세 설계·구현 전
+**다음 구현 대상 · 클러스터를 관리 가능한 상태로** · 03 · 병행 착수 · 읽기 진단 설계·구현 착수 가능
 
-- 적용: 첫 운영 여정의 후속 대상 · 제안
+- 적용: 다음 구현 대상 · read-only부터
 - 범위: C_CLUSTER · 인프라 진단과 제한된 작업; 범용 kubectl 실행기 아님
-- 진입 조건: G02 통과 + cluster-manager API/권한/배포/수용 명세 확정. 설계 작업은 병행 가능하나 새 설치 진입은 G02 뒤다.
-- 기준 시점: 현재 경계 문서만 있으며 모듈 설계·구현 폴더는 비어 있습니다. 다음에 실행할 설치 명령이나 게시 이미지가 준비된 것으로 표시하지 않습니다.
+- 진입 조건: Console 기반 운영 확인 + cluster-manager API/권한/배포/수용 명세. 설계와 read-only 진단 slice는 지금 착수한다. 승인 쓰기 작업은 필요한 Console Owner 경로와 G02 결과에 연계한다.
+- 기준 시점: 현재 경계 문서가 있으며 read-only 최소 slice의 구체 설계·구현을 착수할 수 있습니다. 아직 설치 명령이나 게시 이미지가 준비된 상태는 아닙니다.
 - 완료 조건: **G03: 기존 cluster를 안전하게 등록·조회하고 상태의 근거·시각·장애를 설명한다. 필요한 승인 action 하나를 선택한 Owner 경로로 검증한다. read-only slice와 write slice의 완료를 구분한다.**
 - 출처: S6, S7, S8
 
@@ -248,12 +248,12 @@ M01의 bootstrap과 M02의 제품 수용은 한 설치 과정의 다른 책임�
 |---|---|---|
 | D-MILESTONE-01 | 기존 승인 계승 | Setup은 최초 기반, Console은 후속 설정·승인·운영. Console 네이티브 기능을 후속 별도 제품으로 밀어내지 않는다. |
 | D-MILESTONE-02 | 사용자 완료 기준 | 필수 기능 수용 후 공개 Setup 클린 설치에서 동일 수용을 재통과해야 Console 설치 완료다. |
-| D-MILESTONE-03 | 진행 순서 제안 | G02 다음 제품 구현 대상은 Cluster Manager. 첫 read-only slice와 제한된 승인 action을 나눠 완성한다. |
+| D-MILESTONE-03 | 진행 순서 제안 | Console 기반 운영을 확인하면 Cluster Manager read-only slice를 병행 착수한다. 승인 쓰기 slice와 전체 설치 완료는 필요한 Console Owner 경로와 G02 결과에 연계한다. |
 | D-MILESTONE-04 | 의존성 기반 제안 | Foundation은 첫 자원 요구에 맞춰 최소 도입; 후속 제품은 선택. Workspace는 standalone 제품의 강제 선행 조건이 아니다. |
 
 | 질문 | 닫아야 할 시점 | 내용 |
 |---|---|---|
-| Q01 | M03 진입 전 | Cluster Manager의 첫 제한 action, 담당 Owner, API/배포 artifact와 rollback 범위를 확정한다. 읽기 진단이 먼저다. |
+| Q01 | M03 read-only 착수 시 | read-only 진단의 첫 API·화면·권한·freshness·배포 artifact와 수용 fixture를 확정한다. 첫 제한 쓰기 action의 Owner·rollback은 write slice 전에 닫는다. |
 | Q02 | M04 진입 전 | 첫 소비자 capability와 provider, 기존 자원 재사용 여부를 정한다. Ceph·HA 등은 요구 근거가 있어야 한다. |
 | Q03 | M05 진입 전 | Workforce IdP/issuer/audience, production host, tenant 규모와 최소 앱 하나를 정한다. |
 | Q04 | M06–M08 진입 전 | 첫 선택 제품과 profile, SLO/RPO/RTO·데이터 보존·비용·운영 책임을 고정한다. |
