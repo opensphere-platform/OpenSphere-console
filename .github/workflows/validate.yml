@@ -74,8 +74,8 @@ jobs:
           node scripts/verify-console-api-postgres-e2e.mjs
       - name: Verify deterministic Manual seed
         run: |
-          npm run manual:seed
-          git diff --exit-code -- apps/osaa-gateway/manual-seeds/opensphere-core-manuals.json
+          node scripts/verify-manual-seed.mjs
+          node --test scripts/verify-manual-seed.test.mjs
       - name: Test Console contracts and legacy behavior
         run: |
           npm run test:contracts

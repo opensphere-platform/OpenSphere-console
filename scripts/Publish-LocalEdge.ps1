@@ -213,6 +213,7 @@ try {
   # The detached checkout has no node_modules. Resolve only the committed lockfile;
   # lifecycle scripts are unnecessary for the read-only contract and migration gates.
   Invoke-Checked npm.cmd ci --ignore-scripts --no-audit --no-fund | Out-Null
+  Invoke-Checked node scripts/verify-manual-seed.mjs | Out-Null
   $contractArguments = @('scripts/verify-console-contracts.mjs')
   if ($integratedRequest) {
     $contractArguments += @('--release-ready', '--release-profile=bootstrap-core')

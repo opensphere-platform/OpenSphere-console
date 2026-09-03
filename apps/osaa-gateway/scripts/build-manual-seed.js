@@ -428,7 +428,7 @@ concepts.push({
   definition: 'OSAA Gateway is a Main Shell capability that uses Supabase for its durable data boundary, Gitea-correlated change control, tool manifests and guarded action submission.',
   authorityTier: 3,
   status: 'active',
-  sourceIds: ['console-docs/platform-control-plane-v2', 'console-docs/osaa-manual-knowledge-data-model'],
+  sourceIds: ['design/console/backbone', 'console-docs/manual-ownership'],
   tags: ['osaa', 'gateway', 'supabase', 'gitea'],
 });
 
@@ -439,7 +439,7 @@ relations.push({
   toId: conceptId('perspective', 'ai-level'),
   confidence: 'manual',
   authorityTier: 3,
-  sourceId: 'console-docs/osaa-manual-knowledge-data-model',
+  sourceId: 'console-docs/manual-ownership',
 });
 
 const manifest = {
