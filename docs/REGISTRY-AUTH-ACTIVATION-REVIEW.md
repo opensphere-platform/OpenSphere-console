@@ -40,7 +40,7 @@ C_API가 침해되면 이 여섯 Secret의 읽기·교체 권한이 노출된다
 
 ## 승인 기록
 
-2026-09-03 사용자가 “승인한다”라고 답하여 위 여섯 Secret get/update 예외를 승인했다. 아래 순서 중 1~2는 로컬 설계·배포 manifest·gate 및 회귀 검증까지 완료했다. GitHub OAuth 앱 등록, 공급자 실시험, 실제 클러스터 적용 및 공개 발행은 미완료다.
+2026-09-03 사용자가 “승인한다”라고 답하여 위 여섯 Secret get/update 예외를 승인했다. 아래 순서 중 1~2는 로컬 설계·배포 manifest·gate 및 회귀 검증까지 완료했다. 이후 전용 OAuth 앱 등록, 로그인·refresh 실시험, 격리 PostgreSQL 검증, 별도 승인한 main push·Console GHCR edge 발행 및 공개 Setup edge.21 OAuth doctor가 완료됐다. 실제 Kubernetes 적용·운영 갱신·cold-pull 검증은 미실행이다. [최종 실행 증거](CONSOLE-INSTALL-RELEASE-202609031353.md)를 따른다.
 
 ## 승인 이후 순서
 

@@ -1,6 +1,6 @@
 # Registry 인증·운영 권한 인계 — registry-auth/v1
 
-2026-09-03. **로컬 구현·검증 중 / 미발행 / Kubernetes 미적용.** 공개 edge.20의 기능 설명이 아니다. OAuth는 전용 앱으로 실제 GHCR 다운로드·갱신 시험을 통과하기 전까지 opt-in 시험 기능이다.
+2026-09-03. **Console `202609031353` edge 발행 / 공개 Setup edge.21 OAuth doctor 통과 / Kubernetes 미적용.** 전용 앱의 로그인·refresh와 최소 OAuth 권한의 실제 GHCR manifest 접근을 검증했다. 설치된 Console의 갱신·전파·cold-pull은 아직 검증하지 않았다. OAuth는 명시적 opt-in이며, localhost pre-ga 결과를 GA 지원 보증으로 해석하지 않는다. [실행 증거와 한계](CONSOLE-INSTALL-RELEASE-202609031353.md).
 
 ## 책임과 경계
 
@@ -11,7 +11,7 @@
 | Kubernetes kubelet | namespace의 imagePullSecret으로 이미지 다운로드 | GitHub OAuth 로그인 또는 refresh-token 갱신 |
 | 운영자 | OAuth 앱 승인, 조직/SSO 권한 승인, 필요 시 재인증, PAT 수동 교체 | 정상적인 자동 갱신마다 Setup 실행 |
 
-2026-09-03 사용자가 여섯 Secret에 한정한 get/update 권한 예외를 승인했다. C_API 배포 원본에 5개 namespace Role/RoleBinding, 600초 projected ServiceAccount token, registry-auth/v1 활성화 환경 변수와 필수 egress를 반영했다. automount는 false를 유지한다. 클러스터 적용 및 공개 릴리스 발행은 아직 하지 않았다. 기존 C_REG의 catalog/read-model 책임과 C_EXT의 Extension 실행 책임은 유지한다. 추가 repository/process/datastore/framework/dependency는 없다.
+2026-09-03 사용자가 여섯 Secret에 한정한 get/update 권한 예외를 승인했다. C_API 배포 원본에 5개 namespace Role/RoleBinding, 600초 projected ServiceAccount token, registry-auth/v1 활성화 환경 변수와 필수 egress를 반영했다. automount는 false를 유지한다. 발행된 Console에 반영됐으며 클러스터 적용은 아직 하지 않았다. 기존 C_REG의 catalog/read-model 책임과 C_EXT의 Extension 실행 책임은 유지한다. 추가 repository/process/datastore/framework/dependency는 없다.
 
 ## 저장 계약
 
@@ -27,10 +27,10 @@
 
 `--registry-auth auto|oauth|pat|anonymous`. 기본 auto는 기존 credential이 있으면 검사하고, 없으면 anonymous로 시도한다. OAuth는 명시적 선택이며 무인 실행에서 임의의 브라우저 로그인을 시작하지 않는다.
 
-작업본 시험 명령:
+공개 휴대형 EXE로 검증한 명령:
 
 ```powershell
-node src/cli.mjs doctor --channel edge --context docker-desktop --registry-auth oauth --github-client-id <OpenSphere-owned-client-id>
+.\opensphere-setup.exe --channel edge doctor --release edge --context docker-desktop --registry-auth oauth
 ```
 
 Client ID는 공개 식별자다. device flow에 client_secret을 넣거나 다른 앱의 Client ID를 빌리지 않는다. 브라우저에서 github.com/login/device와 일회용 user code를 승인하며 device_code는 사용자 화면에 출력하지 않는다.
@@ -56,7 +56,7 @@ GitHub GHCR 문서는 PAT classic을 공식 사용자 인증 수단으로 안내
 
 Pending / AwaitingAuthorization / Ready / Degraded / Stale / ReauthorizationRequired / Removing / Anonymous. Ready는 provider identity + 필요한 manifest 접근 + Secret generation 전파 관측을 뜻한다. kubelet의 신규 cold-pull이나 모든 workload rollout을 이 값 하나로 입증하지 않는다. 마지막 검증이 20분 넘으면 Stale로 표시한다. accepted 작업과 설치 완료를 구분한다.
 
-HTTP: POST `/api/admin/extensions/registry-connections/opensphere-ghcr/oauth`, GET/PUT/DELETE 기존 connection 경로. OpenAPI·JSON Schema·HTTP 테스트가 같은 경로를 고정한다. DB에는 credential 원문 대신 기존 operation digest와 비밀값 없는 lifecycle 감사만 저장한다. migration 0027은 신규 권한 확인/감사 함수 두 개이며 실행 DB 적용은 아직 하지 않았다.
+HTTP: POST `/api/admin/extensions/registry-connections/opensphere-ghcr/oauth`, GET/PUT/DELETE 기존 connection 경로. OpenAPI·JSON Schema·HTTP 테스트가 같은 경로를 고정한다. DB에는 credential 원문 대신 기존 operation digest와 비밀값 없는 lifecycle 감사만 저장한다. migration 0027은 신규 권한 확인/감사 함수 두 개이며 격리 PostgreSQL에서 전체 28개 migration 적용·SQL 검증 및 DB HTTP E2E를 통과했다. 대상 Kubernetes DB에는 아직 적용하지 않았다.
 
 ## 승인된 배포 권한과 네트워크
 
@@ -68,13 +68,14 @@ HTTP: POST `/api/admin/extensions/registry-connections/opensphere-ghcr/oauth`, G
 - 공급자 통신에는 TCP/443 egress가 필요하다. 표준 NetworkPolicy는 FQDN 제한을 제공하지 않으므로 다른 443 목적지도 네트워크 계층에서 허용된다. 애플리케이션의 고정 origin·redirect 거부와 별개로 이 잔여 위험을 유지한다. 다른 포트의 광역 egress는 허용하지 않는다.
 - 14개 Kubernetes 객체에 대해 실제 localhost API 주소를 사용한 client dry-run과 strict schema 검증이 통과했다. 테스트용 렌더링 파일은 0으로 채운 가상 image digest를 사용하므로 설치용 artifact가 아니다. admission/RBAC 실제 적용, CNI 정책 집행, Pod token rotation, cold-pull을 이 결과로 주장하지 않는다.
 
-## 발행 전에 남은 실제 검증
+## 완료한 검증과 설치 후 남은 검증
 
-- OpenSphere 소유 OAuth App 등록, Device Flow 활성화, Client ID 확보. 로컬 source에서 찾지 못했고 Setup 저장소의 OPENSPHERE_GITHUB_OAUTH_CLIENT_ID 변수 조회도 HTTP 404였다.
+- 완료: OpenSphere 소유 OAuth App 등록·Device Flow 활성화 및 공개 Client ID 연결. client secret 또는 publisher PAT를 내장하지 않는다.
 - 완료: 사용자가 승인한 좁은 Secret 권한 예외를 배포 manifest·설계 trust boundary·배포 검증 규칙에 함께 반영했다. 운영 클러스터의 실제 적용·검증은 별도다.
-- 격리 DB에서 migration/RLS/grant·최근 MFA 회귀 검증. 현재 환경에 psql/postgres 실행 파일이 없어 이 시험은 실행하지 못했다.
-- 등록 앱의 실제 private GHCR 로그인/다운로드/refresh/재인증, Kubernetes에서 새 노드 cold-pull/재시작/전파/복구를 검증한다. 설치 잠금이 변경되면 runtime-owned image 목록을 갱신하고 새 digest를 재검증하는 단위 시험은 통과했으며, 실제 release upgrade에서도 확인해야 한다.
-- 그 후 Console image/build/BOM와 Setup portable runtime을 각각 발행하고 채널을 이동한다. 이번 작업으로 edge.20, GHCR 또는 localhost runtime이 변경되지는 않았다.
+- 완료: 격리 PostgreSQL의 migration 28개·SQL 검증 28개, RLS/grant·최근 MFA·권한 회수·감사 replay 및 초기 관리자/API/Controller DB HTTP E2E. 임시 검증 컨테이너 제거 완료.
+- 완료: 실제 OAuth 로그인·refresh 회전, 공개 EXE로 현재 GHCR 이미지 21개의 불변 digest 접근, 원격 설치 자료 47개/manifest 12개 그룹 검증. 이미지 blob 다운로드 및 kubelet cold-pull을 manifest 검사로 입증하지 않는다.
+- 미실행: Kubernetes bootstrap 및 운영 credential 인계, 새 노드 cold-pull/rollout/갱신/재인증/재시작/전파/복구. 설치 잠금 변경 시 runtime-owned image 목록을 갱신하고 새 digest를 재검증하는 단위 시험은 통과했으며 실제 release upgrade에서도 확인해야 한다.
+- 완료: Console `202609031353`의 GHCR 통합 BOM·edge 발행, 공개 Setup `setup-v0.5.0-edge.21` 발행, 양쪽 main CI. 이전 edge.20 릴리스를 수정하지 않았다.
 
 ## 근거
 

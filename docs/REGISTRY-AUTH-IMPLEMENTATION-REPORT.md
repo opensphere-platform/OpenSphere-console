@@ -2,6 +2,8 @@
 
 2026-09-03. 지정된 여섯 Secret 권한은 사용자 승인 후 소스에 반영했다. 승인 대기가 아니다. 이 문서는 과거의 미등록/edge.20 상태를 대체한다.
 
+**현재: Console `202609031353` edge 발행 및 공개 Setup edge.21의 OAuth 설치 doctor 통과 / Kubernetes 미설치.** [최종 발행·진단 결과](CONSOLE-INSTALL-RELEASE-202609031353.md).
+
 ## 구현 및 책임
 
 - 공개 Setup CLI **setup-v0.5.0-edge.21**을 발행했다. Windows portable 실행이며 설치/PATH/service 변경과 credential cache가 없다.
@@ -32,6 +34,6 @@
 
 ## 완료로 주장하지 않는 범위
 
-Console 이미지/BOM 발행, 최소 OAuth 권한의 실제 digest 접근, localhost CLI doctor와 클러스터 운영 인계는 별도 실행 결과로 판정한다. 현재 작업/후속 증거는 [설치 준비 기록](CONSOLE-CLI-INSTALL-READINESS.md)에 유지한다. candidate/stable/GA 승인을 의미하지 않는다.
+Console 이미지/BOM 발행, 최소 OAuth 권한의 실제 digest 접근, 공개 EXE의 localhost CLI doctor는 통과했다. Kubernetes bootstrap, Pod cold-pull/rollout, 설치된 Console의 credential 인계·자동 갱신·전파·복구는 미실행이다. candidate/stable/GA 승인을 의미하지 않는다.
 
-최종 DB HTTP E2E와 수정된 Console을 대상으로 한 Setup 298개 conformance도 통과했다. 현재 단계는 자동 보안 검토가 main commit/push를 차단한 상태이며 GHCR/edge 및 Kubernetes는 미변경이다. 정확한 차단 이유와 다음 외부 반영 범위는 [설치 준비 기록](CONSOLE-CLI-INSTALL-READINESS.md#최종-로컬-검증-및-외부-반영-차단-2026-09-03)을 따른다.
+최종 DB HTTP E2E와 수정된 Console을 대상으로 한 Setup 298개 conformance도 통과했다. 과거 자동 보안 검토의 main commit/push 차단은 사용자의 해당 범위 재승인 후 해소됐고 두 저장소 main push 및 CI 성공, GHCR 발행·edge 이동까지 완료했다. Kubernetes는 변경하지 않았다. 승인·차단 이력은 [설치 준비 기록](CONSOLE-CLI-INSTALL-READINESS.md)에 보존한다.

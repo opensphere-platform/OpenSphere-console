@@ -2,6 +2,8 @@
 
 2026-09-03. 목표는 공개 Setup CLI가 localhost docker-desktop Kubernetes에서 Console을 설치할 수 있도록 하는 것이다. CLI 자체 발행으로 완료 처리하지 않는다.
 
+**현재 판정 (2026-09-03 14:38 KST): 설치 사전진단 통과 / Kubernetes 미설치.** Console `202609031353` 통합 이미지 21개의 GHCR 발행·edge 승격, 양쪽 main CI, 공개 Setup `setup-v0.5.0-edge.21`의 실제 최소 OAuth 권한 doctor가 모두 통과했다. 원격 설치 자료 47개/manifest 12개 그룹까지 검증했다. 아래 작업 시작·차단·승인 기록은 이력이며 현재 차단 상태가 아니다. 정확한 artifact, 명령, 미실행 범위는 [최종 발행·진단 결과](CONSOLE-INSTALL-RELEASE-202609031353.md)를 따른다.
+
 ## 현재 작업과 권한
 
 사용자가 Console 설치 준비를 명시적으로 요청했다. 이전의 main push·GHCR 발행·OAuth 운영 인계 및 여섯 Secret get/update 승인을 이어 적용한다. 다른 namespace/제품/cluster는 수정하지 않는다. Setup은 Windows에 상주 설치하지 않는다.
@@ -14,7 +16,7 @@
 - temporary verification: 격리 PostgreSQL 컨테이너만 사용하며 검증 후 제거
 - preserved namespaces: opensphere-developer, opensphere-developer-standalone, opensphere-www 및 cluster infrastructure
 
-## 확인된 상태
+## 작업 시작 시 확인된 상태 (이력)
 
 - Kubernetes v1.36.1, 6/6 Ready amd64 nodes. Console 관리 namespace는 아직 없다.
 - 공개 Setup edge.21에 OAuth App Client ID가 포함돼 있다. 실제 identity/refresh는 통과했지만 GHCR manifest는 404였다. 갱신 과정에서 사용한 credential은 저장하지 않았다.
@@ -50,7 +52,7 @@
 
 자동 보안 검토는 main stage/commit/push 요청을 실행 전에 거부했다. O:/OpenSphere/AGENTS.md의 과거 문서 전용/외부 반영 제한을 근거로 이전 대화의 push 승인을 인정하지 않았다. 차단된 명령은 실행되지 않았다. 제한을 우회하거나 AGENTS.md를 수정하지 않았다. 현재 Console HEAD는 순방향 SQL 원본 commit fa287c6cbf2e8cff5a2e0f46658beafc0c758a1d이고, 검증된 나머지 변경은 작업 트리에 보존되어 있다. 새 Console GHCR 이미지/BOM/edge 이동 및 Kubernetes 설치는 실행하지 않았다.
 
-## 다음 실행 범위
+## 승인 요청 시 계획한 실행 범위 (이력)
 
 1. 검증된 Console 변경을 main에 commit/push한다. 새 source commit의 Git committer timestamp를 Asia/Seoul로 변환한 yyyyMMddHHmm만 공식 image 버전으로 사용한다.
 2. 기존 scripts/Publish-LocalEdge.ps1로 Windows localhost에서 linux/amd64 canonical 18개 + auxiliary 3개를 빌드/서명·GHCR push한다. exact digest/metadata 검증 후 immutable 날짜 tag, Console anchor 마지막 순서로 edge를 이동한다. 기존 tags/package를 삭제하거나 공개로 전환하지 않는다.
@@ -58,7 +60,7 @@
 4. 새 최소 read:packages OAuth 승인을 한 번 받아 실제 GHCR digest 접근과 공개 Setup doctor를 실행한다. Publisher 관리자 키는 Setup/Console에 인계하지 않는다. 승인된 OAuth credential은 한 실행 안에서만 보유하며 local runtime cache에 저장하지 않는다.
 5. 설치 준비 완료는 doctor의 전체 공급망/소스/매니페스트 검증 통과 이후로 판정한다. Kubernetes 설치/rollout 및 갱신 인계 실검증을 수행했다면 그 결과를 별도 기록한다.
 
-발행 후 사용할 휴대형 명령(현재 GHCR 미발행 상태에서는 설치 명령을 실행하지 않는다):
+발행 후 사용할 휴대형 명령(계획 당시 GHCR 미발행 상태였으며, 현재 결과는 문서 상단 링크 참조):
 
 ```powershell
 .\opensphere-setup.exe --channel edge doctor --release edge --context docker-desktop --registry-auth oauth
@@ -73,4 +75,4 @@ Windows 상주 설치, PATH 변경, host CLI 설치 및 CA 신뢰 등록은 하�
 
 ## 발행 경로 보완
 
-깨끗한 worktree에서 잠금 파일 기반 dependency 설치를 먼저 수행하도록 발행 스크립트를 보완했다. CI는 migration 원본 commit 검증을 위해 전체 Git 이력을 받는다. 내장 Manual의 두 체크섬 불일치와 폐기된 source 참조를 수정하고, 저장된 DESIGN snapshot의 자체 무결성 및 저장소 문서 원본 일치를 검사하는 gate를 CI/발행에 추가했다. 외부 DESIGN이 없는 CI에서 최신 외부 설계를 검증한 것으로 주장하지 않는다. 변경 후 매뉴얼·발행 회귀 17개가 통과했다. 이전 c31df1f 기반 발행은 채널 승격 전에 중지했으며 새 소스로 전체 통합 BOM을 다시 발행한다.
+깨끗한 worktree에서 잠금 파일 기반 dependency 설치를 먼저 수행하도록 발행 스크립트를 보완했다. CI는 migration 원본 commit 검증을 위해 전체 Git 이력을 받는다. 내장 Manual의 두 체크섬 불일치와 폐기된 source 참조를 수정하고, 저장된 DESIGN snapshot의 자체 무결성 및 저장소 문서 원본 일치를 검사하는 gate를 CI/발행에 추가했다. 외부 DESIGN이 없는 CI에서 최신 외부 설계를 검증한 것으로 주장하지 않는다. 변경 후 매뉴얼·발행 회귀 17개가 통과했다. 이전 c31df1f 기반 발행은 채널 승격 전에 중지했으며 fd80207 소스로 전체 통합 BOM을 다시 발행했다.
