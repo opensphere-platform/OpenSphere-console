@@ -98,7 +98,7 @@ function errorEnvelope(error, correlationId) {
     schemaVersion: '1.0',
     code,
     message: String(error?.message || 'Console API request failed').slice(0, 500),
-    retryable: code === 'AuthorityUnavailable' || code === 'DependencyTimeout',
+    retryable: code === 'AuthorityUnavailable' || code === 'DependencyTimeout' || code === 'RateLimited',
     sideEffect,
     correlationId,
     operationId: error?.operationId || null,
@@ -661,6 +661,11 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           'x-idempotent-replay': String(result.replayed),
         });
       }
+      if (url.pathname === '/api/admin/extensions/registry-connections/opensphere-ghcr/verify' && request.method === 'POST') {
+        if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });
+        const session = await resolveSession(request, { requireCsrf: true, correlationId });
+        return send(response, 200, await registryOperations.verifyRegistryConnection({ session, correlationId }));
+      }
       if (url.pathname === '/api/admin/extensions/revocations' && request.method === 'POST') {
         const session = await resolveSession(request, { requireCsrf: true, correlationId });
         const result = await registryOperations.createRevocation({
@@ -789,7 +794,8 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       }
       return send(response, 404, errorEnvelope(Object.assign(new Error('route was not found'), { code: 'NotFound' }), correlationId));
     } catch (error) {
-      return send(response, Number(error?.status) || 503, errorEnvelope(error, correlationId));
+      return send(response, Number(error?.status) || 503, errorEnvelope(error, correlationId),
+        Number.isInteger(error?.retryAfter) ? { 'retry-after': String(error.retryAfter) } : {});
     }
   };
 }

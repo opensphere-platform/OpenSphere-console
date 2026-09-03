@@ -96,10 +96,10 @@ test('management projections are bounded to canonical Package, Registration, pre
     return json({}, 404);
   };
   const target = authority(fetchImpl);
-  const preferences = new Map([['metrics', { navigation: { icon: 'dashboard', labelOverride: 'Live metrics', order: 0 } }]]);
+  const preferences = new Map([['metrics', { navigation: { icon: 'dashboard', labelOverride: 'Live metrics', bandOverride: 'Build', order: 0 } }]]);
   const catalog = await target.catalog(preferences);
   assert.equal(catalog.length, 1);
-  assert.deepEqual(catalog[0].nav, { band: 'Operate', label: 'Metrics', icon: 'dashboard', order: 0, labelOverride: 'Live metrics' });
+  assert.deepEqual(catalog[0].nav, { band: 'Build', label: 'Metrics', icon: 'dashboard', order: 0, labelOverride: 'Live metrics', bandOverride: 'Build' });
   assert.equal(catalog[0].installedDigest, digest);
   assert.equal(Object.hasOwn(catalog[0], 'env'), false);
   const registrations = await target.registrations();

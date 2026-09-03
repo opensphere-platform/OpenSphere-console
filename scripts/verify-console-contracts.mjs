@@ -630,6 +630,15 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     registryConnectionRead?.['x-opensphere-authority'] === 'ConsoleRegistryConnectionMetadata',
     'getRegistryConnection must declare its no-secret metadata authority',
   );
+  const registryVerification = entries.find(({ operation }) => operation.operationId === 'verifyRegistryConnection')?.operation;
+  assert(registryVerification?.responses?.['200']?.content?.['application/json']?.schema?.$ref
+    === '../schemas/registry-connection-verification-response.schema.json',
+  'verifyRegistryConnection must use the closed live verification response schema');
+  assert(registryVerification?.['x-opensphere-rate-limit'] === 'required',
+    'verifyRegistryConnection must retain the bounded provider rate-limit contract');
+  assert(httpHandlerSource.includes("/api/admin/extensions/registry-connections/opensphere-ghcr/verify")
+    && httpHandlerSource.includes('registryOperations.verifyRegistryConnection'),
+  'verifyRegistryConnection is declared but missing from the C_API runtime route');
   const auditRead = entries.find(({ operation }) => operation.operationId === 'listAuditEvents')?.operation;
   assert(auditRead?.['x-opensphere-authority'] === 'SupabaseAuditLedger', 'listAuditEvents must declare audit ledger authority');
   assert(

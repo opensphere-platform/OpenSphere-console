@@ -1690,7 +1690,9 @@ paths:
           description: Bounded live verification against the approved GHCR namespace
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/ReadEnvelope" }
+              schema: { $ref: "../schemas/registry-connection-verification-response.schema.json" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/AuthorityUnavailable" }
   /api/admin/extensions/revocations:

@@ -209,10 +209,31 @@ test('inactive routes are healthy on-demand lifecycle states, not UI or Host fai
 test('every Extension management tab has a reloadable canonical route', () => {
   assert.match(routes, /path: 'extensions', redirectTo: 'extensions\/subshells'/);
   assert.match(routes, /path: 'extensions\/:view', component: AdminPlugins/);
-  for (const view of ['subshells', 'plugins', 'topology', 'catalog', 'audit', 'bindings']) {
-    assert.match(source, new RegExp(`selectView\\('${view}'\\)`));
-    assert.match(source, new RegExp(`activeView\\(\\) === '${view}'`));
+  assert.match(source, /\[routerLink\]="'\/manage\/extensions\/' \+ view\.id"/);
+  for (const view of ['subshells', 'plugins', 'topology', 'catalog', 'registry-connections', 'trust', 'audit', 'bindings']) {
+    assert.ok(source.includes("id: '" + view + "'"));
   }
+  assert.match(source, /activeView\(\) === 'registry-connections'/);
+  assert.match(source, /activeView\(\) === 'trust'/);
+});
+
+test('Registry delivery and trust have explicit no-secret controls and impact previews', () => {
+  assert.match(source, /Registry Connections/);
+  assert.match(source, /Trust & Revocation/);
+  assert.match(client, /\/registry-connections\/opensphere-ghcr\/verify/);
+  assert.match(source, /registryDependentPackages/);
+  assert.match(source, /revocationImpact/);
+  assert.match(source, /revokeExpectedConfirmation\(image: string\)/);
+  assert.match(client, /\.\.\.\(replacementImage \? \{ replacementImage \} : \{\}\)/);
+  assert.doesNotMatch(client, /executionRevision/);
+});
+
+test('SubShell menu groups support a bounded override and signed-default reset', () => {
+  assert.match(source, /standardNavigationBands/);
+  assert.match(source, /customNavigationBands/);
+  assert.match(source, /bandOverride/);
+  assert.match(source, /비워서 저장하면 signed package의 기본 그룹으로 복원합니다/);
+  assert.match(client, /bandOverride\?: string/);
 });
 
 test('Catalog separates common Registry descriptors from Console Extension package lifecycle', () => {

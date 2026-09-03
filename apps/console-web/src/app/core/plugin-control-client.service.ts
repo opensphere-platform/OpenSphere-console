@@ -5,7 +5,7 @@ import { HttpService } from './http.service';
  *  사용자 신원은 X-OpenSphere-User로 전달(audit·권한). 셸 nginx가 controller로 프록시. */
 export interface CatalogItem {
   name: string; displayName: string; version: string; owner: string;
-  description: string; nav?: { band: string; label: string; icon?: string; labelOverride?: string; order?: number };
+  description: string; nav?: { band: string; label: string; icon?: string; labelOverride?: string; bandOverride?: string | null; order?: number };
   shellCompat: string; permissions: string[];
   kind: 'subShell' | 'plugin'; hostRef: string; hostApiVersion?: string; hostCompat: string;
   contributions: Record<string, unknown>;
@@ -84,7 +84,11 @@ export interface RegistryCredentialStatus {
   configurationState: string; lastVerifiedAt: string | null; lastVerificationCode: string | null; updatedAt: string;
 }
 export interface ImageRevocation {
-  imageRef: string; operationId: string; payloadDigest: string; actionVersion: string; claimEpoch: number; revokedAt: string;
+  imageRef: string; replacementImageRef?: string | null; operationId: string; payloadDigest: string; actionVersion: string; claimEpoch: number; revokedAt: string;
+}
+export interface RegistryConnectionVerification {
+  connectionId: 'opensphere-ghcr'; result: 'Verified'; credentialVersion: string;
+  authenticationMode: 'pat' | 'github-device'; expiresAt: string | null; verifiedAt: string; imageCount: number;
 }
 export interface OperationReceipt {
   schemaVersion: '1.0'; operationId: string; actionId: string; actionVersion: string;
@@ -150,24 +154,33 @@ export class PluginControlClient {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }),
     }).then(async (r) => { if (!r.ok) throw new Error('GitHub 인증 요청 실패: HTTP ' + r.status); return r.json(); });
   }
+  verifyRegistryCredentials(): Promise<RegistryConnectionVerification> {
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr/verify', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`registry verification HTTP ${r.status}: ${JSON.stringify(await r.json().catch(() => ({})))}`);
+      return (await r.json() as ReadEnvelope<RegistryConnectionVerification>).data;
+    });
+  }
   configureRegistryCredentials(username: string, credential: string, reason: string): Promise<OperationReceipt> {
     return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, credential, reason }),
     }).then(async (r) => { if (!r.ok) throw new Error(`registry connection HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
-  removeRegistryCredentials(reason: string): Promise<OperationReceipt> {
+  removeRegistryCredentials(reason: string, confirmation: string): Promise<OperationReceipt> {
     return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', {
       method: 'DELETE',
-      headers: { 'X-OpenSphere-Reason': reason, 'X-OpenSphere-Confirmation': 'REMOVE opensphere-ghcr' },
+      headers: { 'X-OpenSphere-Reason': reason, 'X-OpenSphere-Confirmation': confirmation },
     }).then(async (r) => { if (!r.ok) throw new Error(`registry connection HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
   revocations(): Promise<ImageRevocation[]> {
     return this.http.request('/api/admin/extensions/revocations', { cache: 'no-store' })
       .then(async (r) => { if (!r.ok) throw new Error(`revocations HTTP ${r.status}`); return (await r.json() as ReadEnvelope<ImageRevocation[]>).data; });
   }
-  revokeImage(image: string, reason: string): Promise<OperationReceipt> {
+  revokeImage(image: string, replacementImage: string, reason: string, confirmation: string): Promise<OperationReceipt> {
     return this.http.request('/api/admin/extensions/revocations', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ image, reason, confirmation: `REVOKE ${image}` }),
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ image, ...(replacementImage ? { replacementImage } : {}), reason, confirmation }),
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
   install(descriptorId: string, catalogRevision: string, reason: string): Promise<OperationReceipt> {
@@ -216,7 +229,7 @@ export class PluginControlClient {
     }).then((r) => { if (!r.ok) throw new Error(`set-icon HTTP ${r.status}`); return r.json(); });
   }
   /** Main Shell 1단 메뉴 표현 설정. 빈 labelOverride는 원래 displayName 사용. */
-  setNavigation(id: string, settings: { icon?: string; labelOverride?: string }) {
+  setNavigation(id: string, settings: { icon?: string; labelOverride?: string; bandOverride?: string }) {
     return this.http.request(`/api/admin/plugins/packages/${id}/navigation`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings),
     }).then(async (r) => {

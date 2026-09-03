@@ -80,7 +80,7 @@ function record(input) {
   };
 }
 
-function fixture() {
+function fixture({ credentialBroker, verifyRateLimit } = {}) {
   const accepted = [];
   const approved = [];
   const verified = [];
@@ -155,6 +155,8 @@ function fixture() {
     policyRevision: policyCatalog.policyRevision,
     projectionStore: store,
     registryResolver,
+    credentialBroker,
+    ...(verifyRateLimit ? { verifyRateLimit } : {}),
     clock: () => current,
   });
   return { accepted, approved, verified, resolved, operationService, registryOperations };
@@ -192,6 +194,29 @@ test('Registry connection projection exposes fixed metadata without credential m
   assert.doesNotMatch(JSON.stringify(envelope), /secretRef|credentialDigest|password|token/i);
 });
 
+test('Registry connection verification revalidates authority and returns bounded live GHCR evidence', async () => {
+  let calls = 0;
+  const { registryOperations } = fixture({
+    credentialBroker: {
+      async verify() {
+        calls += 1;
+        return {
+          connectionId: 'opensphere-ghcr', result: 'Verified', credentialVersion: 'generation-1',
+          authenticationMode: 'github-device', expiresAt: null,
+          verifiedAt: current.toISOString(), imageCount: 7,
+        };
+      },
+    },
+  });
+  const result = await registryOperations.verifyRegistryConnection({
+    session, correlationId: 'registry-verification-correlation-0001',
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.authority, 'GitHubContainerRegistry');
+  assert.equal(result.data.imageCount, 7);
+  assert.deepEqual(result.evidenceRefs, ['registry-connection:opensphere-ghcr:generation-1']);
+});
+
 test('Registry revocation requires an exact digest and canonical confirmation', async () => {
   const { accepted, registryOperations } = fixture();
   const image = 'ghcr.io/opensphere-platform/console@sha256:' + 'b'.repeat(64);
@@ -205,13 +230,18 @@ test('Registry revocation requires an exact digest and canonical confirmation', 
     { code: 'ValidationFailed' },
   );
   assert.equal(accepted.length, 0);
+  const replacementImage = 'ghcr.io/opensphere-platform/console@sha256:' + 'c'.repeat(64);
   const result = await registryOperations.createRevocation({
     session,
-    body: { image, reason: 'revoke compromised image', confirmation: 'REVOKE ' + image },
+    body: { image, replacementImage, reason: 'revoke compromised image', confirmation: 'REVOKE ' + image },
     idempotencyKey: 'registry-revocation-0001',
     correlationId: 'correlation-revocation-0001',
   });
   assert.equal(result.receipt.approvalRequired, true);
+  assert.deepEqual(result.receipt.executionPlan, {
+    schemaVersion: '1.0', authority: 'ConsoleExtensionRevocation',
+    image, replacementImage,
+  });
   assert.equal(accepted.length, 1);
 });
 
@@ -965,6 +995,39 @@ test('HTTP Registry connection read is session-revalidated and no-secret', async
   assert.equal(envelope.data.credentialPresent, false);
   assert.equal(resolverCalls[0].requireCsrf, false);
   assert.doesNotMatch(JSON.stringify(envelope), /secretRef|credentialDigest|password|token/i);
+});
+
+test('HTTP Registry verification route requires CSRF and reaches the broker-backed operation', async (t) => {
+  const { registryOperations, operationService } = fixture({
+    credentialBroker: {
+      async verify() {
+        return {
+          connectionId: 'opensphere-ghcr', result: 'Verified', credentialVersion: 'generation-http',
+          authenticationMode: 'pat', expiresAt: null, verifiedAt: current.toISOString(), imageCount: 3,
+        };
+      },
+    },
+  });
+  const resolverCalls = [];
+  const server = createServer(createConsoleApiHandler({
+    async resolveSession(_request, options) { resolverCalls.push(options); return session; },
+    operationService, registryOperations,
+  }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await fetch(
+    'http://127.0.0.1:' + server.address().port + '/api/admin/extensions/registry-connections/opensphere-ghcr/verify',
+    { method: 'POST', headers: {
+      'content-type': 'application/json',
+      'x-os-correlation-id': 'http-registry-verification-0001',
+      'x-os-csrf-token': 'validated-by-session-resolver',
+    }, body: '{}' },
+  );
+  const envelope = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(envelope.authority, 'GitHubContainerRegistry');
+  assert.equal(envelope.data.imageCount, 3);
+  assert.equal(resolverCalls[0].requireCsrf, true);
 });
 
 test('HTTP approval route requires CSRF and returns the Authorized receipt', async (t) => {

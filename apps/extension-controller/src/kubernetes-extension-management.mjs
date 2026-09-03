@@ -159,8 +159,11 @@ function projectPackage(pkg, registration, preference, namespace) {
   }
   const defaultNavigation = spec.nav && typeof spec.nav === 'object' && !Array.isArray(spec.nav)
     ? boundedCopy(spec.nav, 4096, 'Extension navigation') : null;
-  const navigation = preference?.navigation && typeof preference.navigation === 'object' && !Array.isArray(preference.navigation)
+  const combinedNavigation = preference?.navigation && typeof preference.navigation === 'object' && !Array.isArray(preference.navigation)
     ? boundedCopy({ ...(defaultNavigation || {}), ...preference.navigation }, 4096, 'Extension navigation') : defaultNavigation;
+  const navigation = combinedNavigation?.bandOverride
+    ? Object.freeze({ ...combinedNavigation, band: combinedNavigation.bandOverride })
+    : combinedNavigation;
   return Object.freeze({
     name: current.name,
     displayName: safeText(spec.displayName, 160, current.name),

@@ -98,7 +98,7 @@ export function createExtensionManagementHttpHandler({
           actor, id: preference[1], icon: exactBody(body, ['icon']).icon, correlationId,
         })
         : await operations.setNavigation({
-          actor, id: preference[1], settings: exactBody(body, ['icon', 'labelOverride']), correlationId,
+          actor, id: preference[1], settings: exactBody(body, ['icon', 'labelOverride', 'bandOverride']), correlationId,
         });
       send(response, 200, result);
       return true;

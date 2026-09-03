@@ -124,10 +124,10 @@ test('owner mutation failures append failed or unknown evidence without hiding s
 test('navigation and Binding mutations require current inventory and persist only closed updates', async () => {
   const { operations, calls } = fixture();
   assert.deepEqual(await operations.setNavigation({
-    actor, id: 'metrics', settings: { icon: 'chart-line', labelOverride: 'Metrics' }, correlationId,
+    actor, id: 'metrics', settings: { icon: 'chart-line', labelOverride: 'Metrics', bandOverride: '운영 Operate' }, correlationId,
   }), { accepted: true, id: 'metrics', navigation: { icon: 'dashboard', order: 0 } });
   const write = calls.find(([name]) => name === 'writePreferences')[1];
-  assert.deepEqual(write.updates, [{ extensionId: 'metrics', navigation: { icon: 'chart-line', labelOverride: 'Metrics' } }]);
+  assert.deepEqual(write.updates, [{ extensionId: 'metrics', navigation: { icon: 'chart-line', labelOverride: 'Metrics', bandOverride: '운영 Operate' } }]);
 
   const ordered = fixture({
     authority: { async navigationInventory() { return ['audit', 'metrics']; } },

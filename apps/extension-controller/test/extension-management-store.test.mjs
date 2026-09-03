@@ -12,7 +12,7 @@ test('management store binds only the four closed target database functions', as
     async query(sql, parameters) {
       calls.push({ sql, parameters });
       if (sql.includes('list_presentation_preferences')) {
-        return { rows: [{ projection: [{ extensionId: 'metrics', navigation: { icon: 'dashboard', order: 0 } }] }] };
+        return { rows: [{ projection: [{ extensionId: 'metrics', navigation: { icon: 'dashboard', bandOverride: '운영 Operate', order: 0 } }] }] };
       }
       if (sql.includes('write_presentation_preferences')) {
         return { rows: [{ projection: { items: [{ extensionId: 'metrics', navigation: { icon: 'dashboard', order: 0 } }] } }] };
@@ -35,7 +35,7 @@ test('management store binds only the four closed target database functions', as
     },
   });
   const preferences = await store.preferences();
-  assert.deepEqual(preferences.get('metrics'), { navigation: { icon: 'dashboard', order: 0 } });
+  assert.deepEqual(preferences.get('metrics'), { navigation: { icon: 'dashboard', bandOverride: '운영 Operate', order: 0 } });
   await store.writePreferences({
     actorRef, correlationId,
     updates: [{ extensionId: 'metrics', navigation: { icon: 'dashboard', order: 0 } }],

@@ -20,6 +20,29 @@ export function createRegistryCredentialBroker({store,provider,clientId='',asser
   }
   return Object.freeze({
     async status(actorRef){return publicRegistryState((await store.read()).state,{clientId,actorRef,now:now()});},
+    async verify(){
+      const snapshot=await available();
+      const state=snapshot.state;
+      if(!state.credentials)throw fault('ReauthorizationRequired');
+      validateCredential(state.credentials);
+      const life=state.credentials.lifecycle || {};
+      if(life.expiresAt && Date.parse(life.expiresAt)<=now())throw fault('CredentialExpired');
+      await provider.inspect(state.credentials.token,{username:state.credentials.username,userId:life.userId});
+      const verification=state.images.length
+        ? await provider.verifyImages(state.credentials,state.images)
+        : {verifiedAt:stamp(),imageCount:0};
+      const current=await store.read();
+      if(current.version!==snapshot.version || current.state.generation!==state.generation)throw fault('CredentialConflict');
+      return Object.freeze({
+        connectionId:'opensphere-ghcr',
+        result:'Verified',
+        credentialVersion:state.generation,
+        authenticationMode:life.mode,
+        expiresAt:life.expiresAt || null,
+        verifiedAt:String(verification?.verifiedAt || stamp()),
+        imageCount:Number(verification?.imageCount ?? state.images.length),
+      });
+    },
     async checkAvailable(){await available();},
     async rejectIntent({operationId,session}){
       const snapshot=await store.read();

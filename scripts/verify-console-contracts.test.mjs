@@ -9,13 +9,13 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 65,
+    operations: 66,
     actionPolicies: 6,
-    schemas: 75,
+    schemas: 77,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 56,
-    browserApiPatterns: 117,
+    browserApiPatterns: 118,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: true,
@@ -78,11 +78,14 @@ test('Console Web extension actions use the target authority contracts', async (
   const pageSource = await readFile(new URL('../apps/console-web/src/app/pages/admin-plugins.ts', import.meta.url), 'utf8');
   assert(clientSource.includes('/api/admin/extensions/registry-connections/opensphere-ghcr'));
   assert(clientSource.includes('JSON.stringify({ username, credential, reason })'));
-  assert(clientSource.includes("'X-OpenSphere-Confirmation': 'REMOVE opensphere-ghcr'"));
-  assert(clientSource.includes('confirmation: `REVOKE ${image}`'));
+  assert(clientSource.includes("'X-OpenSphere-Confirmation': confirmation"));
+  assert(clientSource.includes('reason, confirmation }'));
   assert(clientSource.includes('JSON.stringify({ descriptorId: descriptorId.trim(), catalogRevision: catalogRevision.trim(), reason: reason.trim() })'));
   assert(!clientSource.includes('/api/admin/extensions/registry-credentials'));
-  assert(!clientSource.includes('replacementImage'));
+  assert(clientSource.includes('/api/admin/extensions/registry-connections/opensphere-ghcr/verify'));
+  assert(clientSource.includes('...(replacementImage ? { replacementImage } : {})'));
+  assert(pageSource.includes('revokeExpectedConfirmation(image: string)'));
+  assert(!clientSource.includes('executionRevision'));
   assert(pageSource.includes('installableExtensionDescriptors'));
   assert(pageSource.includes('snapshot.revision'));
   assert(!pageSource.includes('extensionInstallImage'));

@@ -19,6 +19,16 @@ test('handoff secret keeps refresh credential out of every image pull secret and
  const docker=Buffer.from(pullSecretData(c,state.generation)['.dockerconfigjson'],'base64').toString();assert.ok(docker.includes(c.token));assert.ok(!docker.includes(c.lifecycle.refreshToken));
  const response=JSON.stringify(publicRegistryState(state));assert.ok(!response.includes(c.token));assert.ok(!response.includes(c.lifecycle.refreshToken));
 });
+test('manual verification is read-only and checks identity plus every release digest',async()=>{
+ const f=fixture();let inspected=0,images=[];
+ f.provider.inspect=async()=>{inspected++;};
+ f.provider.verifyImages=async(_credential,required)=>{images=[...required];return {verifiedAt:'2026-09-04T01:02:03.000Z',imageCount:required.length};};
+ const before=JSON.stringify(f.state);
+ const result=await f.broker.verify();
+ assert.equal(result.result,'Verified');assert.equal(result.verifiedAt,'2026-09-04T01:02:03.000Z');assert.equal(result.imageCount,1);
+ assert.equal(result.authenticationMode,'github-device');assert.equal(inspected,1);assert.deepEqual(images,[image]);
+ assert.equal(JSON.stringify(f.state),before);assert.equal(f.syncs,0);assert.equal(f.events.length,0);
+});
 test('runtime verifies and observes all five secret generations before Ready',async()=>{
  const f=fixture();assert.equal((await f.broker.status()).verified,false);await f.broker.tick();assert.equal(f.state.phase,'Ready');assert.equal(f.syncs,1);assert.equal(f.events[0].code,'PullSecretsVerified');assert.equal((await f.broker.status()).verified,true);
  f.advance(21*60000);assert.equal((await f.broker.status()).phase,'Stale');assert.equal((await f.broker.status()).verified,false);

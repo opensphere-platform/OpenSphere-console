@@ -40,7 +40,29 @@ function requirePermission(session, permission) {
   }
 }
 
-export function createRegistryOperations({ operationService, policyRevision, projectionStore, registryResolver, credentialBroker, clock = () => new Date() }) {
+function createVerifyRateLimiter({ limit = 6, windowMs = 60_000, now = Date.now } = {}) {
+  const subjects = new Map();
+  return (subjectId) => {
+    const current = now();
+    const prior = subjects.get(subjectId) || [];
+    const active = prior.filter((observedAt) => current - observedAt < windowMs);
+    if (active.length >= limit) {
+      const retryAfter = Math.max(1, Math.ceil((windowMs - (current - active[0])) / 1000));
+      throw Object.assign(new Error('Registry verification rate limit exceeded'), {
+        code: 'RateLimited', status: 429, retryAfter,
+      });
+    }
+    active.push(current);
+    subjects.set(subjectId, active);
+    if (subjects.size > 1_000) {
+      for (const [key, observations] of subjects) {
+        if (!observations.some((observedAt) => current - observedAt < windowMs)) subjects.delete(key);
+      }
+    }
+  };
+}
+
+export function createRegistryOperations({ operationService, policyRevision, projectionStore, registryResolver, credentialBroker, clock = () => new Date(), verifyRateLimit = createVerifyRateLimiter() }) {
   if (!operationService?.accept) throw new TypeError('operation service is required');
   return Object.freeze({
     async getRegistryConnection({ session, correlationId }) {
@@ -56,6 +78,29 @@ export function createRegistryOperations({ operationService, policyRevision, pro
       if(!credentialBroker)return envelope;
       const data=await credentialBroker.status(session.subjectId);
       return {...envelope,data,authority:'RegistryCredentialBroker',observedAt:clock().toISOString(),freshness:data.phase==='Stale'?'stale':'fresh'};
+    },
+    async verifyRegistryConnection({ session, correlationId }) {
+      requirePermission(session, 'console.registry.manage');
+      if (!projectionStore?.getRegistryConnection || !credentialBroker?.verify) throw Object.assign(
+        new Error('Registry verification authority is unavailable'),
+        { code: 'AuthorityUnavailable', status: 503 },
+      );
+      await projectionStore.getRegistryConnection({
+        sessionId: session.sessionId,
+        actorRef: session.subjectId,
+        correlationId,
+      });
+      verifyRateLimit(session.subjectId);
+      const data = await credentialBroker.verify();
+      return {
+        schemaVersion: '1.0',
+        data,
+        authority: 'GitHubContainerRegistry',
+        observedAt: data.verifiedAt,
+        freshness: 'fresh',
+        correlationId,
+        evidenceRefs: [`registry-connection:opensphere-ghcr:${data.credentialVersion}`],
+      };
     },
     async beginRegistryOAuth({session,body,idempotencyKey,correlationId}) {
       exact(body,['reason'],'registry OAuth request');
@@ -135,9 +180,14 @@ export function createRegistryOperations({ operationService, policyRevision, pro
     },
 
     async createRevocation({ session, body, idempotencyKey, correlationId }) {
-      exact(body, ['image', 'reason', 'confirmation'], 'registry revocation request');
+      exact(body, ['image', 'replacementImage', 'reason', 'confirmation'], 'registry revocation request');
       const image = String(body.image || '').trim();
+      const replacementImage = String(body.replacementImage || '').trim();
       if (!IMAGE.test(image)) fail('exact OpenSphere GHCR digest is required');
+      if (replacementImage && (!IMAGE.test(replacementImage) || replacementImage === image
+          || replacementImage.slice(0, replacementImage.lastIndexOf('@')) !== image.slice(0, image.lastIndexOf('@')))) {
+        fail('replacement image must be a different exact digest in the same OpenSphere GHCR repository');
+      }
       if (String(body.confirmation || '') !== 'REVOKE ' + image) fail('canonical revocation confirmation is required');
       return operationService.accept({
         session,
@@ -148,10 +198,16 @@ export function createRegistryOperations({ operationService, policyRevision, pro
           actionId: 'console.extension.revocation.create',
           actionVersion: '1.0',
           targetRef: image,
-          payload: { image, confirmation: body.confirmation },
+          payload: { image, ...(replacementImage ? { replacementImage } : {}), confirmation: body.confirmation },
           reason: String(body.reason || '').trim(),
           risk: 'R2',
           planRevision: policyRevision,
+        },
+        executionPlan: {
+          schemaVersion: '1.0',
+          authority: 'ConsoleExtensionRevocation',
+          image,
+          replacementImage: replacementImage || null,
         },
       });
     },
