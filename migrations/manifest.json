@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "repository": "OpenSphere-Console",
-  "latestGlobalId": "opensphere-console/20260903/0028",
-  "migrationCount": 28,
-  "setDigest": "sha256:da5993f76c206dff8a748c912ce91fbb9fb929cb3210f86f1063de29d7eff2d5",
+  "latestGlobalId": "opensphere-console/20260904/0033",
+  "migrationCount": 33,
+  "setDigest": "sha256:7ab6ab5ab25adaf811d1becc867e987c1b32e745c00b21e6603b7ef433bbb663",
   "migrations": [
     {
       "globalId": "opensphere-console/20260902/0001",
@@ -284,6 +284,56 @@
       "sourceRevision": "fa287c6cbf2e8cff5a2e0f46658beafc0c758a1d",
       "setSize": 28,
       "setDigest": "sha256:da5993f76c206dff8a748c912ce91fbb9fb929cb3210f86f1063de29d7eff2d5"
+    },
+    {
+      "globalId": "opensphere-console/20260903/0029",
+      "semanticKey": "console.shell.native_authority",
+      "predecessorGlobalId": "opensphere-console/20260903/0028",
+      "path": "migrations/versions/0029_native_shell_authority.sql",
+      "sha256": "a385ed25e5d5797192793b0fca79794e571815095a933979792f88739405491d",
+      "sourceRevision": "7b4cef1ee3e9f9fd62da79a349de3136bd5724ed",
+      "setSize": 29,
+      "setDigest": "sha256:d5f1577ec050ddd662c32c1c34d0eb94dfd3f4c6e24f3fa6b7dcee370a58b2e9"
+    },
+    {
+      "globalId": "opensphere-console/20260903/0030",
+      "semanticKey": "console.osaa.native_dialogue_authority",
+      "predecessorGlobalId": "opensphere-console/20260903/0029",
+      "path": "migrations/versions/0030_native_osdst_authority.sql",
+      "sha256": "a548ae7ae9ede6e9510d05225aa5b3eeb28b2eb46651ad79c0af445687c8ea16",
+      "sourceRevision": "98c3d0bc357594b466d420ee00cb8dddea074ace",
+      "setSize": 30,
+      "setDigest": "sha256:28ad8acc23915ece540488ae040d0daa11ebeaa7d1f555dce6e7b05f4645ef86"
+    },
+    {
+      "globalId": "opensphere-console/20260903/0031",
+      "semanticKey": "console.osaa.native_serving_authority",
+      "predecessorGlobalId": "opensphere-console/20260903/0030",
+      "path": "migrations/versions/0031_native_osaa_serving_authority.sql",
+      "sha256": "647e43cb4c96b42fe15d55c92efa48db9860543a533bd16fec6421194c2faeea",
+      "sourceRevision": "67ff04ddb1b9ef2fb2a5ea3a22bb1d48c6545909",
+      "setSize": 31,
+      "setDigest": "sha256:e185f52230ff6020297e56294f173e93ae18f36443615370031bdffaf010c780"
+    },
+    {
+      "globalId": "opensphere-console/20260903/0032",
+      "semanticKey": "console.osaa.watch_state_contract",
+      "predecessorGlobalId": "opensphere-console/20260903/0031",
+      "path": "migrations/versions/0032_osaa_watch_state_contract.sql",
+      "sha256": "258c42129642eeffb4a101d80c6794a9b13ef9e47585b61a9d4c30850a4856e5",
+      "sourceRevision": "05d983360cefd938f1aecaeeefc894a5b56ed5dd",
+      "setSize": 32,
+      "setDigest": "sha256:7c2bc2023976417bc5f34583826de786217c7f0a603e35113c55b4318ea8d8b0"
+    },
+    {
+      "globalId": "opensphere-console/20260904/0033",
+      "semanticKey": "console.extension.supply_chain_navigation",
+      "predecessorGlobalId": "opensphere-console/20260903/0032",
+      "path": "migrations/versions/0033_extension_supply_chain_and_navigation.sql",
+      "sha256": "a6eced9500d8f7a47927ea7bed9dd6fc095b4ebd2cec2797ea1d42f4ccaffa65",
+      "sourceRevision": "2b53b5a7b1df255082384943251019b1672c64d7",
+      "setSize": 33,
+      "setDigest": "sha256:7ab6ab5ab25adaf811d1becc867e987c1b32e745c00b21e6603b7ef433bbb663"
     }
   ]
 }
