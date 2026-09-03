@@ -1,3 +1,8 @@
+import {GITHUB_OAUTH_CLIENT_ID} from './github-oauth-app.mjs';
+import {requiredImages as requiredRegistryImages} from './registry-lifecycle-contract.mjs';
+import {createGitHubRegistryAuth} from './github-registry-auth.mjs';
+import {createRegistrySecretStore,registryKubernetesOrigin} from './registry-secret-store.mjs';
+import {createRegistryCredentialBroker} from './registry-credential-broker.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import pg from 'pg';
@@ -92,7 +97,26 @@ const registryResolver = createRegistryResolver({
   timeoutMs: positiveInteger('CONSOLE_REGISTRY_TIMEOUT_MS', 8000, 30000),
   maximumResponseBytes: positiveInteger('CONSOLE_REGISTRY_MAX_RESPONSE_BYTES', 65536, 1024 * 1024),
 });
+// registry-auth/v1 requires the approved six-Secret RBAC and Setup-rendered API egress.
+const credentialBroker = process.env.CONSOLE_REGISTRY_AUTH_CONTRACT==='registry-auth/v1' ? createRegistryCredentialBroker({
+  store:createRegistrySecretStore({baseUrl:registryKubernetesOrigin()}),
+  provider:createGitHubRegistryAuth(),
+  installationImages:async()=>requiredRegistryImages(JSON.parse(await readFile(String(process.env.CONSOLE_INSTALLATION_RELEASE_PATH || '/var/run/opensphere/release/release.json'),'utf8'))),
+  clientId:String(process.env.OPENSPHERE_GITHUB_OAUTH_CLIENT_ID || GITHUB_OAUTH_CLIENT_ID),
+  assertAuthority:store.assertRegistryCredentialAuthority,
+  recordResult:store.recordRegistryCredentialResult,
+}) : null;
+let credentialTickRunning=false;
+async function reconcileCredentials(){
+  if(!credentialBroker || credentialTickRunning)return;
+  credentialTickRunning=true;
+  try{await credentialBroker.tick();}catch{process.stderr.write('{"event":"registry-credential-reconcile-unavailable"}\n');}
+  finally{credentialTickRunning=false;}
+}
+const credentialTimer=credentialBroker ? setInterval(reconcileCredentials,5000) : null;
+credentialTimer?.unref();
 const registryOperations = createRegistryOperations({
+  credentialBroker,
   operationService,
   policyRevision: policyCatalog.policyRevision,
   projectionStore: store,
@@ -154,6 +178,7 @@ server.keepAliveTimeout = 5000;
 let shutdownPromise;
 function shutdown(signal) {
   if (!shutdownPromise) {
+    if(credentialTimer)clearInterval(credentialTimer);
     shutdownPromise = new Promise((resolve) => server.close(resolve))
       .then(() => pool.end())
       .then(() => process.stdout.write(JSON.stringify({ event: 'console-api-stopped', signal }) + '\n'));

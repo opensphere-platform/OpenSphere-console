@@ -15,8 +15,8 @@ BEGIN
     7, 2, 'verify-cli-rls-status-0020'
   );
   IF v_status->'data'->'components'->5->>'state' <> 'Ready'
-      OR v_status->'data'->'components'->5->>'authorityTables' <> '15'
-      OR v_status->'data'->'components'->5->>'protectedTables' <> '15' THEN
+      OR v_status->'data'->'components'->5->>'authorityTables' <> '16'
+      OR v_status->'data'->'components'->5->>'protectedTables' <> '16' THEN
     RAISE EXCEPTION 'CLI identity RLS tables are not reported ready: %', v_status->'data'->'components'->5;
   END IF;
 END;

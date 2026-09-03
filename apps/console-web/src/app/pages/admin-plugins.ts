@@ -162,7 +162,7 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
           <p class="os-sub">공개 전환 없이 private OpenSphere 패키지를 검사하고 Kubernetes workload가 pull하도록 동일한 read-only 자격증명을 사용합니다. 토큰은 화면에 다시 표시되지 않습니다.</p>
         </div>
         @if (registryStatus(); as registry) {
-          <span class="label" [class.label-success]="registry.credentialPresent">{{ registry.credentialPresent ? 'Configured' : 'Not configured' }}</span>
+          <span class="label" [class.label-success]="registry.verified === true">{{ registry.phase || registry.configurationState }}</span>
         }
       </div>
       <div class="registry-access-form registry-access-form--credentials">
@@ -186,9 +186,25 @@ const EXTENSION_MANAGEMENT_VIEWS: readonly ExtensionManagementView[] = ['subshel
         </div>
         <button class="btn btn-outline" [disabled]="registryToken.value.length < 20 || registryReason.value.trim().length < 8" (click)="configureRegistryCredentials(registryUser.value, registryToken.value, registryReason.value); registryToken.value = ''">저장</button>
         <button class="btn btn-danger-outline" [disabled]="!registryStatus()?.credentialPresent || registryReason.value.trim().length < 8" (click)="removeRegistryCredentials(registryReason.value)">제거</button>
+        <button class="btn btn-primary" [disabled]="!registryStatus()?.oauthAvailable || registryReason.value.trim().length < 8" (click)="beginRegistryOAuth(registryReason.value)">GitHub로 인증 / 재인증</button>
+        <button class="btn btn-outline" (click)="refreshRegistryStatus()">인증 상태 확인</button>
       </div>
     </section>
 
+
+    @if (registryStatus(); as registry) {
+      <section class="registry-access" aria-label="Registry credential lifecycle">
+        <p>인증 방식: {{ registry.authenticationMode || '기존 자격증명' }} · 갱신: {{ registry.refreshPolicy || '수동' }} · 접근 토큰 만료: {{ registry.expiresAt || '만료 정보 없음' }}</p>
+        <p>Secret 동기화: {{ registry.synchronizedNamespaces?.length || 0 }} / {{ registry.requiredNamespaceCount || 5 }} · 최근 검증: {{ registry.verifiedAt || '미검증' }}</p>
+        @if (registry.errorCode) { <p class="os-sub" role="alert">인증 조치 필요: {{ registry.errorCode }}. 만료·철회된 토큰은 재인증 또는 새 읽기 전용 토큰 등록이 필요합니다.</p> }
+        @if (!registry.oauthAvailable) { <p class="os-sub">OAuth는 OpenSphere 전용 앱과 운영 권한 인계 구성이 완료되어야 활성화됩니다.</p> }
+        @if (registry.oauthAvailable && !registry.oauthProductionVerified) { <p class="os-sub">OAuth 시험 연결: GitHub 앱의 실제 GHCR 접근·갱신 검증 전에는 운영 지원 완료로 표시하지 않습니다.</p> }
+        @if (registry.authorization; as authorization) {
+          <p role="status"><a href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">GitHub 기기 인증</a>에서 <strong>{{ authorization.userCode }}</strong> 입력 · 유효 시간: {{ authorization.expiresAt }}</p>
+          <p class="os-sub">브라우저 승인 후 인증 상태 확인을 누르세요. 접근·갱신 토큰은 이 화면에 전달되지 않습니다.</p>
+        }
+      </section>
+    }
     <section class="registry-access" aria-labelledby="revocation-title">
       <div class="registry-access-head">
         <div>
@@ -2169,6 +2185,17 @@ export class AdminPlugins implements OnInit {
       : null);
   }
 
+  async refreshRegistryStatus(): Promise<void> {
+    try { this.registryStatus.set(await this.ctl.registryCredentialStatus()); }
+    catch (error) { this.msg.set({type:'danger',text:String(error)}); }
+  }
+  async beginRegistryOAuth(reason: string): Promise<void> {
+    try {
+      const result = await this.ctl.beginRegistryOAuth(reason.trim());
+      this.registryStatus.set(result.connection);
+      this.msg.set({type:'info',text:'GitHub에서 표시된 인증 코드를 승인한 뒤 인증 상태를 확인하세요.'});
+    } catch (error) { this.msg.set({type:'danger',text:String(error)}); }
+  }
   async configureRegistryCredentials(username: string, token: string, reason: string): Promise<void> {
     try {
       const receipt = await this.ctl.configureRegistryCredentials(username.trim(), token.trim(), reason.trim());

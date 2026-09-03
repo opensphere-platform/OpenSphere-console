@@ -637,7 +637,7 @@ test('initial administrator bootstrap creates Auth identity before one atomic Co
     async getInitialAdministratorBootstrapStatus() { return { state: 'required' }; },
     async claimInitialAdministrator(input) {
       calls.push(['claim', input]);
-      return { state: 'complete', subjectId, permissionRevision: 1, permissionCount: 10 };
+      return { state: 'complete', subjectId, permissionRevision: 1, permissionCount: 11 };
     },
   };
   const authClient = {

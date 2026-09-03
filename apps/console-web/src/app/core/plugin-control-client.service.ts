@@ -74,6 +74,11 @@ export interface AuditEvent {
   result: string; reason: string; opId?: string; source?: string;
 }
 export interface RegistryCredentialStatus {
+  phase?: string; verified?: boolean; authenticationMode?: string; refreshPolicy?: string;
+  expiresAt?: string | null; refreshExpiresAt?: string | null; verifiedAt?: string | null;
+  errorCode?: string | null; oauthAvailable?: boolean; oauthProductionVerified?: boolean;
+  synchronizedNamespaces?: string[]; requiredNamespaceCount?: number;
+  authorization?: { userCode: string; verificationUri: string; expiresAt: string } | null;
   connectionId: 'opensphere-ghcr'; registryOrigin: 'ghcr.io'; namespace: 'opensphere-platform';
   username: string | null; credentialPresent: boolean; credentialVersion: string | null;
   configurationState: string; lastVerifiedAt: string | null; lastVerificationCode: string | null; updatedAt: string;
@@ -139,6 +144,11 @@ export class PluginControlClient {
         if (!r.ok) throw new Error(`registry connection HTTP ${r.status}`);
         return (await r.json() as ReadEnvelope<RegistryCredentialStatus>).data;
       });
+  }
+  beginRegistryOAuth(reason: string): Promise<{ connection: RegistryCredentialStatus; receipt: OperationReceipt }> {
+    return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr/oauth', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reason }),
+    }).then(async (r) => { if (!r.ok) throw new Error('GitHub 인증 요청 실패: HTTP ' + r.status); return r.json(); });
   }
   configureRegistryCredentials(username: string, credential: string, reason: string): Promise<OperationReceipt> {
     return this.http.request('/api/admin/extensions/registry-connections/opensphere-ghcr', {

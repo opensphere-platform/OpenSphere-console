@@ -784,7 +784,7 @@ export function createIdentitySessionBroker({
           correlationId,
         });
         if (claimed?.state !== 'complete' || String(claimed?.subjectId || '') !== created.subjectId
-            || Number(claimed?.permissionRevision) !== 1 || Number(claimed?.permissionCount) !== 10) {
+            || Number(claimed?.permissionRevision) !== 1 || Number(claimed?.permissionCount) !== 11) {
           fail('AuthorityUnavailable', 'initial administrator authority returned an invalid receipt', 503);
         }
         return Object.freeze({ state: 'complete' });

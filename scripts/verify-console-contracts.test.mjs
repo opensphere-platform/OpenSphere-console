@@ -9,13 +9,13 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 64,
+    operations: 65,
     actionPolicies: 6,
-    schemas: 72,
+    schemas: 75,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 54,
-    browserApiPatterns: 116,
+    consoleApiDatabaseFunctions: 56,
+    browserApiPatterns: 117,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: true,
@@ -248,4 +248,33 @@ test('Console API deployment verification rejects credential ownership and legac
     }),
     /omits C_API|retained a legacy Backend/,
   );
+});
+
+test('Console API registry activation rejects every expansion of the approved six-Secret authority', async () => {
+  const deploymentSource = await readFile(new URL('../apps/console-api/deploy.yaml', import.meta.url), 'utf8');
+  const nginxSource = await readFile(new URL('../apps/console-web/nginx/default.conf.template', import.meta.url), 'utf8');
+  const targetRouteSource = await readFile(new URL('../apps/console-web/nginx/target-api-routes.conf', import.meta.url), 'utf8');
+  const documents = yaml.loadAll(deploymentSource);
+  const verify = docs => verifyConsoleApiDeployment({documents:docs,nginxSource,targetRouteSource});
+  verify(documents);
+  const mutations = [
+    docs => docs.find(d=>d.kind==='Role').rules[0].verbs.push('list'),
+    docs => docs.find(d=>d.kind==='Role').rules[0].verbs.push('patch'),
+    docs => delete docs.find(d=>d.kind==='Role').rules[0].resourceNames,
+    docs => docs.find(d=>d.kind==='Role').rules[0].resourceNames.push('unrelated-secret'),
+    docs => docs.find(d=>d.kind==='Role').metadata.namespace='default',
+    docs => docs.find(d=>d.kind==='RoleBinding').subjects.push({kind:'ServiceAccount',name:'other',namespace:'opensphere-console'}),
+    docs => {docs.find(d=>d.kind==='RoleBinding').roleRef.kind='ClusterRole';},
+    docs => docs.push({kind:'ClusterRole',metadata:{name:'unapproved'},rules:[]}),
+    docs => {docs.find(d=>d.kind==='Deployment').spec.template.spec.automountServiceAccountToken=true;},
+    docs => {docs.find(d=>d.kind==='Deployment').spec.template.spec.volumes[0].projected.sources[0].serviceAccountToken.expirationSeconds=86400;},
+    docs => {docs.find(d=>d.kind==='Deployment').spec.template.spec.containers[0].volumeMounts[0].subPath='token';},
+    docs => {docs.find(d=>d.kind==='NetworkPolicy').spec.egress[0].ports[0].port=6443;},
+    docs => docs.find(d=>d.kind==='NetworkPolicy').spec.egress.push({ports:[{protocol:'TCP',port:6443}]}),
+    docs => {docs.find(d=>d.kind==='NetworkPolicy').spec.egress[1]={to:[{ipBlock:{cidr:'0.0.0.0/0'}}],ports:[{protocol:'TCP',port:6443}]};},
+  ];
+  for (const mutate of mutations) {
+    const changed=structuredClone(documents); mutate(changed);
+    assert.throws(()=>verify(changed),/C_API/);
+  }
 });

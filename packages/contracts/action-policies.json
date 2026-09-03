@@ -21,8 +21,8 @@
       "permission": "console.registry.manage",
       "risk": "R2",
       "approvalRequired": false,
-      "dispatchMode": "credential-broker-required",
-      "ownerRef": "C_EXT",
+      "dispatchMode": "credential-broker",
+      "ownerRef": "C_API.registry-credential-broker",
       "targetPattern": "^registry-connection:opensphere-ghcr$"
     },
     {
@@ -32,8 +32,8 @@
       "permission": "console.registry.manage",
       "risk": "R2",
       "approvalRequired": false,
-      "dispatchMode": "fenced-outbox",
-      "ownerRef": "C_EXT",
+      "dispatchMode": "credential-broker",
+      "ownerRef": "C_API.registry-credential-broker",
       "targetPattern": "^registry-connection:opensphere-ghcr$"
     },
     {

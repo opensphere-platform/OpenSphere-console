@@ -17,6 +17,7 @@ if (!runtimeUrl || !adminUrl) throw new Error('Console API runtime and test-admi
 
 const port = Number(process.env.CONSOLE_TEST_PORT || 58080);
 const origin = 'http://127.0.0.1:' + port;
+const extensionPort = Number(process.env.CONSOLE_EXTENSION_TEST_PORT || 58081);
 const publicOrigin = 'https://console.integration.test';
 const loginSubjectId = '11111111-1111-4111-8111-111111111111';
 const managedTargetSubjectId = '77777777-7777-4777-8777-777777777777';
@@ -543,8 +544,9 @@ async function startExtensionController() {
     cwd: new URL('..', import.meta.url),
     env: {
       ...process.env,
-      PORT: '58081',
+      PORT: String(extensionPort),
       CONSOLE_EXTENSION_DATABASE_URL: extensionDatabaseUrl,
+      CONSOLE_OWNER_AUTHORITY_URL: origin,
       CONSOLE_EXTENSION_WORKER_ID: 'cccccccc-1111-4111-8111-111111111111',
       CONSOLE_EXTENSION_POLL_MS: '100',
       CONSOLE_EXTENSION_LEASE_SECONDS: '30',
@@ -563,7 +565,7 @@ async function startExtensionController() {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (extensionChild.exitCode != null) throw new Error('Extension Controller exited before readiness: ' + extensionOutput);
     try {
-      const response = await fetch('http://127.0.0.1:58081/healthz');
+      const response = await fetch('http://127.0.0.1:' + extensionPort + '/healthz');
       if (response.ok && (await response.json()).state === 'Ready') return;
     } catch {
       // Bounded startup retry.
@@ -1984,7 +1986,8 @@ try {
   const actorProjection = await actorProjectionResponse.json();
   assert.equal(actorProjection.authority, 'SupabaseAuth');
   assert.equal(actorProjection.data.permissions.includes('console.audit.read'), true);
-  assert.doesNotMatch(JSON.stringify(actorProjection.data), /sessionId|token|cookie|csrf/i);
+  assert.equal(actorProjection.data.sessionId, '22222222-2222-4222-8222-222222222222');
+  assert.doesNotMatch(JSON.stringify(actorProjection.data), /token|cookie|csrf/i);
 
   const logoutResponse = await fetch(origin + '/api/identity/session', {
     method: 'DELETE',

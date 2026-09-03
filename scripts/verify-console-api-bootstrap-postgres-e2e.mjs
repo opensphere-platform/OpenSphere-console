@@ -150,7 +150,7 @@ try {
     authorities: evidence.rows[0].authorities,
     permissions: evidence.rows[0].permissions,
     auditEvents: evidence.rows[0].audit_events,
-  }, { authUsers: 1, authorities: 1, permissions: 8, auditEvents: 1 });
+  }, { authUsers: 1, authorities: 1, permissions: 11, auditEvents: 1 });
   assert.equal(created.includes(evidence.rows[0].subject_id), true);
   assert.equal(deleted.includes(evidence.rows[0].subject_id), false);
   assert.doesNotMatch(evidence.rows[0].audit_evidence, /example[.]test|password|service-role|preferred_username/i);
@@ -165,14 +165,14 @@ try {
       + '(SELECT count(*)::int FROM console_identity.subject_authority) AS authorities, '
       + '(SELECT count(*)::int FROM console_identity.permission_grant) AS permissions',
   );
-  assert.deepEqual(finalCounts.rows[0], { auth_users: 1, authorities: 1, permissions: 8 });
+  assert.deepEqual(finalCounts.rows[0], { auth_users: 1, authorities: 1, permissions: 11 });
 
   process.stdout.write(JSON.stringify({
     status: 'passed',
     initialAdministratorSingleWinner: true,
     losingAuthUserCleaned: true,
     exactOriginDeniedBeforeAuthWrite: true,
-    permissionCount: 10,
+    permissionCount: 11,
   }) + '\n');
 } finally {
   await admin.end().catch(() => {});

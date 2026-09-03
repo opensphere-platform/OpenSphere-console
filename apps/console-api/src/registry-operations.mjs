@@ -40,7 +40,7 @@ function requirePermission(session, permission) {
   }
 }
 
-export function createRegistryOperations({ operationService, policyRevision, projectionStore, registryResolver, clock = () => new Date() }) {
+export function createRegistryOperations({ operationService, policyRevision, projectionStore, registryResolver, credentialBroker, clock = () => new Date() }) {
   if (!operationService?.accept) throw new TypeError('operation service is required');
   return Object.freeze({
     async getRegistryConnection({ session, correlationId }) {
@@ -48,11 +48,24 @@ export function createRegistryOperations({ operationService, policyRevision, pro
         new Error('Registry connection projection is unavailable'),
         { code: 'AuthorityUnavailable', status: 503 },
       );
-      return projectionStore.getRegistryConnection({
+      const envelope = await projectionStore.getRegistryConnection({
         sessionId: session.sessionId,
         actorRef: session.subjectId,
         correlationId,
       });
+      if(!credentialBroker)return envelope;
+      const data=await credentialBroker.status(session.subjectId);
+      return {...envelope,data,authority:'RegistryCredentialBroker',observedAt:clock().toISOString(),freshness:data.phase==='Stale'?'stale':'fresh'};
+    },
+    async beginRegistryOAuth({session,body,idempotencyKey,correlationId}) {
+      exact(body,['reason'],'registry OAuth request');
+      if(!credentialBroker)throw Object.assign(new Error('Registry credential broker is unavailable'),{code:'AuthorityUnavailable',status:503});
+      const result=await operationService.accept({session,idempotencyKey,correlationId,request:{schemaVersion:'1.0',actionId:'console.registry.connection.replace',actionVersion:'1.0',targetRef:REGISTRY_TARGET,payload:{authenticationMode:'github-device'},reason:String(body.reason || '').trim(),risk:'R2',planRevision:policyRevision}});
+      if(!result.replayed){
+        try{await credentialBroker.beginOAuth({operationId:result.receipt.operationId,session});}
+        catch(error){await credentialBroker.rejectIntent?.({operationId:result.receipt.operationId,session});throw error;}
+      }
+      return {receipt:result.receipt,connection:await credentialBroker.status(session.subjectId),replayed:result.replayed};
     },
 
     async listRevocations({ session, correlationId }) {
@@ -75,7 +88,7 @@ export function createRegistryOperations({ operationService, policyRevision, pro
       if (!username || username.length > 128) fail('registry username is required');
       if (credential.length < 16 || credential.length > 4096) fail('registry credential length is invalid');
       if (reason.length < 3 || reason.length > 500) fail('registry credential reason is required');
-      return operationService.accept({
+      const result = await operationService.accept({
         session,
         idempotencyKey,
         correlationId,
@@ -90,11 +103,16 @@ export function createRegistryOperations({ operationService, policyRevision, pro
           planRevision: policyRevision,
         },
       });
+      if(credentialBroker && !result.replayed){
+        try{await credentialBroker.replace({operationId:result.receipt.operationId,session,credentials:{username,token:credential}});}
+        catch(error){await credentialBroker.rejectIntent?.({operationId:result.receipt.operationId,session});throw error;}
+      }
+      return result;
     },
 
     async removeCredential({ session, reason, confirmation, idempotencyKey, correlationId }) {
       if (String(confirmation || '') !== 'REMOVE opensphere-ghcr') fail('canonical registry removal confirmation is required');
-      return operationService.accept({
+      const result = await operationService.accept({
         session,
         idempotencyKey,
         correlationId,
@@ -109,6 +127,11 @@ export function createRegistryOperations({ operationService, policyRevision, pro
           planRevision: policyRevision,
         },
       });
+      if(credentialBroker && !result.replayed){
+        try{await credentialBroker.remove({operationId:result.receipt.operationId,session});}
+        catch(error){await credentialBroker.rejectIntent?.({operationId:result.receipt.operationId,session});throw error;}
+      }
+      return result;
     },
 
     async createRevocation({ session, body, idempotencyKey, correlationId }) {

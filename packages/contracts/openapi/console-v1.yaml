@@ -1549,6 +1549,35 @@ paths:
           $ref: "#/components/responses/Conflict"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/admin/extensions/registry-connections/opensphere-ghcr/oauth:
+    post:
+      operationId: beginRegistryOAuth
+      tags: [Extensions]
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-risk: R2
+      x-opensphere-assurance: aal2
+      x-opensphere-idempotency: required
+      x-opensphere-action: console.registry.connection.replace@1.0
+      description: Explicit device authorization; requires an enabled credential broker and registered OpenSphere Client ID. Device code and tokens remain server-side. Poll connection metadata after browser approval. Accepted is not installation success.
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/registry-oauth-request.schema.json" }
+      responses:
+        "202":
+          description: Audited authorization intent and user code
+          content:
+            application/json:
+              schema: { $ref: "../schemas/registry-oauth-response.schema.json" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "428": { $ref: "#/components/responses/StepUpRequired" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
   /api/admin/extensions/registry-connections/opensphere-ghcr:
     get:
       operationId: getRegistryConnection

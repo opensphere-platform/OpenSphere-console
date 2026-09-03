@@ -48,6 +48,15 @@ spec:
             - name: http
               containerPort: 8080
           env:
+            # Approved 2026-09-03: only the six named registry Secrets below.
+            - name: CONSOLE_REGISTRY_AUTH_CONTRACT
+              value: registry-auth/v1
+            - name: OPENSPHERE_GITHUB_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-registry-auth
+                  key: oauth-client-id
+                  optional: true
             # This Secret is an input contract. This manifest never creates a
             # database login or stores a password. The URL must identify a LOGIN
             # role that inherits only the NOLOGIN console_api authority role.
@@ -111,6 +120,9 @@ spec:
             - name: CONSOLE_INSTALLATION_RELEASE_PATH
               value: /var/run/opensphere/release/release.json
           volumeMounts:
+            - name: registry-kubernetes-identity
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
             - name: installation-release
               mountPath: /var/run/opensphere/release
               readOnly: true
@@ -135,6 +147,19 @@ spec:
             capabilities:
               drop: [ALL]
       volumes:
+        # Short-lived projected identity; never a persisted service-account Secret.
+        - name: registry-kubernetes-identity
+          projected:
+            defaultMode: 292 # 0444; decimal avoids YAML 1.1/1.2 ambiguity
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         - name: installation-release
           configMap:
             name: opensphere-installation-lock
@@ -205,6 +230,12 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
   egress:
+    # Standard NetworkPolicy cannot restrict FQDNs. The broker pins provider
+    # HTTPS origins and rejects redirects; TCP/443 is the documented exception.
+    - ports:
+        - { protocol: TCP, port: 443 }
+    # Setup resolves only default/kubernetes Service and ready EndpointSlices.
+    - __OPENSPHERE_REGISTRY_KUBERNETES_EGRESS__
     - to:
         - namespaceSelector:
             matchLabels:
@@ -261,3 +292,128 @@ spec:
               app.kubernetes.io/name: beszel-hub
       ports:
         - { protocol: TCP, port: 8090 }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-console-data
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [opensphere-ghcr-pull]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-console-data
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-registry-credential-broker
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-api
+    namespace: opensphere-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-console-change
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [opensphere-ghcr-pull]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-console-change
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-registry-credential-broker
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-api
+    namespace: opensphere-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-monitoring
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [opensphere-ghcr-pull]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-registry-credential-broker
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-api
+    namespace: opensphere-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-console
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [opensphere-ghcr-pull, opensphere-registry-auth]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-console
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-registry-credential-broker
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-api
+    namespace: opensphere-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-system
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [opensphere-ghcr-pull]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-registry-credential-broker
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-api
+    namespace: opensphere-console

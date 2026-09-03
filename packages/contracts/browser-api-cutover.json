@@ -7,23 +7,62 @@
   "currentSessionAuthority": "console_identity.browser_session",
   "targetSessionAuthority": "console_identity.browser_session",
   "inventory": {
-    "routePatternCount": 116,
-    "setDigest": "sha256:88f1465ec16e978faa7a4114663cab79846a391097507afa0a1e65134ebef2c6"
+    "routePatternCount": 117,
+    "setDigest": "sha256:37eae0eff6e956a9ee96d1435a98c21c4ecaedabc9e32f4e3881f548d2fe6369"
   },
   "targetSessionCapabilities": [
-    { "id": "password-login", "status": "implemented-and-verified" },
-    { "id": "refresh-rotation", "status": "implemented-and-verified" },
-    { "id": "csrf-binding", "status": "implemented-and-verified" },
-    { "id": "current-session-resolution", "status": "implemented-and-verified" },
-    { "id": "self-logout", "status": "implemented-and-verified" },
-    { "id": "activity-touch", "status": "implemented-and-verified" },
-    { "id": "mfa-login-challenge", "status": "implemented-and-verified" },
-    { "id": "mfa-enrollment", "status": "implemented-and-verified" },
-    { "id": "mfa-step-up", "status": "implemented-and-verified" },
-    { "id": "password-recovery", "status": "implemented-and-verified" },
-    { "id": "active-session-inventory", "status": "implemented-and-verified" },
-    { "id": "other-session-revocation", "status": "implemented-and-verified" },
-    { "id": "initial-admin-bootstrap", "status": "implemented-and-verified" }
+    {
+      "id": "password-login",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "refresh-rotation",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "csrf-binding",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "current-session-resolution",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "self-logout",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "activity-touch",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "mfa-login-challenge",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "mfa-enrollment",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "mfa-step-up",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "password-recovery",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "active-session-inventory",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "other-session-revocation",
+      "status": "implemented-and-verified"
+    },
+    {
+      "id": "initial-admin-bootstrap",
+      "status": "implemented-and-verified"
+    }
   ],
   "families": [
     {
@@ -201,7 +240,19 @@
         "scripts/atomic-browser-cutover.test.mjs"
       ]
     },
-    { "id": "registry", "prefix": "/api/v1/registry", "targetOwner": "C_REG", "sessionPolicy": "public-read", "status": "target-routed" },
-    { "id": "cli-artifact", "prefix": "/api/cli", "targetOwner": "C_CLI", "sessionPolicy": "public-static", "status": "target-routed" }
+    {
+      "id": "registry",
+      "prefix": "/api/v1/registry",
+      "targetOwner": "C_REG",
+      "sessionPolicy": "public-read",
+      "status": "target-routed"
+    },
+    {
+      "id": "cli-artifact",
+      "prefix": "/api/cli",
+      "targetOwner": "C_CLI",
+      "sessionPolicy": "public-static",
+      "status": "target-routed"
+    }
   ]
 }

@@ -80,7 +80,8 @@
     "createCliDeviceSession",
     "introspectCliCredential",
     "listCliDevices",
-    "revokeCliDevice"
+    "revokeCliDevice",
+    "beginRegistryOAuth"
   ],
   "requiredActionPolicies": [
     "console.platform.change.propose@1.0",
@@ -162,14 +163,23 @@
     "cli-device-session-response.schema.json",
     "cli-credential-introspection-response.schema.json",
     "cli-device-inventory-response.schema.json",
-    "cli-device-revocation-request.schema.json"
+    "cli-device-revocation-request.schema.json",
+    "registry-credential-status.schema.json",
+    "registry-oauth-request.schema.json",
+    "registry-oauth-response.schema.json"
   ],
   "releaseProfiles": {
     "bootstrap-core": {
       "status": "complete",
       "targetStatus": "complete",
       "scope": "bootstrap-contract-and-routing",
-      "inactiveBrowserFamilies": ["notifications", "external-channels", "osaa", "manual", "os-shell"],
+      "inactiveBrowserFamilies": [
+        "notifications",
+        "external-channels",
+        "osaa",
+        "manual",
+        "os-shell"
+      ],
       "remaining": {
         "legacyProductionApiLiterals": 0,
         "rule": "Every legacy literal is dispositioned; inactive owner families remain target-routed and fail closed with AuthorityUnavailable until activated."

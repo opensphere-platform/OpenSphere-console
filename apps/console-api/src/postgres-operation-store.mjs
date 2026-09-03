@@ -1205,6 +1205,18 @@ export function createPostgresOperationStore({ query }) {
       }
     },
 
+    async assertRegistryCredentialAuthority({sessionId,actorRef}) {
+      try {
+        const result=await query('SELECT console_extension.assert_registry_credential_authority($1::uuid,$2::uuid) AS authorized',[sessionId,actorRef]);
+        if(result.rows?.[0]?.authorized!==true) throw new Error('registry credential authority unavailable');
+      } catch(error) { throw databaseError(error); }
+    },
+    async recordRegistryCredentialResult({operationId,eventId,outcome,generation,code}) {
+      try {
+        const result=await query('SELECT console_extension.record_registry_credential_result($1::uuid,$2::uuid,$3::text,$4::uuid,$5::text) AS recorded',[operationId,eventId,outcome,generation,code]);
+        if(result.rows?.[0]?.recorded!==true) throw new Error('registry credential audit unavailable');
+      } catch(error) { throw databaseError(error); }
+    },
     async getRegistryConnection(input) {
       try {
         const result = await query(GET_REGISTRY_CONNECTION_SQL, [

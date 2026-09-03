@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "$id": "urn:opensphere:console:registry-oauth-response:v1",
+  "required": [
+    "receipt",
+    "connection",
+    "replayed"
+  ],
+  "properties": {
+    "receipt": {
+      "$ref": "operation-receipt.schema.json"
+    },
+    "connection": {
+      "$ref": "registry-credential-status.schema.json"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  }
+}

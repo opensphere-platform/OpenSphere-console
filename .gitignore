@@ -60,3 +60,6 @@ Thumbs.db
 
 # Retired CBS sources must not return through a local archive copy.
 /archive/
+
+# Local release verification; never publish credentials or runtime caches
+/.release/

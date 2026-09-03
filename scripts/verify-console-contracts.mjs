@@ -175,8 +175,10 @@ export async function verifyReleaseReadiness({
 }
 const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_audit.list_events',
+  'console_extension.assert_registry_credential_authority',
   'console_extension.get_registry_connection',
   'console_extension.list_revocations',
+  'console_extension.record_registry_credential_result',
   'console_identity.activate_browser_session_mfa',
   'console_identity.approve_cli_device_enrollment',
   'console_identity.change_managed_identity_role',
@@ -276,10 +278,60 @@ function documentByKind(documents, kind) {
   return documents.filter((document) => document?.kind === kind);
 }
 
+function verifyRegistryCredentialDeployment(documents) {
+  const namespaces = ['opensphere-console-data', 'opensphere-console-change', 'opensphere-monitoring', 'opensphere-console', 'opensphere-system'];
+  const roleName = 'opensphere-registry-credential-broker';
+  const roles = documentByKind(documents, 'Role');
+  const bindings = documentByKind(documents, 'RoleBinding');
+  assert(roles.length === 5 && bindings.length === 5
+    && documentByKind(documents, 'ClusterRole').length === 0
+    && documentByKind(documents, 'ClusterRoleBinding').length === 0,
+    'C_API registry authority requires exactly five namespace Roles and bindings, no cluster authority');
+  for (const namespace of namespaces) {
+    const scopedRoles = roles.filter(role => role.metadata?.namespace === namespace && role.metadata?.name === roleName);
+    const scopedBindings = bindings.filter(binding => binding.metadata?.namespace === namespace && binding.metadata?.name === roleName);
+    assert(scopedRoles.length === 1 && scopedBindings.length === 1, 'C_API registry RBAC escaped its exact namespaces');
+    const names = namespace === 'opensphere-console' ? ['opensphere-ghcr-pull', 'opensphere-registry-auth'] : ['opensphere-ghcr-pull'];
+    assert(JSON.stringify(scopedRoles[0].rules) === JSON.stringify([{
+      apiGroups: [''], resources: ['secrets'], resourceNames: names, verbs: ['get', 'update'],
+    }]), 'C_API registry RBAC must grant only get/update on the six named Secret instances');
+    const binding = scopedBindings[0];
+    assert(JSON.stringify(binding.roleRef) === JSON.stringify({apiGroup:'rbac.authorization.k8s.io',kind:'Role',name:roleName})
+      && JSON.stringify(binding.subjects) === JSON.stringify([{kind:'ServiceAccount',name:'opensphere-console-api',namespace:'opensphere-console'}]),
+      'C_API registry RoleBinding must bind only the dedicated Console API identity');
+  }
+  const [account] = documentByKind(documents, 'ServiceAccount');
+  const [deployment] = documentByKind(documents, 'Deployment');
+  const pod = deployment?.spec?.template?.spec;
+  assert(account?.metadata?.namespace === 'opensphere-console' && account?.metadata?.name === 'opensphere-console-api'
+    && deployment?.metadata?.namespace === 'opensphere-console'
+    && pod?.serviceAccountName === 'opensphere-console-api'
+    && pod?.containers?.length === 1 && !pod?.initContainers?.length && !pod?.ephemeralContainers?.length,
+    'C_API registry identity must belong only to the API container');
+  const container = pod.containers[0];
+  const identityVolumes = (pod.volumes || []).filter(volume => volume.name === 'registry-kubernetes-identity');
+  const expectedProjection = {defaultMode:292,sources:[
+    {serviceAccountToken:{path:'token',expirationSeconds:600}},
+    {configMap:{name:'kube-root-ca.crt',items:[{key:'ca.crt',path:'ca.crt'}]}},
+  ]};
+  assert(identityVolumes.length === 1 && JSON.stringify(identityVolumes[0].projected) === JSON.stringify(expectedProjection)
+    && pod.volumes.length === 2 && pod.volumes.every(volume => !volume.hostPath && !volume.secret),
+    'C_API requires a short-lived projected Kubernetes token and cluster CA, without extra credential volumes');
+  assert((container.volumeMounts || []).filter(mount => mount.name === 'registry-kubernetes-identity').length === 1
+    && JSON.stringify(container.volumeMounts.find(mount => mount.name === 'registry-kubernetes-identity'))
+      === JSON.stringify({name:'registry-kubernetes-identity',mountPath:'/var/run/secrets/kubernetes.io/serviceaccount',readOnly:true}),
+    'C_API projected identity must be read-only and must rotate without subPath');
+  assert(container.env?.find(entry => entry.name === 'CONSOLE_REGISTRY_AUTH_CONTRACT')?.value === 'registry-auth/v1',
+    'C_API registry lifecycle activation must declare registry-auth/v1');
+  const oauth = container.env?.find(entry => entry.name === 'OPENSPHERE_GITHUB_OAUTH_CLIENT_ID');
+  assert(oauth?.value === undefined && JSON.stringify(oauth?.valueFrom?.secretKeyRef)
+    === JSON.stringify({name:'opensphere-registry-auth',key:'oauth-client-id',optional:true}),
+    'C_API OAuth app ID must come from the Setup owner Secret public configuration');
+}
+
 export function verifyConsoleApiDeployment({ documents, nginxSource, targetRouteSource = '' }) {
   assert(documentByKind(documents, 'Secret').length === 0, 'C_API manifest must consume, not create, its database Secret');
-  assert(documentByKind(documents, 'Role').length === 0 && documentByKind(documents, 'ClusterRole').length === 0,
-    'C_API must not acquire Kubernetes API authority');
+  verifyRegistryCredentialDeployment(documents);
 
   const [serviceAccount] = documentByKind(documents, 'ServiceAccount');
   const [deployment] = documentByKind(documents, 'Deployment');
@@ -356,7 +408,20 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
     }]) && JSON.stringify(rule.ports) === JSON.stringify([{ protocol: 'TCP', port: 8090 }])),
     'C_API egress to Beszel must be limited to the private Hub pod on TCP/8090',
   );
-  assert(!egress.includes('ipBlock'), 'C_API NetworkPolicy must not add an unbounded IP egress escape');
+  const egressRules = networkPolicy.spec?.egress || [];
+  const apiSlot = '__OPENSPHERE_REGISTRY_KUBERNETES_EGRESS__';
+  const providerRule = { ports: [{ protocol: 'TCP', port: 443 }] };
+  assert(egressRules.filter(rule => rule === apiSlot).length === 1,
+    'C_API must require exactly one Setup-discovered Kubernetes API egress slot');
+  assert(egressRules.filter(rule => JSON.stringify(rule) === JSON.stringify(providerRule)).length === 1,
+    'C_API provider egress must be limited to TCP/443');
+  const internalRules = egressRules.filter(rule => rule !== apiSlot && JSON.stringify(rule) !== JSON.stringify(providerRule));
+  assert(internalRules.length === 6 && internalRules.every(rule =>
+    Array.isArray(rule.to) && rule.to.length === 1 && rule.to.every(peer =>
+      peer.ipBlock === undefined && peer.podSelector && Object.keys(peer.podSelector).length > 0)
+    && Array.isArray(rule.ports) && rule.ports.length > 0
+    && rule.ports.every(port => Number.isInteger(port.port) && !port.endPort)),
+    'C_API must not add an unbounded IP, port or namespace egress escape');
 
   const routedNginxSource = nginxSource + '\n' + targetRouteSource;
   assert(nginxSource.includes('include /etc/nginx/target-api-routes.conf;'),
@@ -500,7 +565,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     assert(['R0', 'R1', 'R2', 'R3'].includes(policy.risk), `${policy.actionId} has invalid risk`);
     assert(typeof policy.approvalRequired === 'boolean', `${policy.actionId} has no approval rule`);
     assert(
-      ['fenced-outbox', 'credential-broker-required', 'gitea-reviewed-declaration'].includes(policy.dispatchMode),
+      ['fenced-outbox', 'credential-broker-required', 'credential-broker', 'gitea-reviewed-declaration'].includes(policy.dispatchMode),
       `${policy.actionId} has no closed dispatch mode`,
     );
     assert(policy.ownerRef, `${policy.actionId} has no owner`);
