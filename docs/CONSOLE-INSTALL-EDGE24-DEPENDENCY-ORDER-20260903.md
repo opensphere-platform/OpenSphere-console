@@ -28,4 +28,17 @@ edge.23 / Console 202609031558의 세 번째 설치에서 C_API가 `CreateContai
 
 ## 상태
 
-로컬 수정·관련 회귀 완료. 공개 Setup edge.24 및 새 Console edge 발행, 현재 실패 설치 purge와 최종 검증 결과는 아래에 추가한다. 기존 edge.23 결과 보고는 과거 공개·삭제·읽기 전용 검증 기록이며 실제 클린 설치 성공 기록이 아니다.
+수정·관련 회귀 및 공개 발행·검증·실패 설치 purge 완료. 결과는 아래와 같다. 기존 edge.23 결과 보고는 과거 공개·삭제·읽기 전용 검증 기록이며 실제 클린 설치 성공 기록이 아니다.
+## 발행·삭제 완료 증거
+
+- Console source `787b82193125d6c592b16dd05ce09007a01d0998`, version `202609031642`, immutable tag `local-787b82193125`. [Console CI](https://github.com/opensphere-platform/OpenSphere-console/actions/runs/33729459392) 성공. 최초 HTTP E2E의 58080 포트 충돌 후 동일 source·기준을 재실행하여 통과했다.
+- `scripts/Publish-LocalEdge.ps1` 종료 0. canonical 18 + auxiliary 3개가 GHCR에 반영됐다. source/date/edge 태그 63개를 인증된 read-only API로 독립 재조회해 응답 bytes SHA-256과 Docker-Content-Digest가 모두 BOM과 일치함을 확인했다(2026-09-03 16:58:50 KST).
+- anchor `sha256:6b034f2117f9972a08225b31cfec74da545358ba52e233e00f7674602e939dcf`. localhost/pre-ga/linux-amd64, ga-eligible=false. candidate/stable/GA 승격 없음.
+- [Setup edge.24 공개 Release](https://github.com/opensphere-platform/OpenSphere-Setup-CLI/releases/tag/setup-v0.5.0-edge.24), source `21af3001e8eb08e321ca2cfd963a9b10132dfdfb`. [Setup CI](https://github.com/opensphere-platform/OpenSphere-Setup-CLI/actions/runs/33729666564), [5-platform publication](https://github.com/opensphere-platform/OpenSphere-Setup-CLI/actions/runs/33730087302) 성공. 전체 테스트 316개 통과.
+- 공개 Windows EXE 7,497,216 bytes, SHA-256 `2bab26601ceed64f3b228d572d4b3760c7415af05780ef3ae25ecfeb60238265`. exact version/status 실행 및 두 번째 runtime cache 재사용을 확인했다.
+- 실패 release `sha256:3236870044fa77b23fcb227b508a7dd35aff34655d80234d5432de7ce0c39035`는 공개 edge.23 uninstall --purge-data로 제거했다. Console 전용 namespace 5개, PV 및 실제 저장 경로 4개 삭제. 고정 관리 cluster resource 12종 잔여 없음. 타 namespace 9개와 Bound PV 8개는 UID/claim 보존.
+- K8s 6/6 Ready, 127.0.0.1:1114 사용 가능. 새 설치는 시작하지 않았다. 실패 설치 삭제와 공개 실행 확인은 새 bootstrap 성공을 대신하지 않는다.
+
+상세한 공개 asset·설치 명령·검증 한계는 [Setup edge.24 설치 기록](https://github.com/opensphere-platform/OpenSphere-Setup-CLI/blob/main/docs/CONSOLE-INSTALL-ORDER-EDGE24.md)을 따른다. 추가된 최종 보고 문서는 불변 이미지/Setup release source를 바꾸지 않는다.
+
+로컬 증거는 `.release/registry-auth-verification/console-edge24-publish.log`, `console-edge24-release-bom.json`, `console-edge24-final-tag-verification.json`, `console-edge24-purge-before.json`, `console-edge24-purge-after.json`, `console-edge24-third-purge.log`, `console-edge24-clean-readiness.json`이다. credential 원문은 기록하지 않는다.
