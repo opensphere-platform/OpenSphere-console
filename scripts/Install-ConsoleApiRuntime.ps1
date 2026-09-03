@@ -44,7 +44,7 @@ $script:installStage = $null
 function Write-InstallProgress([string]$State, [string]$Detail = '') {
   if (-not $script:installStage) { return }
   $seconds = $script:installStage.Clock.Elapsed.TotalSeconds.ToString('F1', [Globalization.CultureInfo]::InvariantCulture)
-  $suffix = if ($Detail) { " — $Detail" } else { '' }
+  $suffix = if ($Detail) { " | $Detail" } else { '' }
   [Console]::Error.WriteLine(('[{0} {1:00}/12] {2}{3} ({4}s)' -f $State, $script:installStage.Number, $script:installStage.Name, $suffix, $seconds))
 }
 function Start-InstallStage([int]$Number, [string]$Name) {
@@ -241,7 +241,8 @@ if (($dataNamespaceObject -join '').Trim() -ne "namespace/$DataNamespace") {
 foreach ($secretRef in @(
   @{ Namespace = $DataNamespace; Name = 'opensphere-supabase-secrets' },
   @{ Namespace = $DataNamespace; Name = 'opensphere-ghcr-pull' },
-  @{ Namespace = $RuntimeNamespace; Name = 'opensphere-ghcr-pull' }
+  @{ Namespace = $RuntimeNamespace; Name = 'opensphere-ghcr-pull' },
+  @{ Namespace = $RuntimeNamespace; Name = 'opensphere-baseline-monitoring-reader' }
 )) {
   $secretObject = Invoke-Kubectl @('-n', $secretRef.Namespace, 'get', 'secret', $secretRef.Name, '-o', 'name')
   if (($secretObject -join '').Trim() -ne "secret/$($secretRef.Name)") {

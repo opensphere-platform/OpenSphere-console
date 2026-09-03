@@ -232,13 +232,26 @@ if ($ingressJson -match 'beszel-hub') {
   throw 'Beszel Hub must not be referenced by an Ingress.'
 }
 
-Invoke-Kubectl -Arguments @(
-  '-n', 'opensphere-console', 'rollout', 'restart',
-  'deployment/opensphere-console-api'
+# Fresh bootstrap creates the reader Secret before C_API exists. On an
+# existing install, restart only the present consumer to reload its env.
+$consoleApi = Get-KubectlValue -Arguments @(
+  '-n', 'opensphere-console', 'get', 'deployment', 'opensphere-console-api',
+  '--ignore-not-found', '-o', 'name'
 )
-Invoke-Kubectl -Arguments @(
-  '-n', 'opensphere-console', 'rollout', 'status',
-  'deployment/opensphere-console-api', '--timeout=5m'
-)
+if ($consoleApi.Trim()) {
+  if ($consoleApi.Trim() -ne 'deployment.apps/opensphere-console-api') {
+    throw 'Unexpected Console API deployment identity during reader refresh.'
+  }
+  Invoke-Kubectl -Arguments @(
+    '-n', 'opensphere-console', 'rollout', 'restart',
+    'deployment/opensphere-console-api'
+  )
+  Invoke-Kubectl -Arguments @(
+    '-n', 'opensphere-console', 'rollout', 'status',
+    'deployment/opensphere-console-api', '--timeout=5m'
+  )
+} else {
+  Write-Host 'Beszel reader is ready; Setup will create Console API next.'
+}
 
 Write-Host 'Console baseline host observation is ready from signed exact-digest artifacts.'

@@ -87,3 +87,37 @@ try {
   if ([IO.File]::Exists($fixturePath)) { [IO.File]::Delete($fixturePath) }
 }
 Write-Output '{"status":"passed","actualInstallerFunctions":true,"existingSecretReuse":true,"invalidSessionKeysRejected":5,"liveProgressHeartbeat":true,"stdoutPreserved":true,"failureAndStderrSafety":true,"clusterAccess":false}'
+
+# Execute the production Beszel consumer refresh branch without a cluster.
+$beszelSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../deploy/baseline-monitoring/install.ps1'))
+$begin = $beszelSource.IndexOf('# Fresh bootstrap creates the reader Secret')
+$end = $beszelSource.IndexOf("Write-Host 'Console baseline host observation", $begin)
+if ($begin -lt 0 -or $end -le $begin) { throw 'Missing Beszel consumer refresh branch' }
+$refreshConsumer = [scriptblock]::Create($beszelSource.Substring($begin, $end - $begin))
+$calls = [Collections.Generic.List[object]]::new()
+function Get-KubectlValue([string[]]$Arguments) {
+  if ($Arguments -notcontains '--ignore-not-found' -or $Arguments -notcontains 'opensphere-console-api') {
+    throw 'Consumer lookup must distinguish absence from read failure'
+  }
+  if ($scenario -eq 'forbidden') { throw 'fixture Forbidden' }
+  if ($scenario -eq 'present') { return 'deployment.apps/opensphere-console-api' }
+  if ($scenario -eq 'wrong-identity') { return 'deployment.apps/unrelated' }
+  return ''
+}
+function Invoke-Kubectl([string[]]$Arguments) { $calls.Add($Arguments) }
+foreach ($scenario in @('absent', 'present', 'forbidden', 'wrong-identity')) {
+  $calls.Clear()
+  $failed = $false
+  try { . $refreshConsumer } catch { $failed = $true }
+  if ($scenario -eq 'absent' -and ($failed -or $calls.Count -ne 0)) {
+    throw 'Fresh Beszel install tried to restart an absent API'
+  }
+  if ($scenario -eq 'present' -and ($failed -or $calls.Count -ne 2 -or
+      $calls[0] -notcontains 'restart' -or $calls[1] -notcontains 'status')) {
+    throw 'Existing API did not reload the reader projection with readiness verification'
+  }
+  if ($scenario -in @('forbidden', 'wrong-identity') -and (-not $failed -or $calls.Count -ne 0)) {
+    throw 'API lookup failure or wrong identity was treated as harmless absence'
+  }
+}
+Write-Output '{"beszelFreshConsumerAbsence":true,"existingConsumerRefresh":true,"lookupErrorsFailClosed":true,"clusterAccess":false}'
