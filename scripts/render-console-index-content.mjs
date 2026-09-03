@@ -1,6 +1,7 @@
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import {isDeepStrictEqual} from 'node:util';
 const imagePattern=/^ghcr\.io\/opensphere-platform\/opensphere-console-index-content@sha256:[a-f0-9]{64}$/;
 export function withConsoleIndexContent(deployment,image) {
   if(!imagePattern.test(image))throw Error('Console index content requires a canonical immutable image digest.');
@@ -18,7 +19,13 @@ export function withConsoleIndexContent(deployment,image) {
   const mount={name:'console-index-content',mountPath:'/usr/share/nginx/html/console-index',readOnly:true};
   for(const [collection,value]of [[pod.initContainers??=[],init],[pod.volumes??=[],volume],[web.volumeMounts??=[],mount]]) {
     const old=collection.findIndex(v=>v.name===value.name);
-    if(old<0)collection.push(value);else collection[old]=value;
+    if(old<0) collection.push(value);
+    else {
+      const existing=collection[old];
+      const comparable=value===init ? {...existing,image:value.image} : existing;
+      if(!isDeepStrictEqual(comparable,value)) throw Error('Conflicting existing Console content resource; explicit review required.');
+      collection[old]=value;
+    }
   }
   const command=web.readinessProbe?.exec?.command;
   if(!command||command.length!==3||command[0]!=='/bin/sh'||command[1]!=='-ec')throw Error('Unexpected web readiness contract.');
