@@ -95,20 +95,31 @@ $end = $beszelSource.IndexOf("Write-Host 'Console baseline host observation", $b
 if ($begin -lt 0 -or $end -le $begin) { throw 'Missing Beszel consumer refresh branch' }
 $refreshConsumer = [scriptblock]::Create($beszelSource.Substring($begin, $end - $begin))
 $calls = [Collections.Generic.List[object]]::new()
-function Get-KubectlValue([string[]]$Arguments) {
-  if ($Arguments -notcontains '--ignore-not-found' -or $Arguments -notcontains 'opensphere-console-api') {
+# Keep the production lookup helper: a successful native command with no stdout
+# passes through PowerShell as null, unlike the old mock's empty string.
+$beszelTokens = $null; $beszelParseErrors = $null
+$beszelAst = [Management.Automation.Language.Parser]::ParseInput($beszelSource, [ref]$beszelTokens, [ref]$beszelParseErrors)
+if ($beszelParseErrors.Count) { throw 'Beszel installer parse failed' }
+$lookupDefinition = $beszelAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-KubectlValue' }, $true)
+if (-not $lookupDefinition) { throw 'Missing production Beszel lookup helper' }
+. ([scriptblock]::Create($lookupDefinition.Extent.Text))
+$KubectlContext = 'fixture-no-cluster'
+$nativeLookupFixture = "const mode = process.argv[1]; if (mode === 'forbidden') process.exit(7); if (mode === 'present') process.stdout.write('deployment.apps/opensphere-console-api\n'); if (mode === 'wrong-identity') process.stdout.write('deployment.apps/unrelated\n');"
+function kubectl {
+  if ($args -notcontains '--ignore-not-found' -or $args -notcontains 'opensphere-console-api' -or
+      $args -notcontains 'fixture-no-cluster') {
     throw 'Consumer lookup must distinguish absence from read failure'
   }
-  if ($scenario -eq 'forbidden') { throw 'fixture Forbidden' }
-  if ($scenario -eq 'present') { return 'deployment.apps/opensphere-console-api' }
-  if ($scenario -eq 'wrong-identity') { return 'deployment.apps/unrelated' }
-  return ''
+  & $nodeExecutable -e $nativeLookupFixture -- $scenario
 }
 function Invoke-Kubectl([string[]]$Arguments) { $calls.Add($Arguments) }
 foreach ($scenario in @('absent', 'present', 'forbidden', 'wrong-identity')) {
   $calls.Clear()
   $failed = $false
   try { . $refreshConsumer } catch { $failed = $true }
+  if ($scenario -eq 'absent' -and $null -ne $consoleApi) {
+    throw 'Fresh absence fixture must reproduce native no-output as null'
+  }
   if ($scenario -eq 'absent' -and ($failed -or $calls.Count -ne 0)) {
     throw 'Fresh Beszel install tried to restart an absent API'
   }
@@ -120,4 +131,4 @@ foreach ($scenario in @('absent', 'present', 'forbidden', 'wrong-identity')) {
     throw 'API lookup failure or wrong identity was treated as harmless absence'
   }
 }
-Write-Output '{"beszelFreshConsumerAbsence":true,"existingConsumerRefresh":true,"lookupErrorsFailClosed":true,"clusterAccess":false}'
+Write-Output '{"beszelFreshConsumerAbsence":true,"actualBeszelLookupHelper":true,"nativeNoOutputIsNull":true,"existingConsumerRefresh":true,"lookupErrorsFailClosed":true,"clusterAccess":false}'

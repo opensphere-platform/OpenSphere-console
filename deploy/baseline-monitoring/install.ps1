@@ -238,7 +238,7 @@ $consoleApi = Get-KubectlValue -Arguments @(
   '-n', 'opensphere-console', 'get', 'deployment', 'opensphere-console-api',
   '--ignore-not-found', '-o', 'name'
 )
-if ($consoleApi.Trim()) {
+if (-not [string]::IsNullOrWhiteSpace($consoleApi)) {
   if ($consoleApi.Trim() -ne 'deployment.apps/opensphere-console-api') {
     throw 'Unexpected Console API deployment identity during reader refresh.'
   }
