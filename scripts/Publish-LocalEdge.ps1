@@ -210,6 +210,9 @@ Invoke-Checked git -C $repoRoot worktree add --detach $consoleCheckout $SourceRe
 # proves the release-ready boundary before registry authentication or build.
 Push-Location $consoleCheckout
 try {
+  # The detached checkout has no node_modules. Resolve only the committed lockfile;
+  # lifecycle scripts are unnecessary for the read-only contract and migration gates.
+  Invoke-Checked npm.cmd ci --ignore-scripts --no-audit --no-fund | Out-Null
   $contractArguments = @('scripts/verify-console-contracts.mjs')
   if ($integratedRequest) {
     $contractArguments += @('--release-ready', '--release-profile=bootstrap-core')
