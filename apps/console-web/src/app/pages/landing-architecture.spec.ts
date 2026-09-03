@@ -123,14 +123,14 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
   assert.match(search, /홈 · 10P × 6L/);
 });
 
-test('main index uses one top-level Clarity tab bar for nine independent architecture pages', () => {
+test('main index uses one top-level Clarity tab bar for ten independent architecture pages including installation milestones', () => {
   assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)'/g) || []).length, 5);
   assert.match(source, /import \{ ClarityModule \} from '@clr\/angular'/);
-  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, ClarityModule\]/);
+  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, LandingInstallationMilestones, ClarityModule\]/);
   assert.match(source, /<clr-tabs class="architecture-page-tabs">/);
-  assert.equal((source.match(/<clr-tab>/g) || []).length, 9);
-  assert.equal((source.match(/<button clrTabLink/g) || []).length, 9);
-  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 9);
+  assert.equal((source.match(/<clr-tab>/g) || []).length, 10);
+  assert.equal((source.match(/<button clrTabLink/g) || []).length, 10);
+  assert.equal((source.match(/<clr-tab-content \*clrIfActive=/g) || []).length, 10);
   assert.equal((source.match(/<os-landing-foundations page="(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)"/g) || []).length, 5);
   assert.match(source, /<button clrTabLink[^>]*>10P × 6L Architecture<\/button>[\s\S]*id="architecture-page-realization"/);
   assert.match(source, /<button clrTabLink[^>]*>OSCE<\/button>/);

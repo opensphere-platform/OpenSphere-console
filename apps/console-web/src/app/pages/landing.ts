@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { ClarityModule } from '@clr/angular';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { routeForPlugin } from '../core/perspectives';
@@ -9,6 +9,7 @@ import { LandingFoundations } from './landing-foundations';
 import { LandingOsaaDialogueState } from './landing-osaa-dialogue-state';
 import { LandingRegistryCatalog } from './landing-registry-catalog';
 import { LandingPfssDelivery } from './landing-pfss-delivery';
+import { LandingInstallationMilestones } from './landing-installation-milestones';
 
 interface IndexLink {
   path: string;
@@ -34,7 +35,8 @@ type ArchitecturePageId =
   | 'registry-catalog'
   | 'pfss-delivery'
   | 'ai-lifecycle'
-  | 'osaa-dialogue-state';
+  | 'osaa-dialogue-state'
+  | 'installation';
 
 /**
  * The horizontal axis is exactly ten Perspectives. Main Shell is not an
@@ -56,7 +58,7 @@ const PERSPECTIVES: PerspectiveDef[] = [
 
 @Component({
   selector: 'os-landing',
-  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, ClarityModule],
+  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, LandingInstallationMilestones, ClarityModule],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
@@ -373,6 +375,12 @@ const PERSPECTIVES: PerspectiveDef[] = [
           <button clrTabLink (click)="selectPage('osaa-dialogue-state')">OSDST</button>
           <clr-tab-content *clrIfActive="activePage() === 'osaa-dialogue-state'">
             <os-landing-osaa-dialogue-state />
+          </clr-tab-content>
+        </clr-tab>
+        <clr-tab>
+          <button clrTabLink (click)="selectPage('installation')">설치 이정표</button>
+          <clr-tab-content *clrIfActive="activePage() === 'installation'">
+            <os-landing-installation-milestones />
           </clr-tab-content>
         </clr-tab>
       </clr-tabs>
@@ -722,7 +730,9 @@ export class Landing {
   private psp = inject(PerspectiveService);
 
   readonly layers = SERVICE_REALIZATION_LAYERS;
-  readonly activePage = signal<ArchitecturePageId>('architecture');
+  readonly activePage = signal<ArchitecturePageId>(
+    inject(ActivatedRoute).snapshot.fragment === 'installation' ? 'installation' : 'architecture',
+  );
 
   selectPage(page: ArchitecturePageId): void {
     this.activePage.set(page);
