@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,7 +42,7 @@ var (
 
 const (
 	registryNamespace         = "opensphere-console"
-	trustConfigMap            = "dupa-trusted-keys"
+	trustConfigMap            = "opensphere-extension-trusted-keys"
 	navigationConfigMap       = "opensphere-extension-navigation-v1"
 	navigationKey             = "navigation.json"
 	installationLockConfigMap = "opensphere-installation-lock"
@@ -801,7 +802,7 @@ type Source struct {
 
 var sources = []Source{
 	{"extensions.packages", uipkgGVR, registryNamespace, true}, {"extensions.registrations", uiregGVR, registryNamespace, true},
-	{"catalog.descriptors", descriptorGVR, "", true},
+	{"catalog.descriptors", descriptorGVR, "", false},
 }
 
 func resource(dyn dynamic.Interface, source Source) dynamic.ResourceInterface {
@@ -817,11 +818,15 @@ func LoadInput(ctx context.Context, dyn dynamic.Interface, now time.Time) (Input
 	for _, source := range sources {
 		list, err := resource(dyn, source).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			statuses[source.Name] = catalog.SourceStatus{Ready: false, Reason: "SourceUnavailable"}
-			if source.Required {
-				return Input{}, fmt.Errorf("%s: %w", source.Name, err)
+			// Foundation is an optional module. Its absent CRD must not prevent
+			// Console discovery. Authentication, transport and required-source
+			// failures still invalidate the snapshot; they are not empty catalogs.
+			if !source.Required && apierrors.IsNotFound(err) {
+				lists[source.Name] = &unstructured.UnstructuredList{}
+				statuses[source.Name] = catalog.SourceStatus{Ready: false, Reason: "NotInstalled"}
+				continue
 			}
-			continue
+			return Input{}, fmt.Errorf("%s: %w", source.Name, err)
 		}
 		lists[source.Name] = list
 		statuses[source.Name] = catalog.SourceStatus{Ready: true, Count: len(list.Items), ResourceVersion: list.GetResourceVersion()}
@@ -878,7 +883,7 @@ func loadTrustedKeys(ctx context.Context, dyn dynamic.Interface) (map[string]str
 func loadNavigation(ctx context.Context, dyn dynamic.Interface) (map[string]map[string]interface{}, error) {
 	cm, err := dyn.Resource(configMapGVR).Namespace(registryNamespace).Get(ctx, navigationConfigMap, metav1.GetOptions{})
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if apierrors.IsNotFound(err) {
 			return map[string]map[string]interface{}{}, nil
 		}
 		return nil, err

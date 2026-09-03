@@ -9,6 +9,7 @@ param(
   [string]$CliUpdateSigningKeyId = 'opensphere-cli-local-dev-v1',
   [string]$CliUpdateSigningPublicKey = '',
   [switch]$UseExistingRegistryLogin,
+  [switch]$DeferChannelPromotion,
   [switch]$AdvanceOsShellUxConsoleEdge,
   [ValidateSet('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime', 'backend')]
   [string[]]$Components = @('console', 'consoleApi', 'extensionController', 'registry', 'osaaGateway', 'osdst', 'osaaGovernedAdapter', 'notificationDispatcher', 'gitea', 'supabasePostgres', 'supabaseAuth', 'supabaseRest', 'supabaseStorage', 'giteaPostgres', 'recovery', 'beszelHub', 'beszelAgent', 'beszelBootstrap', 'cliArtifacts', 'osShellControl', 'osShellRuntime')
@@ -17,6 +18,9 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $componentMode = $PSBoundParameters.ContainsKey('Components')
+if ($DeferChannelPromotion -and $componentMode) {
+  throw 'Deferred promotion requires a complete Console release.'
+}
 
 function Invoke-Checked {
   if ($args.Count -lt 1) {
@@ -186,7 +190,8 @@ $releaseTag = [DateTimeOffset]::FromUnixTimeSeconds([long]$epochText).ToOffset($
 $localTag = "local-$($SourceRevision.Substring(0, 12))"
 
 $platformRoot = Split-Path $repoRoot -Parent
-$workspace = Join-Path $platformRoot ".codex-tmp\local-edge-$($SourceRevision.Substring(0, 12))"
+$workspaceSuffix = $DeferChannelPromotion ? '-staged' : ''
+$workspace = Join-Path $platformRoot ".codex-tmp\local-edge-$($SourceRevision.Substring(0, 12))$workspaceSuffix"
 $consoleCheckout = Join-Path $workspace 'OpenSphere-console'
 $setupCheckout = Join-Path $workspace 'OpenSphere-Setup-CLI'
 $metadataRoot = Join-Path $workspace 'metadata'
@@ -569,7 +574,7 @@ $bom = [ordered]@{
   kind = $partialPublication ? 'OpenSphereEdgeComponentPublication' : 'OpenSphereReleaseBOM'
   publicationScope = $partialPublication ? 'ComponentSet' : 'CompleteConsoleRelease'
   channel = 'edge'
-  status = 'Active'
+  status = $DeferChannelPromotion ? 'Staged' : 'Active'
   releaseTag = $releaseTag
   immutableTag = $localTag
   source = 'https://github.com/opensphere-platform/OpenSphere-console'
@@ -609,6 +614,15 @@ if ($partialPublication) {
   }
 }
 
+# Staging publishes only immutable images. Run this same source again without
+# DeferChannelPromotion after in-cluster acceptance; source tags are reused.
+if ($DeferChannelPromotion) {
+  Write-Host '[staged] Complete immutable release verified; no channel tags changed'
+  Write-Host "[release] $releaseTag"
+  Write-Host "[immutable] $localTag"
+  Write-Host "[bom] $bomPath"
+  return
+}
 Write-Host '[step 06/06] Advance selected component tags without moving a partial Console anchor'
 foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
   Set-RemoteTag -Repository "$Registry/$($item.Image)" -Digest $digests[$item.Key] -Tag edge

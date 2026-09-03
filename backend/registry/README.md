@@ -23,3 +23,9 @@ not Registry fields. Core Services are discovery-only. Only exact-digest `extens
 The service keeps one immutable in-memory snapshot. A complete validated input set is serialized
 deterministically, hashed as the catalog revision and atomically swapped. After a source failure,
 browse retains the last snapshot with `stale=true`; resolve fails closed.
+
+For the Console-only bootstrap, an absent Foundation descriptor API is reported as
+`Ready=false, Reason=NotInstalled`; it does not prevent publishing the native Console
+catalog. A forbidden or unavailable Foundation API still fails closed. UI Plugin APIs,
+the installation lock and `opensphere-extension-trusted-keys` remain required inputs.
+This avoids manufacturing Foundation resources or retaining a legacy trust-key alias.

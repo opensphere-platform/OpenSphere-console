@@ -40,7 +40,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["dupa-trusted-keys", "opensphere-extension-navigation-v1", "opensphere-installation-lock"]
+    resourceNames: ["opensphere-extension-trusted-keys", "opensphere-extension-navigation-v1", "opensphere-installation-lock"]
     verbs: ["get", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
