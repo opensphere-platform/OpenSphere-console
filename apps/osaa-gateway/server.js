@@ -6913,14 +6913,15 @@ async function requireDialogueMaintenanceCapability(actor) {
     };
   }
   const readiness = await response.json().catch(() => ({}));
-  if (!response.ok || readiness?.dialogueMaintenance?.ready !== true) {
+  const dialogueMaintenance = readiness?.maintenance;
+  if (!response.ok || dialogueMaintenance?.ready !== true) {
     throw {
       code: 503,
       errorCode: 'conversation_turn_maintenance_unavailable',
-      msg: readiness?.error || 'OSDST maintenance capability is unavailable',
+      msg: dialogueMaintenance?.error || readiness?.error || 'OSDST maintenance capability is unavailable',
     };
   }
-  return readiness.dialogueMaintenance;
+  return dialogueMaintenance;
 }
 
 async function sourceCatalogRead(actor) {

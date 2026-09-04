@@ -24,12 +24,14 @@ test('OSDST owns dialogue recovery through one direct scoped database login', ()
   assert.match(migration, /GRANT EXECUTE ON FUNCTION osaa\.recover_dialogue_turn\(uuid, uuid, text, text\)[\s\S]*?TO opensphere_osaa_dialogue_maintenance/);
   assert.match(migration, /AND c\.owner_id=expected_owner_id/);
   assert.match(osdstSource, /getMaintenancePool/);
+  assert.match(osdstSource, /maintenance: maintenanceState/);
   assert.doesNotMatch(backendSource, /OSAA_DIALOGUE_MAINTENANCE_PG_PASSWORD/);
   assert.match(osdstSource, /reapExpiredTurns/);
   assert.match(backendSource, /OSDST capability unavailable/);
   assert.match(osdstDeploy, /opensphere-osaa-maintenance-runtime, key: dialogue-pg-password/);
   assert.match(backendSource, /osaa_dialogue_maintenance_ready/);
   assert.match(gatewaySource, /await requireDialogueMaintenanceCapability\(actor\);[\s\S]*?store[.]beginTurn/);
+  assert.match(gatewaySource, /const dialogueMaintenance = readiness[?][.]maintenance/);
   assert.match(gatewaySource, /conversation_turn_maintenance_unavailable/);
   assert.match(backendDeploy, /readinessProbe: \{ httpGet: \{ path: \/serving-readyz/);
 });
