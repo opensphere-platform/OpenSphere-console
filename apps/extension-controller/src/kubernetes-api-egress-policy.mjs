@@ -1,7 +1,7 @@
 import { BlockList, isIP } from 'node:net';
 
 export const KUBERNETES_API_EGRESS_POLICY = 'opensphere-console-api-kubernetes-egress';
-export const KUBERNETES_API_EGRESS_CONTRACT = 'registry-kubernetes-egress/v1';
+export const KUBERNETES_API_EGRESS_CONTRACT = 'registry-kubernetes-egress-v1';
 
 const invalidTargets = new BlockList();
 for (const [address, prefix] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['224.0.0.0', 4], ['240.0.0.0', 4]]) {

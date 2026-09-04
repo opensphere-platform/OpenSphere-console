@@ -299,7 +299,7 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: opensphere-extension-controller
     app.kubernetes.io/part-of: opensphere-console
-    opensphere.io/contract: registry-kubernetes-egress/v1
+    opensphere.io/contract: registry-kubernetes-egress-v1
 spec:
   podSelector:
     matchLabels:

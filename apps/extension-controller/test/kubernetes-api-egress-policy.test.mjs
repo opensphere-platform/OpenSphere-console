@@ -53,6 +53,7 @@ test('reconciler patches only the pre-owned policy and preserves exact addresses
   const body = JSON.parse(patch.options.body);
   assert.equal(body.metadata.resourceVersion, '17');
   assert.equal(body.metadata.labels['opensphere.io/contract'], KUBERNETES_API_EGRESS_CONTRACT);
+  assert.match(KUBERNETES_API_EGRESS_CONTRACT, /^[A-Za-z0-9](?:[-A-Za-z0-9_.]*[A-Za-z0-9])?$/u);
   assert.deepEqual(body.spec.egress.map((rule) => rule.to[0].ipBlock.cidr), ['10.96.0.1/32', '192.168.65.4/32']);
   assert.equal(patch.url.endsWith(`/networkpolicies/${KUBERNETES_API_EGRESS_POLICY}`), true);
 });

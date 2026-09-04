@@ -429,7 +429,7 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
   assert(JSON.stringify(kubernetesEgressPolicy.metadata?.labels) === JSON.stringify({
     'app.kubernetes.io/managed-by': 'opensphere-extension-controller',
     'app.kubernetes.io/part-of': 'opensphere-console',
-    'opensphere.io/contract': 'registry-kubernetes-egress/v1',
+    'opensphere.io/contract': 'registry-kubernetes-egress-v1',
   }), 'C_API Kubernetes egress policy must remain inside the C_EXT ownership contract');
   assert(JSON.stringify(kubernetesEgressPolicy.spec?.podSelector) === JSON.stringify({
     matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' },
