@@ -260,7 +260,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
       @if (registryStatus(); as registry) {
         <section class="registry-access" aria-label="Registry credential lifecycle">
           <p>Authentication: {{ registry.authenticationMode || 'unknown' }} · refresh: {{ registry.refreshPolicy || 'manual' }} · access expiry: {{ registry.expiresAt || 'not reported' }}</p>
-          <p>Pull Secret convergence: {{ registry.synchronizedNamespaces?.length || 0 }} / {{ registry.requiredNamespaceCount || 5 }} · last verified: {{ registry.verifiedAt || 'not verified' }}</p>
+          <p>Pull Secret convergence: {{ registry.synchronizedNamespaces?.length || 0 }} / {{ registry.requiredNamespaceCount || 6 }} · last verified: {{ registry.verifiedAt || 'not verified' }}</p>
           <p class="os-sub">Observed dependency impact: {{ registryDependentPackages().length }} installed package(s) — <span class="os-mono">{{ registryDependentPackages().join(', ') || 'none' }}</span></p>
           @if (registry.errorCode) { <p class="os-sub" role="alert">Action required: {{ registry.errorCode }}.</p> }
           @if (registry.authorization; as authorization) {
