@@ -537,6 +537,28 @@ class OperationalQueryService {
   }
 }
 
+function inactiveOperationalStatus(clusterId = DEFAULT_CLUSTER) {
+  return {
+    clusterId,
+    graph: { total: 0, fresh: 0, observedAt: null },
+    sources: [],
+    risk: { active: 0, severityRank: 0 },
+    observer: null,
+    runtime: { degraded: false, reason: 'disabled_until_cluster_manager_activation' },
+    flags: {
+      observer: false,
+      graph: false,
+      incident: false,
+      globalRisk: false,
+      incidentRelay: false,
+    },
+  };
+}
+
+function inactiveMetacognition(clusterId = DEFAULT_CLUSTER) {
+  return { clusterId, selfModel: null, mismatches: [], remediations: [] };
+}
+
 class OperationalIntelligenceRuntime {
   constructor(options) {
     this.enabled = options.enabled === true;
@@ -593,4 +615,5 @@ module.exports = {
   RULE_REVISION, kubernetesMicroTime, leaseBody, leaseExpired, KubernetesLeaseElector, OperationalGraphStore,
   correlationSignals, incidentRowToState, IncidentRuntime, projectNodeForActor, OperationalQueryService,
   OperationalIntelligenceRuntime, graphCoverage, reconcileCompletenessDigest,
+  inactiveOperationalStatus, inactiveMetacognition,
 };

@@ -54,6 +54,8 @@ const {
   IncidentRuntime,
   OperationalQueryService,
   OperationalIntelligenceRuntime,
+  inactiveOperationalStatus,
+  inactiveMetacognition,
 } = require('./r2d2-operational-runtime');
 const {
   normalizeConversationMessages, untrustedEvidencePolicySystemMessage, untrustedEvidenceMessage,
@@ -9601,6 +9603,14 @@ function operationalUnavailable(res) {
   });
 }
 
+function operationalCapabilityInactive() {
+  return !R2D2_OBSERVER_ENABLED
+    && !R2D2_GRAPH_ENABLED
+    && !R2D2_INCIDENT_ENABLED
+    && !R2D2_GLOBAL_RISK_ENABLED
+    && !R2D2_INCIDENT_RELAY_ENABLED;
+}
+
 async function streamIncidentEvents(req, res, actor) {
   const pool = getPgPool();
   if (!pool || !r2d2QueryService) return operationalUnavailable(res);
@@ -9845,6 +9855,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/osaa/operational/status' && req.method === 'GET') {
       await verifyAuthed(req);
+      if (operationalCapabilityInactive()) return json(res, 200, inactiveOperationalStatus(R2D2_CLUSTER_ID));
       if (!r2d2QueryService) return operationalUnavailable(res);
       const status = await r2d2QueryService.status();
       return json(res, 200, { ...status, runtime: r2d2Runtime?.lastResult || null,
@@ -9854,6 +9865,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/osaa/graph/nodes' && req.method === 'GET') {
       const actor = await verifyAuthed(req);
+      if (operationalCapabilityInactive()) return json(res, 200, { nodes: [], relations: [] });
       if (!r2d2QueryService) return operationalUnavailable(res);
       return json(res, 200, await r2d2QueryService.graph(actor, { namespace: url.searchParams.get('namespace') || '', limit: url.searchParams.get('limit') || 250 }));
     }
@@ -9866,11 +9878,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/osaa/incidents' && req.method === 'GET') {
       const actor = await verifyAuthed(req);
+      if (operationalCapabilityInactive()) return json(res, 200, { incidents: [] });
       if (!r2d2QueryService) return operationalUnavailable(res);
       return json(res, 200, { incidents: await r2d2QueryService.incidents(actor, { status: url.searchParams.get('status') || '', limit: url.searchParams.get('limit') || 100 }) });
     }
     if (url.pathname === '/api/osaa/incidents/stream' && req.method === 'GET') {
       const actor = await verifyAuthed(req);
+      if (operationalCapabilityInactive()) return res.writeHead(204).end();
       return streamIncidentEvents(req, res, actor);
     }
     const incidentMatch = url.pathname.match(/^\/api\/osaa\/incidents\/([0-9a-f-]{36})$/i);
@@ -9882,11 +9896,19 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/osaa/context' && req.method === 'GET') {
       const actor = await verifyAuthed(req);
+      if (operationalCapabilityInactive()) {
+        return json(res, 200, {
+          route: String(url.searchParams.get('route') || '/').slice(0, 500),
+          incidents: [],
+          epistemicState: 'unknown',
+        });
+      }
       if (!r2d2QueryService) return operationalUnavailable(res);
       return json(res, 200, await r2d2QueryService.context(url.searchParams.get('route') || '/', actor));
     }
     if (url.pathname === '/api/osaa/metacognition' && req.method === 'GET') {
       await verifyAdmin(req);
+      if (operationalCapabilityInactive()) return json(res, 200, inactiveMetacognition(R2D2_CLUSTER_ID));
       if (!r2d2QueryService) return operationalUnavailable(res);
       return json(res, 200, await r2d2QueryService.metacognition({ limit: url.searchParams.get('limit') || 100 }));
     }

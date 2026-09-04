@@ -7,7 +7,7 @@ const path = require('node:path');
 const {
   kubernetesMicroTime, leaseBody, leaseExpired, KubernetesLeaseElector, correlationSignals,
   incidentRowToState, projectNodeForActor, OperationalQueryService, OperationalIntelligenceRuntime,
-  reconcileCompletenessDigest,
+  reconcileCompletenessDigest, inactiveOperationalStatus, inactiveMetacognition,
 } = require('./r2d2-operational-runtime');
 
 const runtimeSource = fs.readFileSync(path.join(__dirname, 'r2d2-operational-runtime.js'), 'utf8');
@@ -17,6 +17,21 @@ test('Kubernetes Lease timestamps use the MicroTime wire format', () => {
   assert.equal(kubernetesMicroTime('2026-08-11T06:19:32Z'), '2026-08-11T06:19:32.000000Z');
   assert.equal(leaseBody('ns', 'r2d2', 'pod-a', '2026-08-11T06:19:32.797Z', 30).spec.renewTime,
     '2026-08-11T06:19:32.797000Z');
+});
+
+test('inactive operational capability is an explicit safe projection before Cluster Manager activation', () => {
+  assert.deepEqual(inactiveOperationalStatus('local'), {
+    clusterId: 'local',
+    graph: { total: 0, fresh: 0, observedAt: null },
+    sources: [],
+    risk: { active: 0, severityRank: 0 },
+    observer: null,
+    runtime: { degraded: false, reason: 'disabled_until_cluster_manager_activation' },
+    flags: { observer: false, graph: false, incident: false, globalRisk: false, incidentRelay: false },
+  });
+  assert.deepEqual(inactiveMetacognition('local'), {
+    clusterId: 'local', selfModel: null, mismatches: [], remediations: [],
+  });
 });
 
 test('tombstones advance to the current fence and collection epoch', () => {

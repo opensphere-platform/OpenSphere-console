@@ -585,6 +585,7 @@ function createCAiOwnerApi({
 
   async function listOperations(limit) {
     const maximum = boundedLimit(limit, 50);
+    if (!durableOperationsEnabled) return { operations: [] };
     const rows = await rpc('c_ai_list_module_operations', [maximum]);
     if (!Array.isArray(rows) || rows.length > maximum) {
       fail(503, 'C_AI operation projection is invalid', 'c_ai_owner_projection_invalid');
@@ -593,6 +594,9 @@ function createCAiOwnerApi({
   }
 
   async function operationDetails(operationId) {
+    if (!durableOperationsEnabled) {
+      fail(503, 'R2D2 durable operations are not activated', 'durable_operation_disabled');
+    }
     const id = requireUuid(operationId, 'operationId');
     const value = await rpc('c_ai_get_module_operation', [id]);
     if (!value?.operation) fail(404, 'operation not found');
@@ -634,6 +638,26 @@ function createCAiOwnerApi({
   }
 
   async function remediationStatus() {
+    if (!remediationProposalEnabled && !remediationExecutionEnabled) {
+      return {
+        schema: 'osaa-engineering-remediation-status.opensphere.io/v1alpha1',
+        proposalEnabled: false,
+        executionEnabled: false,
+        workerReady: false,
+        repositories: [],
+        approvalMode: 'disabled',
+        capabilities: {
+          diagnose: true,
+          propose: false,
+          approveExactWorkUnit: false,
+          repositoryWrite: false,
+          componentBuild: false,
+          exactDigestDeploy: false,
+          browserVerification: false,
+          rollback: false,
+        },
+      };
+    }
     const store = await rpc('c_ai_engineering_remediation_status', [repairRepository]);
     if (!store || typeof store !== 'object' || typeof store.workerReady !== 'boolean') {
       fail(503, 'C_AI remediation status projection is invalid', 'c_ai_owner_projection_invalid');
@@ -662,6 +686,12 @@ function createCAiOwnerApi({
 
   async function listRemediations(limit) {
     const maximum = boundedLimit(limit);
+    if (!remediationProposalEnabled && !remediationExecutionEnabled) {
+      return {
+        schema: 'osaa-engineering-remediation-list.opensphere.io/v1alpha1',
+        remediations: [],
+      };
+    }
     const [rows, status] = await Promise.all([
       rpc('c_ai_list_engineering_remediations', [maximum]), remediationStatus(),
     ]);

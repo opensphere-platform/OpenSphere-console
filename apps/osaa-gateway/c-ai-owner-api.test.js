@@ -143,7 +143,7 @@ function apiWith(overrides = {}) {
     fetchImpl: overrides.fetchImpl || (async () => new Response('{}', { status: 200 })),
     timeoutSignal: () => undefined,
     durableOperationsEnabled: overrides.durableOperationsEnabled !== false,
-    remediationProposalEnabled: true,
+    remediationProposalEnabled: overrides.remediationProposalEnabled !== false,
     remediationExecutionEnabled: overrides.remediationExecutionEnabled !== false,
     llmCredentialMutationEnabled: overrides.llmCredentialMutationEnabled === true,
     llmCredentialDeletionEnabled: overrides.llmCredentialDeletionEnabled === true,
@@ -188,6 +188,42 @@ test('operation approval is AAL2, exact digest bound, independent, and feature g
     code: 503, errorCode: 'durable_operation_approval_disabled',
   });
   assert.equal(disabled.dbCalls.length, 0);
+});
+
+test('inactive operation and remediation capabilities return honest empty projections without database access', async () => {
+  const { instance, dbCalls } = apiWith({
+    durableOperationsEnabled: false,
+    remediationProposalEnabled: false,
+    remediationExecutionEnabled: false,
+    noPool: true,
+  });
+  assert.deepEqual(await instance.listOperations('50'), { operations: [] });
+  assert.deepEqual(await instance.listRemediations('50'), {
+    schema: 'osaa-engineering-remediation-list.opensphere.io/v1alpha1',
+    remediations: [],
+  });
+  assert.deepEqual(await instance.remediationStatus(), {
+    schema: 'osaa-engineering-remediation-status.opensphere.io/v1alpha1',
+    proposalEnabled: false,
+    executionEnabled: false,
+    workerReady: false,
+    repositories: [],
+    approvalMode: 'disabled',
+    capabilities: {
+      diagnose: true,
+      propose: false,
+      approveExactWorkUnit: false,
+      repositoryWrite: false,
+      componentBuild: false,
+      exactDigestDeploy: false,
+      browserVerification: false,
+      rollback: false,
+    },
+  });
+  await assert.rejects(instance.operationDetails(OPERATION_ID), {
+    code: 503, errorCode: 'durable_operation_disabled',
+  });
+  assert.equal(dbCalls.length, 0);
 });
 
 test('development MFA exception is confined to exact local edge profile and preserves stable actor coordinates', async () => {
