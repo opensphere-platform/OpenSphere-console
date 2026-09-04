@@ -358,7 +358,10 @@ $allImages = @(
   # this list ordered and complete so the Console anchor always represents one
   # exact 18-component BOM.
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-web\Dockerfile') },
-  [ordered]@{ Key = 'consoleApi'; Image = 'opensphere-console-api'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\Dockerfile') },
+  # Console API packages executable policy contracts. Docker Desktop has reused a
+  # stale COPY layer for this image on Windows-hosted worktrees, so this one image
+  # must be rebuilt from bytes and then compared with the detached source checkout.
+  [ordered]@{ Key = 'consoleApi'; Image = 'opensphere-console-api'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\Dockerfile'); NoCache = $true },
   [ordered]@{ Key = 'extensionController'; Image = 'opensphere-extension-controller'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\extension-controller\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'apps\osaa-gateway'); File = (Join-Path $consoleCheckout 'apps\osaa-gateway\Dockerfile') },
@@ -472,6 +475,9 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
     '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
     '--file', $item.File
   )
+  if ($item.NoCache -eq $true) {
+    $arguments += '--no-cache'
+  }
   if ($item.Key -eq 'backend') {
     if (-not $setupSourceRevision -or -not (Test-Path -LiteralPath $item.SetupContext)) {
       throw 'Backend build requires the clean governed Setup CLI context.'
@@ -518,6 +524,25 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
     -ExpectedPlatform $Platform -ExpectedReleaseScope $releaseScope
   $digests[$item.Key] = $digest
   Write-Host "[pushed] ${repository}:$localTag -> $digest"
+}
+
+# Labels prove declared lineage, but they do not prove that BuildKit copied the
+# current source bytes. Compare the policy contract inside the exact image with
+# the detached checkout before any date or channel tag can move.
+if ($digests.consoleApi) {
+  $contractPath = Join-Path $consoleCheckout 'apps\console-api\runtime\platform-release-contract.js'
+  $expectedContractSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $contractPath).Hash.ToLowerInvariant()
+  $contractHashOutput = & docker run --rm --pull always --entrypoint sha256sum `
+    "$Registry/opensphere-console-api@$($digests.consoleApi)" `
+    /workspace/apps/console-api/runtime/platform-release-contract.js
+  if ($LASTEXITCODE -ne 0) {
+    throw "Console API runtime contract verification failed with exit code $LASTEXITCODE"
+  }
+  $observedContractSha256 = ([string]($contractHashOutput | Select-Object -First 1)).Split(' ', [StringSplitOptions]::RemoveEmptyEntries)[0].ToLowerInvariant()
+  if ($observedContractSha256 -ne $expectedContractSha256) {
+    throw "Console API runtime contract bytes differ from source: image=$observedContractSha256 source=$expectedContractSha256"
+  }
+  Write-Host "[preflight] Console API runtime contract bytes match source $expectedContractSha256"
 }
 
 # Immutable source images may be built above, but date/channel tags must not move

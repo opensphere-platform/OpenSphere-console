@@ -163,6 +163,8 @@ test('local edge moves its anchor only with canonical 18 and auxiliary four at o
   );
   assert.match(source, /io\.opensphere\.release-scope=\$releaseScope/u);
   assert.match(source, /\$item\.Key -eq 'console'[\s\S]*io\.opensphere\.console-index-content=console-index-renderer\/v1/u);
+  assert.match(source, /Key = 'consoleApi'[^\r\n]*NoCache = \$true/u);
+  assert.match(source, /if \(\$item\.NoCache -eq \$true\) \{\s*\$arguments \+= '--no-cache'/u);
   assert.match(source, /ExpectedReleaseScope \$releaseScope/u);
   const builtImageMetadataCheck = source.slice(
     source.indexOf('$metadata = Get-Content -Raw -LiteralPath $metadataFile'),
@@ -174,6 +176,11 @@ test('local edge moves its anchor only with canonical 18 and auxiliary four at o
     'a newly built image must verify the canonical or auxiliary release-scope label before publication',
   );
   assert.match(source, /-Tag \$releaseTag -Immutable/u);
+  const runtimeBytesGate = source.indexOf('[preflight] Console API runtime contract bytes match source');
+  const immutableTagPromotion = source.indexOf("Write-Host \"[step 05/06] Publish immutable date tag");
+  assert.ok(runtimeBytesGate > 0 && runtimeBytesGate < immutableTagPromotion,
+    'Console API runtime contract bytes must match source before immutable or channel tags move');
+  assert.match(source, /docker run --rm --pull always --entrypoint sha256sum/u);
   assert.match(source, /gh api user --jq \.login/u);
   assert.match(source, /docker login ghcr\.io -u \$registryActor --password-stdin/u);
   assert.doesNotMatch(source, /docker login ghcr\.io -u opensphere-platform/u);
