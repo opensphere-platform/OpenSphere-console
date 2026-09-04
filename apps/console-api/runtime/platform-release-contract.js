@@ -611,6 +611,7 @@ function releaseSummary(lock, options = {}) {
     releaseScope: validated.releaseScope || RELEASE_SCOPE_INTEGRATED,
     baseReleaseDigest: validated.baseReleaseDigest || null,
     changedComponents: validated.changedComponents || [],
+    changedAuxiliaryArtifacts: validated.changedAuxiliaryArtifacts || [],
   };
 }
 

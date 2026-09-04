@@ -82,4 +82,5 @@ test('CON-FR-014: Console renderer and independently updatable index content for
   assert.deepEqual(contentOnly.changedComponents, []);
   assert.deepEqual(contentOnly.changedAuxiliaryArtifacts, ['consoleIndexContent']);
   assert.deepEqual(contentOnly.targetLock.components, introduced.targetLock.components);
+  assert.deepEqual(contract.releaseSummary(contentOnly.targetLock).changedAuxiliaryArtifacts, ['consoleIndexContent']);
 });
