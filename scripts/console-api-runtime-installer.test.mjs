@@ -57,6 +57,20 @@ test('target Supabase manifest is the closed four-workload data backbone', () =>
   ]);
   assert.match(dataManifest, /opensphere-supabase-default-deny[\s\S]*policyTypes: \[Ingress, Egress\]/);
   assert.match(dataManifest, /opensphere-supabase-internal-egress/);
+  const postgresPolicy = dataManifest.slice(
+    dataManifest.indexOf('metadata: { name: opensphere-supabase-postgres-ingress'),
+    dataManifest.indexOf('metadata: { name: opensphere-supabase-internal-egress'),
+  );
+  assert.ok(postgresPolicy.length > 0);
+  for (const selector of [
+    'app.kubernetes.io/name: opensphere-osdst',
+    'app.kubernetes.io/name: opensphere-console-osaa-gateway',
+    'app: opensphere-shell-api',
+    'app: opensphere-shell-gateway',
+    'app: opensphere-shell-reconciler',
+  ]) {
+    assert.match(postgresPolicy, new RegExp(selector.replaceAll('.', '[.]')));
+  }
 });
 
 test('C_API runtime login remains a one-role one-secret fresh-lineage boundary', () => {

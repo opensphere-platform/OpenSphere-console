@@ -363,6 +363,16 @@ spec:
           podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
         - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
           podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-extension-controller } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-osdst } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-osaa-gateway } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector: { matchLabels: { app: opensphere-shell-api } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector: { matchLabels: { app: opensphere-shell-gateway } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: opensphere-console } }
+          podSelector: { matchLabels: { app: opensphere-shell-reconciler } }
       ports: [{ protocol: TCP, port: 5432 }]
 ---
 apiVersion: networking.k8s.io/v1

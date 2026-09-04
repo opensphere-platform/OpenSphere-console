@@ -25,6 +25,7 @@ test('native runtime installer owns the full credential, trust, rollout, and act
   assert.match(installer, /delegation-signing-key/u);
   assert.match(installer, /rollout','restart','deployment\/opensphere-console-api/u);
   assert.match(installer, /activate_native_runtime_from_setup/u);
+  assert.match(installer, /Write-Output -NoEnumerate \$rows/u);
   assert.ok(installer.indexOf("rollout','status'") < installer.indexOf('activate_native_runtime_from_setup'));
 });
 

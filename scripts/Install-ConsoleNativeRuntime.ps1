@@ -116,7 +116,8 @@ if ($readyPods.Count -ne 1) { throw 'Exactly one Ready target Supabase PostgreSQ
 $postgresPod = [string]$readyPods[0].metadata.name
 function Invoke-OwnerSql([string]$Sql) {
   $command = 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -X -h 127.0.0.1 -U supabase_admin -d postgres -tA -v ON_ERROR_STOP=1'
-  return @((Invoke-Kubectl @('-n',$DataNamespace,'exec','-i',$postgresPod,'--','sh','-ec',$command) $Sql) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $rows = @((Invoke-Kubectl @('-n',$DataNamespace,'exec','-i',$postgresPod,'--','sh','-ec',$command) $Sql) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  Write-Output -NoEnumerate $rows
 }
 $ledger = Invoke-OwnerSql "SELECT global_id||'|'||migration_set_digest||'|'||source_revision FROM console_migration.applied_migration ORDER BY applied_sequence DESC LIMIT 1;"
 if ($ledger.Count -ne 1 -or $ledger[0] -cne "$ExpectedMigrationLatestGlobalId|$ExpectedMigrationSetDigest|$latestSourceRevision") {

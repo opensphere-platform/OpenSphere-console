@@ -5,7 +5,7 @@ COPY package.json package-lock.json /app/
 RUN apk upgrade --no-cache \
     && npm ci --omit=dev --no-audit --no-fund \
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
-COPY server.js conversation-store.js dialogue-state.js dialogue-transition.js dialogue-rollout.js /app/
+COPY server.js conversation-store.js dialogue-state.js dialogue-transition.js dialogue-rollout.js native-identity-client.js /app/
 ENV PORT=8080 APP_VERSION=${APP_VERSION}
 USER node
 EXPOSE 8080

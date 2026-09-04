@@ -81,7 +81,7 @@ test('successful provider responses repair the conversation model projection', (
 
 test('OSDST runtime image contains the durable conversation store', () => {
   const dockerfile = readFileSync(join(__dirname, 'Dockerfile'), 'utf8');
-  assert.match(dockerfile, /COPY server\.js conversation-store\.js dialogue-state\.js dialogue-transition\.js dialogue-rollout\.js \/app\//);
+  assert.match(dockerfile, /COPY server\.js conversation-store\.js dialogue-state\.js dialogue-transition\.js dialogue-rollout\.js native-identity-client\.js \/app\//);
 });
 
 test('Dialogue State transition and assistant message share one fail-closed transaction', () => {
