@@ -5,6 +5,8 @@ import {createRegistrySecretStore,registryKubernetesOrigin} from './registry-sec
 import {createRegistryCredentialBroker} from './registry-credential-broker.mjs';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import {createServer as createTlsServer} from 'node:https';
+import {createShellDelegationBroker,createShellCredentialHandler,createShellConsoleHandler} from './shell-delegation.mjs';
 import pg from 'pg';
 import { createOperationService } from './operation-service.mjs';
 import { createAuditOperations } from './audit-operations.mjs';
@@ -153,7 +155,7 @@ const baselineMonitoringOperations = createBaselineMonitoringOperations({
   timeoutMs: positiveInteger('CONSOLE_BESZEL_TIMEOUT_MS', 5000, 30000),
   maximumResponseBytes: positiveInteger('CONSOLE_BESZEL_MAX_RESPONSE_BYTES', 524288, 1048576),
 });
-const handler = createConsoleApiHandler({
+const handlerOptions = {
   resolveSession: identitySessionBroker.resolveSession,
   operationService,
   registryOperations,
@@ -169,17 +171,36 @@ const handler = createConsoleApiHandler({
   platformReleaseOperations,
   baselineMonitoringOperations,
   health: () => store.health(),
-});
-const server = createServer(handler);
-server.requestTimeout = 15000;
-server.headersTimeout = 10000;
-server.keepAliveTimeout = 5000;
+};
+const server = createServer(createConsoleApiHandler(handlerOptions));
+const listeners=[{server,port}];
+const shellEnabled=String(process.env.OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED || 'false');
+if(!['true','false'].includes(shellEnabled))throw new Error('OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED must be true or false');
+if(shellEnabled==='true'){
+  const encodedKey=String(process.env.OS_SHELL_DELEGATION_SIGNING_KEY || '');
+  if(!/^[A-Za-z0-9+/]{43}=$/.test(encodedKey))throw new Error('a dedicated 32-byte Shell signing key is required');
+  const broker=createShellDelegationBroker({query:pool.query.bind(pool),delegationSecret:String(process.env.OS_SHELL_DELEGATION_SECRET || ''),signingKey:Buffer.from(encodedKey,'base64')});
+  if(!await broker.health())throw new Error('current Shell authority migration is required before activation');
+  for(const [privatePort,prefix,handler] of [
+    [8444,'OS_SHELL_CREDENTIAL_AUTHORITY',createShellCredentialHandler(broker)],
+    [8445,'OS_SHELL_CONSOLE_API',createShellConsoleHandler({broker,createHandler:createConsoleApiHandler,handlerOptions})],
+  ]){
+    const cert=await readFile(String(process.env[prefix+'_CERT_FILE'] || ''));
+    const key=await readFile(String(process.env[prefix+'_KEY_FILE'] || ''));
+    listeners.push({server:createTlsServer({cert,key,minVersion:'TLSv1.3'},handler),port:privatePort});
+  }
+}
+for(const listener of listeners){
+  listener.server.requestTimeout=15000;
+  listener.server.headersTimeout=10000;
+  listener.server.keepAliveTimeout=5000;
+}
 
 let shutdownPromise;
 function shutdown(signal) {
   if (!shutdownPromise) {
     if(credentialTimer)clearInterval(credentialTimer);
-    shutdownPromise = new Promise((resolve) => server.close(resolve))
+    shutdownPromise = Promise.all(listeners.map(({server})=>new Promise((resolve)=>server.close(resolve))))
       .then(() => pool.end())
       .then(() => process.stdout.write(JSON.stringify({ event: 'console-api-stopped', signal }) + '\n'));
   }
@@ -192,6 +213,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-server.listen(port, '0.0.0.0', () => {
-  process.stdout.write(JSON.stringify({ event: 'console-api-listening', port }) + '\n');
-});
+for(const {server,port} of listeners){
+  server.on('error',()=>{process.stderr.write('{"event":"console-api-listener-failed"}\n');shutdown('listener-error').finally(()=>process.exit(1));});
+  server.listen(port,'0.0.0.0',()=>process.stdout.write(JSON.stringify({event:'console-api-listening',port})+'\n'));
+}

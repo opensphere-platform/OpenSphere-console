@@ -358,10 +358,9 @@ $allImages = @(
   # this list ordered and complete so the Console anchor always represents one
   # exact 18-component BOM.
   [ordered]@{ Key = 'console'; Image = 'opensphere-console'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-web\Dockerfile') },
-  # Console API packages executable policy contracts. Docker Desktop has reused a
-  # stale COPY layer for this image on Windows-hosted worktrees, so this one image
-  # must be rebuilt from bytes and then compared with the detached source checkout.
-  [ordered]@{ Key = 'consoleApi'; Image = 'opensphere-console-api'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\Dockerfile'); NoCache = $true },
+  # Console API packages executable policy contracts. The exact image is compared
+  # with the detached source checkout before any mutable tag can move.
+  [ordered]@{ Key = 'consoleApi'; Image = 'opensphere-console-api'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\console-api\Dockerfile') },
   [ordered]@{ Key = 'extensionController'; Image = 'opensphere-extension-controller'; Context = $consoleCheckout; File = (Join-Path $consoleCheckout 'apps\extension-controller\Dockerfile') },
   [ordered]@{ Key = 'registry'; Image = 'opensphere-registry'; Context = (Join-Path $consoleCheckout 'backend\registry'); File = (Join-Path $consoleCheckout 'backend\registry\deploy\Dockerfile') },
   [ordered]@{ Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'; Context = (Join-Path $consoleCheckout 'apps\osaa-gateway'); File = (Join-Path $consoleCheckout 'apps\osaa-gateway\Dockerfile') },
@@ -475,9 +474,6 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
     '--build-arg', 'CLI_UPDATE_SIGNING_PROFILE=local',
     '--file', $item.File
   )
-  if ($item.NoCache -eq $true) {
-    $arguments += '--no-cache'
-  }
   if ($item.Key -eq 'backend') {
     if (-not $setupSourceRevision -or -not (Test-Path -LiteralPath $item.SetupContext)) {
       throw 'Backend build requires the clean governed Setup CLI context.'

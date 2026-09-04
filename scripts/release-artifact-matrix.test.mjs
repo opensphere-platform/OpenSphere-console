@@ -163,8 +163,7 @@ test('local edge moves its anchor only with canonical 18 and auxiliary four at o
   );
   assert.match(source, /io\.opensphere\.release-scope=\$releaseScope/u);
   assert.match(source, /\$item\.Key -eq 'console'[\s\S]*io\.opensphere\.console-index-content=console-index-renderer\/v1/u);
-  assert.match(source, /Key = 'consoleApi'[^\r\n]*NoCache = \$true/u);
-  assert.match(source, /if \(\$item\.NoCache -eq \$true\) \{\s*\$arguments \+= '--no-cache'/u);
+  assert.doesNotMatch(source, /--no-cache/u);
   assert.match(source, /ExpectedReleaseScope \$releaseScope/u);
   const builtImageMetadataCheck = source.slice(
     source.indexOf('$metadata = Get-Content -Raw -LiteralPath $metadataFile'),
