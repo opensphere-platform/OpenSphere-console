@@ -247,6 +247,7 @@ jobs:
             opensphere.io/build-authority=github-actions
             opensphere.io/release-class=pre-ga
             opensphere.io/ga-eligible=true
+            ${{ matrix.image == 'opensphere-console' && 'io.opensphere.console-index-content=console-index-renderer/v1' || '' }}
       - name: Node for index content packaging
         if: matrix.image == 'opensphere-console-index-content'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020

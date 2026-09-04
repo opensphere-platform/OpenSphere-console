@@ -37,6 +37,10 @@ rules:
   - apiGroups: [policy]
     resources: [poddisruptionbudgets]
     verbs: [get, list, create, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    resourceNames: [opensphere-console-api-kubernetes-egress]
+    verbs: [get, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -47,6 +51,34 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: opensphere-extension-controller
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-extension-controller
+    namespace: opensphere-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-extension-controller-kubernetes-egress-discovery
+  namespace: default
+rules:
+  - apiGroups: ['']
+    resources: [services]
+    resourceNames: [kubernetes]
+    verbs: [get]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-extension-controller-kubernetes-egress-discovery
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-extension-controller-kubernetes-egress-discovery
 subjects:
   - kind: ServiceAccount
     name: opensphere-extension-controller

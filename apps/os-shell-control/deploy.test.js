@@ -26,7 +26,7 @@ const find = (kind, name, namespace) => docs.find((doc) => doc.kind === kind && 
 
 test('edge signing fails at the declared pwsh 7.2 boundary before Windows PowerShell crypto APIs run', { skip: process.platform !== 'win32' }, () => {
   const script = path.join(__dirname, '..', '..', 'scripts', 'Test-OsShellEdgeSigning.ps1');
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script], { encoding: 'utf8' });
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { encoding: 'utf8' });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}\n${result.stderr}`, /7[.]2/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /ExportPkcs8PrivateKeyPem|ECDsaCng/);

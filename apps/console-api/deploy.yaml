@@ -234,8 +234,6 @@ spec:
     # HTTPS origins and rejects redirects; TCP/443 is the documented exception.
     - ports:
         - { protocol: TCP, port: 443 }
-    # Setup resolves only default/kubernetes Service and ready EndpointSlices.
-    - __OPENSPHERE_REGISTRY_KUBERNETES_EGRESS__
     - to:
         - namespaceSelector:
             matchLabels:
@@ -292,6 +290,25 @@ spec:
               app.kubernetes.io/name: beszel-hub
       ports:
         - { protocol: TCP, port: 8090 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensphere-console-api-kubernetes-egress
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/managed-by: opensphere-extension-controller
+    app.kubernetes.io/part-of: opensphere-console
+    opensphere.io/contract: registry-kubernetes-egress/v1
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: opensphere-console-api
+  policyTypes: [Egress]
+  egress:
+    # Setup renders the initial exact addresses. C_EXT refreshes only this
+    # pre-owned policy after Docker Desktop rotates its API endpoint.
+    - __OPENSPHERE_REGISTRY_KUBERNETES_EGRESS__
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

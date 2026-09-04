@@ -4,11 +4,14 @@ export function extensionControllerReady({
   lifecycleAvailable,
   lifecycleObserved,
   lifecycleError,
+  egressAvailable = true,
+  egressObserved = true,
+  egressError = null,
 } = {}) {
-  for (const value of [databaseReady, lifecycleEnabled, lifecycleAvailable, lifecycleObserved]) {
+  for (const value of [databaseReady, lifecycleEnabled, lifecycleAvailable, lifecycleObserved, egressAvailable, egressObserved]) {
     if (typeof value !== 'boolean') throw new TypeError('Extension readiness inputs must be boolean');
   }
-  return databaseReady && (
+  return databaseReady && egressAvailable && egressObserved && egressError == null && (
     !lifecycleEnabled
     || (lifecycleAvailable && lifecycleObserved && lifecycleError == null)
   );

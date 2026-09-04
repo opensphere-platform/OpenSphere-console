@@ -485,6 +485,9 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
     Invoke-Checked node (Join-Path $consoleCheckout 'scripts/build-console-index-content.mjs') --source-revision $SourceRevision --version $releaseTag
     $arguments += @('--build-arg', "VERSION=$releaseTag", '--build-arg', "SOURCE_REVISION=$SourceRevision")
   }
+  if ($item.Key -eq 'console') {
+    $arguments += @('--label', 'io.opensphere.console-index-content=console-index-renderer/v1')
+  }
   if ($item.Key -eq 'cliArtifacts') {
     $arguments += @(
       '--build-arg', "CLI_UPDATE_TRUST_ID=$CliUpdateSigningKeyId",

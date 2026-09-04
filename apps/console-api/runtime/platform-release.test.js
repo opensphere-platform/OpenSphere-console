@@ -189,7 +189,7 @@ test('component release preserves the Setup-governed CLI auxiliary artifact', ()
     `ghcr.io/opensphere-platform/opensphere-os-cli@${digest('d')}`;
   changedArtifact.releaseDigest = calculateReleaseDigest(changedArtifact);
   assert.throws(() => validateReleaseTransition(base, changedArtifact),
-    /cannot change auxiliary runtime artifacts/);
+    /unlisted auxiliary artifact/);
 });
 
 test('Console generates an atomic component target from the installed complete lock', () => {

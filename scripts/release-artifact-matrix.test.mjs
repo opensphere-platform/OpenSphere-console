@@ -85,6 +85,7 @@ test('candidate matrix has 18 canonical and four signed auxiliary artifacts', as
 
   const source = await read('.github/workflows/publish-candidate-images.yml');
   assert.match(source, /io\.opensphere\.release-scope=\$\{\{ matrix\.scope \}\}/u);
+  assert.match(source, /io\.opensphere\.console-index-content=console-index-renderer\/v1/u);
   assert.match(source, /CLI_DARWIN_CONTEXT=macos-cli/u);
   assert.match(source, /CLI_REQUIRE_DARWIN=true/u);
   assert.match(source, /cli_update_signing_key=\$\{\{ secrets\.CLI_UPDATE_SIGNING_PRIVATE_KEY \}\}/u);
@@ -161,6 +162,7 @@ test('local edge moves its anchor only with canonical 18 and auxiliary four at o
     'contract and release-ready gates must run before GHCR authentication or image build',
   );
   assert.match(source, /io\.opensphere\.release-scope=\$releaseScope/u);
+  assert.match(source, /\$item\.Key -eq 'console'[\s\S]*io\.opensphere\.console-index-content=console-index-renderer\/v1/u);
   assert.match(source, /ExpectedReleaseScope \$releaseScope/u);
   const builtImageMetadataCheck = source.slice(
     source.indexOf('$metadata = Get-Content -Raw -LiteralPath $metadataFile'),

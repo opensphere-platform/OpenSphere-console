@@ -34,3 +34,19 @@ test('enabled lifecycle requires availability and one successful observation wit
     lifecycleObserved: true,
   }), false);
 });
+
+test('registry Kubernetes egress reconciliation is part of readiness', () => {
+  const base = {
+    databaseReady: true,
+    lifecycleEnabled: true,
+    lifecycleAvailable: true,
+    lifecycleObserved: true,
+    lifecycleError: null,
+    egressAvailable: true,
+    egressObserved: true,
+    egressError: null,
+  };
+  assert.equal(extensionControllerReady(base), true);
+  assert.equal(extensionControllerReady({ ...base, egressObserved: false }), false);
+  assert.equal(extensionControllerReady({ ...base, egressError: { code: 'AuthorityUnavailable' } }), false);
+});

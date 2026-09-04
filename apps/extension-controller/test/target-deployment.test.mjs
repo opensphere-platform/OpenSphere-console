@@ -26,6 +26,10 @@ test('C_EXT target proxy and lifecycle are packaged without legacy runtime depen
   assert.match(server, /createConsoleOwnerAdmission/u);
   assert.match(server, /createPluginProxy/u);
   assert.match(server, /createKubernetesExtensionLifecycle/u);
+  assert.match(server, /createKubernetesApiEgressPolicyReconciler/u);
+  assert.match(manifest, /resourceNames: \[opensphere-console-api-kubernetes-egress\][\s\S]*verbs: \[get, patch\]/u);
+  assert.match(manifest, /name: opensphere-extension-controller-kubernetes-egress-discovery[\s\S]*namespace: default/u);
+  assert.match(manifest, /resourceNames: \[kubernetes\][\s\S]*verbs: \[get\]/u);
   assert.match(crds, /name: uipluginpackages[.]plugins[.]opensphere[.]io/u);
   assert.match(crds, /name: uipluginregistrations[.]plugins[.]opensphere[.]io/u);
   assert.match(crds, /enum: \[Pending, NotReady, Ready, Degraded, Removed\]/u);

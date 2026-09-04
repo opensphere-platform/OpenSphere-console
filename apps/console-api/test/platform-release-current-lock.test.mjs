@@ -53,3 +53,33 @@ test('CON-FR-014: current target rejects legacy-only components, missing permiss
   await assert.rejects(operations(fixture).status({session:{...session,permissions:[]}}),{code:'PermissionDenied',status:403});
   await assert.rejects(operations(fixture).status({session:{...session,authorityFresh:false}}),{code:'AuthenticationRequired',status:401});
 });
+
+test('CON-FR-014: Console renderer and independently updatable index content form one governed transition', async () => {
+  const introduced = await operations(fixture).generateComponentTarget({
+    session,
+    body: {
+      reason: 'install the governed Console index renderer and content',
+      sourceRevision: 'a'.repeat(40),
+      components: { console: { image: 'sha256:' + 'b'.repeat(64) } },
+      auxiliaryArtifacts: { consoleIndexContent: { image: 'sha256:' + 'c'.repeat(64) } },
+    },
+  });
+  assert.deepEqual(introduced.changedComponents, ['console']);
+  assert.deepEqual(introduced.changedAuxiliaryArtifacts, ['consoleIndexContent']);
+  assert.equal(
+    introduced.targetLock.auxiliaryArtifacts.consoleIndexContent.image,
+    'ghcr.io/opensphere-platform/opensphere-console-index-content@sha256:' + 'c'.repeat(64),
+  );
+
+  const contentOnly = await operations(introduced.targetLock).generateComponentTarget({
+    session,
+    body: {
+      reason: 'publish a reviewed Main Index content revision',
+      sourceRevision: 'd'.repeat(40),
+      auxiliaryArtifacts: { consoleIndexContent: { image: 'sha256:' + 'e'.repeat(64) } },
+    },
+  });
+  assert.deepEqual(contentOnly.changedComponents, []);
+  assert.deepEqual(contentOnly.changedAuxiliaryArtifacts, ['consoleIndexContent']);
+  assert.deepEqual(contentOnly.targetLock.components, introduced.targetLock.components);
+});

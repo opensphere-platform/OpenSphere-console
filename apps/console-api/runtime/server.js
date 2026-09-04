@@ -2862,7 +2862,7 @@ async function verifyLocalEdgeAutomation(req) {
 async function executeLocalEdgePlatformRelease(req, body = {}) {
   const actor = await verifyLocalEdgeAutomation(req);
   if (!body || typeof body !== 'object' || Array.isArray(body)
-    || Object.keys(body).some((key) => !['reason', 'sourceRevision', 'components'].includes(key))) {
+    || Object.keys(body).some((key) => !['reason', 'sourceRevision', 'components', 'auxiliaryArtifacts'].includes(key))) {
     throw { code: 400, msg: 'local edge automation body contains unsupported fields' };
   }
   const reason = managementReason(body.reason);
@@ -2871,6 +2871,7 @@ async function executeLocalEdgePlatformRelease(req, body = {}) {
     reason,
     sourceRevision: body.sourceRevision,
     components: body.components,
+    auxiliaryArtifacts: body.auxiliaryArtifacts,
   }, { localEdgeAutomation: true });
   const proposal = await governedChange(actor, {
     consumerId: PLATFORM_RELEASE_CONSUMER,
@@ -2888,6 +2889,7 @@ async function executeLocalEdgePlatformRelease(req, body = {}) {
     ...proposal,
     targetReleaseDigest: generated.targetLock.releaseDigest,
     changedComponents: generated.targetLock.changedComponents,
+    changedAuxiliaryArtifacts: generated.targetLock.changedAuxiliaryArtifacts ?? [],
   };
 }
 
@@ -2904,6 +2906,7 @@ async function generatePlatformComponentTarget(actor, body = {}, options = {}) {
     targetLock = buildComponentReleaseLock(installed.lock, {
       sourceRevision: body.sourceRevision,
       components: body.components,
+      auxiliaryArtifacts: body.auxiliaryArtifacts,
     });
   } catch (error) {
     throw { code: 400, msg: error.message };

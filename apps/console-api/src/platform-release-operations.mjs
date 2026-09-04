@@ -114,7 +114,7 @@ export function createPlatformReleaseOperations({ releaseStore, clock = () => ne
 
     async generateComponentTarget({ session, body }) {
       assertReleaseAuthority(session, { requireAal2: true });
-      exact(body, ['sourceRevision', 'components', 'reason'], 'Platform Release component target request');
+      exact(body, ['sourceRevision', 'components', 'auxiliaryArtifacts', 'reason'], 'Platform Release component target request');
       const reason = String(body.reason || '').trim();
       if (reason.length < 8 || reason.length > 500 || /[\r\n]/u.test(reason)) {
         throw error('reason must contain 8..500 characters');
@@ -125,6 +125,7 @@ export function createPlatformReleaseOperations({ releaseStore, clock = () => ne
         targetLock = buildComponentReleaseLock(installed, {
           sourceRevision: body.sourceRevision,
           components: body.components,
+          auxiliaryArtifacts: body.auxiliaryArtifacts,
         }, clock());
       } catch (cause) {
         throw Object.assign(error(cause.message), { cause });
@@ -133,6 +134,7 @@ export function createPlatformReleaseOperations({ releaseStore, clock = () => ne
         targetLock,
         baseReleaseDigest: targetLock.baseReleaseDigest,
         changedComponents: Object.freeze([...targetLock.changedComponents]),
+        changedAuxiliaryArtifacts: Object.freeze([...(targetLock.changedAuxiliaryArtifacts ?? [])]),
         generatedAt: clock().toISOString(),
       });
     },

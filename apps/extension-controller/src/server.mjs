@@ -9,6 +9,7 @@ import { createExtensionController } from './controller.mjs';
 import { createKubernetesRegistrationWriter } from './kubernetes-registration-writer.mjs';
 import { createKubernetesExtensionLifecycle } from './kubernetes-extension-lifecycle.mjs';
 import { createKubernetesExtensionManagementAuthority } from './kubernetes-extension-management.mjs';
+import { createKubernetesApiEgressPolicyReconciler } from './kubernetes-api-egress-policy.mjs';
 import { createExtensionManagementStore } from './extension-management-store.mjs';
 import { createExtensionManagementOperations } from './extension-management-operations.mjs';
 import { createExtensionManagementHttpHandler, isExtensionManagementRoute } from './extension-management-http.mjs';
@@ -88,6 +89,13 @@ const managementAuthority = kubernetesToken ? createKubernetesExtensionManagemen
   timeoutMs: kubernetesTimeoutMs,
   maximumResponseBytes: kubernetesMaximumResponseBytes,
 }) : null;
+const kubernetesApiEgressReconciler = kubernetesToken ? createKubernetesApiEgressPolicyReconciler({
+  baseUrl: kubernetesBaseUrl,
+  token: kubernetesToken,
+  namespace: extensionNamespace,
+  timeoutMs: kubernetesTimeoutMs,
+  maximumResponseBytes: kubernetesMaximumResponseBytes,
+}) : null;
 const managementStore = createExtensionManagementStore({ query: pool.query.bind(pool) });
 const managementOperations = managementAuthority
   ? createExtensionManagementOperations({ authority: managementAuthority, store: managementStore })
@@ -160,10 +168,27 @@ let stopping = false;
 let lastError = null;
 let lastLifecycleError = null;
 let lifecycleObserved = false;
+let egressObserved = false;
+let lastEgressError = null;
 let timer;
 async function cycle() {
   if (stopping) return;
   try {
+    if (kubernetesApiEgressReconciler) {
+      try {
+        const egress = await kubernetesApiEgressReconciler.reconcileOnce();
+        egressObserved = true;
+        lastEgressError = null;
+        if (egress.state === 'Updated') {
+          process.stdout.write(JSON.stringify({ event: 'registry-kubernetes-egress-reconciled', ...egress }) + '\n');
+        }
+      } catch (error) {
+        lastEgressError = { code: error?.code || 'AuthorityUnavailable', at: new Date().toISOString() };
+        process.stderr.write(JSON.stringify({ event: 'registry-kubernetes-egress-cycle-failed', ...lastEgressError }) + '\n');
+      }
+    } else {
+      lastEgressError = { code: 'KubernetesAuthorityUnavailable', at: new Date().toISOString() };
+    }
     if (lifecycleReconciler) {
       try {
         const lifecycle = await lifecycleReconciler.reconcileOnce();
@@ -222,6 +247,9 @@ const healthServer = createServer(async (request, response) => {
     lifecycleAvailable: Boolean(lifecycleReconciler),
     lifecycleObserved,
     lifecycleError: lastLifecycleError,
+    egressAvailable: Boolean(kubernetesApiEgressReconciler),
+    egressObserved,
+    egressError: lastEgressError,
   });
   response.writeHead(ready ? 200 : 503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   response.end(JSON.stringify({
@@ -231,6 +259,8 @@ const healthServer = createServer(async (request, response) => {
     lifecycleObserved,
     lastError,
     lastLifecycleError,
+    egressObserved,
+    lastEgressError,
   }));
 });
 
