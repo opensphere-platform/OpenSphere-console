@@ -30,6 +30,11 @@ Installed as a Main Shell native workload after the Supabase and Gitea readiness
 - Service: `opensphere-console-osaa-gateway:8080`
 - Console route: same-origin `/api/osaa/*`
 
+The activation owner creates `opensphere-console/opensphere-osaa-gateway-db`
+with only `username`, `password`, `host`, `port`, and `database`. The login
+inherits the migration-owned `opensphere_osaa_gateway` NOLOGIN authority role;
+the Deployment never attempts to authenticate as that authority role directly.
+
 The deployment contract is [`deploy.yaml`](deploy.yaml). Production releases
 use the Console release BOM; a local cluster may use the corresponding pinned
 local image tag.

@@ -2187,7 +2187,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
         body: JSON.stringify(this.llmForm),
       });
       const out = await r.json().catch(() => ({}) as any);
-      const accessError = this.adminAccessMessage(r.status);
+      const accessError = this.adminAccessMessage(r.status, out.error);
       if (accessError) {
         this.msg.set({ type: 'danger', text: accessError });
         return;
@@ -2229,13 +2229,13 @@ export class AdminOsaa implements OnInit, OnDestroy {
         `/api/osaa/admin/llm-keys/${encodeURIComponent(k.id)}?reason=${encodeURIComponent(reason)}`,
         { method: 'DELETE' },
       );
-      const accessError = this.adminAccessMessage(r.status);
+      const out = await r.json().catch(() => ({}) as any);
+      const accessError = this.adminAccessMessage(r.status, out.error);
       if (accessError) {
         this.msg.set({ type: 'danger', text: accessError });
         return;
       }
       if (!r.ok) {
-        const out = await r.json().catch(() => ({}) as any);
         this.msg.set({ type: 'danger', text: out.error || `LLM key delete failed (HTTP ${r.status})` });
         return;
       }
@@ -2505,7 +2505,7 @@ export class AdminOsaa implements OnInit, OnDestroy {
     try {
       const r = await this.http.request(`/api/osaa/admin/llm-keys/${encodeURIComponent(k.id)}/test`, { method: 'POST' });
       const out = await r.json().catch(() => ({}) as any);
-      const accessError = this.adminAccessMessage(r.status);
+      const accessError = this.adminAccessMessage(r.status, out.error);
       if (accessError) {
         this.msg.set({ type: 'danger', text: accessError });
         return;
@@ -2528,8 +2528,11 @@ export class AdminOsaa implements OnInit, OnDestroy {
     }
   }
 
-  private adminAccessMessage(status: number): string {
+  private adminAccessMessage(status: number, serverMessage = ''): string {
     if (status === 401) return 'R2D2가 현재 로그인 세션을 확인하지 못했습니다. 세션을 갱신한 뒤 다시 시도하세요.';
+    if (status === 403 && /\bAAL2\b/i.test(serverMessage)) {
+      return '이 변경에는 AAL2 인증이 필요합니다. 내 프로필 > 보안에서 인증 앱을 등록하거나 현재 TOTP로 다시 인증하세요.';
+    }
     if (status === 403) return 'R2D2 관리자 역할(console-admins)이 필요합니다.';
     return '';
   }

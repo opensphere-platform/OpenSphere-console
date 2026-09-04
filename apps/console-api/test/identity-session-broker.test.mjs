@@ -455,7 +455,9 @@ test('Supabase TOTP enrollment replaces only unverified factors and verifies the
           factors: [{ id: enrolled ? 'factor/new' : 'factor/old', factor_type: 'totp', status: 'unverified' }],
         });
       }
-      if (url.endsWith('/factors/factor%2Fold') && init.method === 'DELETE') return jsonResponse({});
+      // The deployed GoTrue runtime returns HTTP 200 without a document for
+      // factor deletion.  Enrollment must accept that successful empty form.
+      if (url.endsWith('/factors/factor%2Fold') && init.method === 'DELETE') return new Response(null, { status: 200 });
       if (url.endsWith('/factors') && init.method === 'POST') {
         assert.deepEqual(JSON.parse(init.body), { factor_type: 'totp', friendly_name: 'OpenSphere Console' });
         enrolled = true;

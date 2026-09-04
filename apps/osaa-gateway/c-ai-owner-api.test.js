@@ -810,6 +810,10 @@ test('server routes retain target admission, permissions and fail-closed flags',
     /OSAA_LLM_CREDENTIAL_MUTATION_ENABLED = process\.env\.OSAA_LLM_CREDENTIAL_MUTATION_ENABLED === 'true'/u);
   assert.match(server,
     /OSAA_LLM_CREDENTIAL_DELETION_ENABLED = process\.env\.OSAA_LLM_CREDENTIAL_DELETION_ENABLED === 'true'/u);
+  assert.match(server,
+    /options: `-c role=opensphere_osaa_gateway -c search_path=\$\{PG\.schema\},extensions,public`/u);
+  assert.match(server,
+    /set_evidence_retention_policy\(\$1, \$2, \$3, \$4, \$5::uuid, \$6, \$7::uuid\)/u);
   assert.match(owner, /deployments.*encodeURIComponent\(dialogueDeployment\)/u);
   assert.match(owner, /secrets.*osaa-llm-/u);
   assert.match(owner, /llmCredentialMutationEnabled = false/u);

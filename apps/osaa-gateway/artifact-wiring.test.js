@@ -29,6 +29,12 @@ test('C_AI credential custody is namespace-limited while general mutation stays 
     /name: opensphere-console-osaa-gateway-credentials, namespace: opensphere-osaa-credentials[\s\S]+resources: \[secrets\], verbs: \[get, list, create, patch, delete\]/u);
   assert.match(manifest,
     /name: OSAA_MUTATION_ENABLED, value: "false"[\s\S]+name: OSAA_LLM_CREDENTIAL_MUTATION_ENABLED, value: "true"[\s\S]+name: OSAA_LLM_CREDENTIAL_DELETION_ENABLED, value: "true"/u);
+  assert.match(manifest,
+    /name: OSAA_PG_USER, valueFrom: \{ secretKeyRef: \{ name: opensphere-osaa-gateway-db, key: username \} \}[\s\S]+name: OSAA_PG_PASSWORD, valueFrom: \{ secretKeyRef: \{ name: opensphere-osaa-gateway-db, key: password \} \}/u);
+  assert.doesNotMatch(manifest,
+    /name: OSAA_PG_(?:USER|PASSWORD)[^\n]+opensphere-osaa-runtime/u);
+  assert.doesNotMatch(manifest,
+    /metadata: \{ name: opensphere-console-osaa-gateway-(?:recovery-)?reader, namespace: opensphere-(?:console-recovery|foundation) \}/u);
   assert.doesNotMatch(manifest,
     /name: opensphere-console-osaa-gateway-credentials[\s\S]{0,500}verbs: \[[^\]]*(?:\*|update)[^\]]*\]/u);
 });

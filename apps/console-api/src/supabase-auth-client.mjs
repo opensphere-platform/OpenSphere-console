@@ -108,7 +108,12 @@ export function createSupabaseAuthClient({
       const timeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
       fail(timeout ? 'DependencyTimeout' : 'AuthorityUnavailable', timeout ? 'Supabase Auth timed out' : 'Supabase Auth is unavailable', 503);
     }
-    if (expectEmpty && response.ok && response.status === 204) return {};
+    // GoTrue endpoints that intentionally have no response document are not
+    // consistent about returning 204: factor deletion is 200 with an empty
+    // body in the runtime image used by Console.  Callers opt in only when the
+    // response body is semantically irrelevant, so accept every successful
+    // 2xx response before attempting JSON decoding.
+    if (expectEmpty && response.ok) return {};
     let document = {};
     try { document = await boundedJson(response, maximumResponseBytes); }
     catch {
@@ -595,6 +600,7 @@ export function createSupabaseAuthClient({
         await request(`/factors/${encodeURIComponent(String(factor.id))}`, {
           method: 'DELETE', token: accessToken,
           rejectedCode: 'MfaEnrollmentRejected', rejectedMessage: 'stale TOTP factor cleanup was rejected', rejectedStatus: 409,
+          expectEmpty: true,
         });
       }
       const enrollment = await request('/factors', {

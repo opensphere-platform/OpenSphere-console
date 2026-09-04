@@ -29,7 +29,10 @@ async function request(path, actor, { method = 'GET', body, timeoutMs = 15000 } 
       headers: {
         accept: 'application/json',
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-        ...(actor ? { authorization: `Bearer ${bearer(actor)}` } : {}),
+        ...(actor ? {
+          authorization: `Bearer ${bearer(actor)}`,
+          'x-os-owner-admission': 'osaa-gateway-v1',
+        } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),

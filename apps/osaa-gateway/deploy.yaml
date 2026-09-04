@@ -111,42 +111,10 @@ kind: RoleBinding
 metadata: { name: opensphere-console-osaa-gateway-reader, namespace: opensphere-console-change }
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-osaa-gateway-reader }
 subjects: [{ kind: ServiceAccount, name: opensphere-console-osaa-gateway, namespace: opensphere-console }]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: { name: opensphere-console-osaa-gateway-recovery-reader, namespace: opensphere-console-recovery }
-rules:
-  - { apiGroups: [""], resources: [pods, events, configmaps], verbs: [get, list, watch] }
-  - { apiGroups: [""], resources: [pods/log], verbs: [get] }
-  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: { name: opensphere-console-osaa-gateway-recovery-reader, namespace: opensphere-console-recovery }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-osaa-gateway-recovery-reader }
-subjects: [{ kind: ServiceAccount, name: opensphere-console-osaa-gateway, namespace: opensphere-console }]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: { name: opensphere-console-osaa-gateway-reader, namespace: opensphere-foundation }
-rules:
-  - { apiGroups: [""], resources: [pods, services, endpoints, events, configmaps, persistentvolumeclaims], verbs: [get, list, watch] }
-  - { apiGroups: [""], resources: [pods/log], verbs: [get] }
-  - { apiGroups: [apps], resources: [deployments, statefulsets, daemonsets, replicasets], verbs: [get, list, watch] }
-  - { apiGroups: [batch], resources: [jobs, cronjobs], verbs: [get, list, watch] }
-  - { apiGroups: [networking.k8s.io], resources: [ingresses, networkpolicies], verbs: [get, list, watch] }
-  - { apiGroups: [discovery.k8s.io], resources: [endpointslices], verbs: [get, list, watch] }
-  - { apiGroups: [autoscaling], resources: [horizontalpodautoscalers], verbs: [get, list, watch] }
-  - { apiGroups: [policy], resources: [poddisruptionbudgets], verbs: [get, list, watch] }
-  - { apiGroups: [platform.opensphere.io], resources: [platformsupportprofiles], verbs: [get, list, watch] }
-  - { apiGroups: [plugins.opensphere.io], resources: [uipluginpackages, uipluginregistrations], verbs: [get, list, watch] }
-  - { apiGroups: [foundation.opensphere.io], resources: [foundationclaims, foundationbindings, identitydirectoryclaims, identitydirectorybindings], verbs: [get, list, watch] }
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: { name: opensphere-console-osaa-gateway-reader, namespace: opensphere-foundation }
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: opensphere-console-osaa-gateway-reader }
-subjects: [{ kind: ServiceAccount, name: opensphere-console-osaa-gateway, namespace: opensphere-console }]
+# Recovery and Foundation are Console-activated modules and may not exist when
+# OSAA is activated. Their owners create the corresponding namespace-local
+# read bindings as part of their own activation; this manifest never creates
+# or assumes those module namespaces.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -264,8 +232,11 @@ spec:
             - { name: OSAA_PG_HOST, value: opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local }
             - { name: OSAA_PG_PORT, value: "5432" }
             - { name: OSAA_PG_DB, value: postgres }
-            - { name: OSAA_PG_USER, value: opensphere_osaa_gateway }
-            - { name: OSAA_PG_PASSWORD, valueFrom: { secretKeyRef: { name: opensphere-osaa-runtime, key: pg-password } } }
+            # The migration-owned opensphere_osaa_gateway role is NOLOGIN. The
+            # activation owner provisions a separate LOGIN that inherits only
+            # that role and stores it in this Gateway-only Secret.
+            - { name: OSAA_PG_USER, valueFrom: { secretKeyRef: { name: opensphere-osaa-gateway-db, key: username } } }
+            - { name: OSAA_PG_PASSWORD, valueFrom: { secretKeyRef: { name: opensphere-osaa-gateway-db, key: password } } }
             - { name: OSAA_PG_SCHEMA, value: osaa }
             # The operator accepted the reviewed Operational Intelligence plane.
             # Setup provisions distinct least-privilege logins; direct Gateway

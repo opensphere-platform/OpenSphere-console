@@ -111,7 +111,7 @@ const PG = {
   host: process.env.OSAA_PG_HOST || 'opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local',
   port: Number(process.env.OSAA_PG_PORT || 5432),
   database: process.env.OSAA_PG_DB || 'postgres',
-  user: process.env.OSAA_PG_USER || 'opensphere_osaa_gateway',
+  user: process.env.OSAA_PG_USER || 'opensphere_osaa_gateway_runtime',
   password: process.env.OSAA_PG_PASSWORD || '',
   // The dedicated schema opensphere_osaa owns. Unqualified OSAA table names resolve here via
   // search_path, never requiring (or granting) CREATE on public.
@@ -437,7 +437,12 @@ function getPgPool() {
       // is correct even for a bare `psql -U opensphere_osaa` session that never sets `options`.
       // PG.schema is validated against SCHEMA_ID_RE above, never interpolated from an
       // unvalidated source.
-      options: `-c search_path=${PG.schema},extensions,public`,
+      // The runtime LOGIN is NOINHERIT and may assume only this migration-owned
+      // NOLOGIN authority role. This prevents accidental use of login-owner
+      // privileges while retaining a rotatable runtime credential.
+      options: `-c role=opensphere_osaa_gateway -c search_path=${PG.schema},extensions,public`,
+      query_timeout: 10000,
+      statement_timeout: 10000,
       max: 4,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
@@ -981,8 +986,8 @@ async function setEvidenceRetentionPolicy(actor, rawBody) {
   const result = await pool.query(`
     SELECT stream, retention_days AS "retentionDays", disposition, legal_hold AS "legalHold",
       updated_at AS "updatedAt", updated_by AS "updatedBy"
-    FROM osaa.set_evidence_retention_policy($1, $2, $3, $4, $5, $6)
-  `, [stream, retentionDays, disposition, legalHold, String(actor?.subject || actor?.username || 'unknown').slice(0, 200), reason]);
+    FROM osaa.set_evidence_retention_policy($1, $2, $3, $4, $5::uuid, $6, $7::uuid)
+  `, [stream, retentionDays, disposition, legalHold, String(actor?.subject || ''), reason, String(actor?.browserSessionId || '')]);
   return {
     accepted: true, owner: 'OSAA Supabase evidence owner', target: `OSAAEvidence/${stream}`,
     policy: result.rows[0], deletionPerformed: false,
