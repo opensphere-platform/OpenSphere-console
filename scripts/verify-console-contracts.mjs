@@ -279,14 +279,14 @@ function documentByKind(documents, kind) {
 }
 
 function verifyRegistryCredentialDeployment(documents) {
-  const namespaces = ['opensphere-console-data', 'opensphere-console-change', 'opensphere-monitoring', 'opensphere-console', 'opensphere-system'];
+  const namespaces = ['opensphere-console-data', 'opensphere-console-change', 'opensphere-monitoring', 'opensphere-console', 'opensphere-system', 'opensphere-shell-sessions'];
   const roleName = 'opensphere-registry-credential-broker';
   const roles = documentByKind(documents, 'Role');
   const bindings = documentByKind(documents, 'RoleBinding');
-  assert(roles.length === 5 && bindings.length === 5
+  assert(roles.length === 6 && bindings.length === 6
     && documentByKind(documents, 'ClusterRole').length === 0
     && documentByKind(documents, 'ClusterRoleBinding').length === 0,
-    'C_API registry authority requires exactly five namespace Roles and bindings, no cluster authority');
+    'C_API registry authority requires exactly six namespace Roles and bindings, no cluster authority');
   for (const namespace of namespaces) {
     const scopedRoles = roles.filter(role => role.metadata?.namespace === namespace && role.metadata?.name === roleName);
     const scopedBindings = bindings.filter(binding => binding.metadata?.namespace === namespace && binding.metadata?.name === roleName);
@@ -314,13 +314,26 @@ function verifyRegistryCredentialDeployment(documents) {
     {serviceAccountToken:{path:'token',expirationSeconds:600}},
     {configMap:{name:'kube-root-ca.crt',items:[{key:'ca.crt',path:'ca.crt'}]}},
   ]};
+  const tlsVolumes = (pod.volumes || []).filter(volume => [
+    'opensphere-shell-credential-authority-tls',
+    'opensphere-shell-console-api-tls',
+  ].includes(volume.name));
   assert(identityVolumes.length === 1 && JSON.stringify(identityVolumes[0].projected) === JSON.stringify(expectedProjection)
-    && pod.volumes.length === 2 && pod.volumes.every(volume => !volume.hostPath && !volume.secret),
-    'C_API requires a short-lived projected Kubernetes token and cluster CA, without extra credential volumes');
+    && pod.volumes.length === 4 && pod.volumes.every(volume => !volume.hostPath)
+    && JSON.stringify(tlsVolumes) === JSON.stringify([
+      {name:'opensphere-shell-credential-authority-tls',secret:{secretName:'opensphere-shell-credential-authority-tls',optional:true}},
+      {name:'opensphere-shell-console-api-tls',secret:{secretName:'opensphere-shell-console-api-tls',optional:true}},
+    ]),
+    'C_API requires one projected Kubernetes identity and only the exact optional OS Shell TLS credentials');
   assert((container.volumeMounts || []).filter(mount => mount.name === 'registry-kubernetes-identity').length === 1
     && JSON.stringify(container.volumeMounts.find(mount => mount.name === 'registry-kubernetes-identity'))
       === JSON.stringify({name:'registry-kubernetes-identity',mountPath:'/var/run/secrets/kubernetes.io/serviceaccount',readOnly:true}),
     'C_API projected identity must be read-only and must rotate without subPath');
+  assert(JSON.stringify((container.volumeMounts || []).filter(mount => tlsVolumes.some(volume => volume.name === mount.name)))
+    === JSON.stringify([
+      {name:'opensphere-shell-credential-authority-tls',mountPath:'/var/run/opensphere-shell-credential-authority-tls',readOnly:true},
+      {name:'opensphere-shell-console-api-tls',mountPath:'/var/run/opensphere-shell-console-api-tls',readOnly:true},
+    ]), 'C_API OS Shell TLS credentials must use only their exact read-only paths');
   assert(container.env?.find(entry => entry.name === 'CONSOLE_REGISTRY_AUTH_CONTRACT')?.value === 'registry-auth/v1',
     'C_API registry lifecycle activation must declare registry-auth/v1');
   const oauth = container.env?.find(entry => entry.name === 'OPENSPHERE_GITHUB_OAUTH_CLIENT_ID');

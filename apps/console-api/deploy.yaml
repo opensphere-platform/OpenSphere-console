@@ -478,3 +478,28 @@ subjects:
   - kind: ServiceAccount
     name: opensphere-console-api
     namespace: opensphere-console
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-shell-sessions
+rules:
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [opensphere-ghcr-pull]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: opensphere-registry-credential-broker
+  namespace: opensphere-shell-sessions
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: opensphere-registry-credential-broker
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-console-api
+    namespace: opensphere-console
