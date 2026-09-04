@@ -21,3 +21,14 @@ test('C_AI manifest uses the canonical OSAA gateway release artifact', () => {
   assert.match(matrix, /\['osaaGateway', 'opensphere-console-osaa-gateway', 'apps\/osaa-gateway\/Dockerfile'\]/u);
   assert.match(publisher, /Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'/u);
 });
+
+test('C_AI credential custody is namespace-limited while general mutation stays closed', () => {
+  const manifest = read('apps', 'osaa-gateway', 'deploy.yaml');
+
+  assert.match(manifest,
+    /name: opensphere-console-osaa-gateway-credentials, namespace: opensphere-osaa-credentials[\s\S]+resources: \[secrets\], verbs: \[get, list, create, patch, delete\]/u);
+  assert.match(manifest,
+    /name: OSAA_MUTATION_ENABLED, value: "false"[\s\S]+name: OSAA_LLM_CREDENTIAL_MUTATION_ENABLED, value: "true"[\s\S]+name: OSAA_LLM_CREDENTIAL_DELETION_ENABLED, value: "true"/u);
+  assert.doesNotMatch(manifest,
+    /name: opensphere-console-osaa-gateway-credentials[\s\S]{0,500}verbs: \[[^\]]*(?:\*|update)[^\]]*\]/u);
+});

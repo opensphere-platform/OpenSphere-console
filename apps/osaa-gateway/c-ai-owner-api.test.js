@@ -806,13 +806,19 @@ test('server routes retain target admission, permissions and fail-closed flags',
     /R2D2_DURABLE_OPERATION_ENABLED = process\.env\.R2D2_DURABLE_OPERATION_ENABLED === 'true'/u);
   assert.match(server,
     /R2D2_ENGINEERING_EXECUTION_ENABLED = process\.env\.R2D2_ENGINEERING_EXECUTION_ENABLED === 'true'/u);
+  assert.match(server,
+    /OSAA_LLM_CREDENTIAL_MUTATION_ENABLED = process\.env\.OSAA_LLM_CREDENTIAL_MUTATION_ENABLED === 'true'/u);
+  assert.match(server,
+    /OSAA_LLM_CREDENTIAL_DELETION_ENABLED = process\.env\.OSAA_LLM_CREDENTIAL_DELETION_ENABLED === 'true'/u);
   assert.match(owner, /deployments.*encodeURIComponent\(dialogueDeployment\)/u);
   assert.match(owner, /secrets.*osaa-llm-/u);
   assert.match(owner, /llmCredentialMutationEnabled = false/u);
   assert.match(owner, /llmCredentialDeletionEnabled = false/u);
   assert.match(owner, /kind: 'DeleteOptions'[\s\S]+preconditions: \{ uid: binding\.uid, resourceVersion: binding\.resourceVersion \}/u);
-  assert.match(server, /assertMutationEnabled\(actor, 'llm-key-upsert'\)[\s\S]+cAiOwnerApi\.upsertLlmKey/u);
-  assert.match(server, /assertMutationEnabled\(actor, 'llm-key-delete'\)[\s\S]+cAiOwnerApi\.deleteLlmKey/u);
+  assert.match(server, /llmCredentialMutationEnabled: OSAA_LLM_CREDENTIAL_MUTATION_ENABLED/u);
+  assert.match(server, /llmCredentialDeletionEnabled: OSAA_LLM_CREDENTIAL_DELETION_ENABLED/u);
+  assert.doesNotMatch(server, /assertMutationEnabled\(actor, 'llm-key-(?:upsert|delete)'\)/u);
+  assert.match(server, /assertMutationEnabled\(actor, 'k8s-restart-deployment'\)/u);
   assert.doesNotMatch(owner + server,
     /console-api[\\/]runtime|r2d2-remediation-api|r2d2-operation-api/u);
   assert.match(identity, /x-os-owner-csrf-verified/u);

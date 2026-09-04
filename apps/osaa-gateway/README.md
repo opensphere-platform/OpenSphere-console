@@ -10,7 +10,8 @@ instead of storing sensitive state or privileged credentials in the browser.
 
 - Delegate session and role verification to the Supabase-backed Console identity service.
 - Keep server-side LLM provider interaction outside the browser.
-- Submit LLM key changes through the Console Backend policy and audit path.
+- Accept LLM key changes only after Console API owner admission, then enforce
+  current AAL2, reason, durable audit and exact Secret custody in the C_AI owner.
 - Return only masked key metadata and fingerprints to the browser.
 - Call OpenAI-compatible LLM providers such as DeepSeek.
 - Store and search OpenSphere knowledge in the Supabase `osaa` schema.

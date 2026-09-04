@@ -121,6 +121,8 @@ const PG = {
   caPath: process.env.OSAA_PG_CA_PATH || '/etc/osaa-postgres-ca/ca.crt',
 };
 const OSAA_PG_TLS = process.env.OSAA_PG_TLS === 'true';
+const OSAA_LLM_CREDENTIAL_MUTATION_ENABLED = process.env.OSAA_LLM_CREDENTIAL_MUTATION_ENABLED === 'true';
+const OSAA_LLM_CREDENTIAL_DELETION_ENABLED = process.env.OSAA_LLM_CREDENTIAL_DELETION_ENABLED === 'true';
 const OSAA_EMBED_DIM = Math.max(16, Math.min(4096, Number(process.env.OSAA_EMBED_DIM || (OSAA_SUPABASE_MODE ? 1536 : 384)) || (OSAA_SUPABASE_MODE ? 1536 : 384)));
 const OSAA_RAG_TOP_K = Math.max(1, Math.min(12, Number(process.env.OSAA_RAG_TOP_K || 5) || 5));
 const OSAA_RAG_ENABLED = process.env.OSAA_RAG_ENABLED !== 'false';
@@ -9107,18 +9109,16 @@ async function durableChatCompletion(body, actor) {
 }
 
 async function upsertKey(body, actor) {
-  // The legacy route remains closed by the planner-only Gateway mutation gate.
-  // If ownership is activated later, the implementation behind that gate is
-  // already AAL2-, audit-, UID-, and resourceVersion-bound.
-  assertMutationEnabled(actor, 'llm-key-upsert');
+  // Provider credential custody is the C_AI owner's one narrow Kubernetes
+  // write boundary. The owner implementation separately requires current
+  // AAL2, a reason, durable audit, exact Secret custody and a feature gate.
   return cAiOwnerApi.upsertLlmKey(actor, body);
 }
 
 async function deleteKey(id, actor, reason, confirmation) {
-  // Deletion remains closed by the planner-only Gateway mutation gate. The
-  // owner implementation behind the gate is separately feature-disabled and
-  // binds custody, deletion preconditions, absence observation, and audit.
-  assertMutationEnabled(actor, 'llm-key-delete');
+  // Deletion remains independently feature-gated and binds exact custody,
+  // deletion preconditions, absence observation and durable audit. General
+  // Kubernetes action mutation remains blocked by assertMutationEnabled().
   return cAiOwnerApi.deleteLlmKey(actor, id, { reason, confirmation });
 }
 
@@ -9652,6 +9652,8 @@ const cAiOwnerApi = createCAiOwnerApi({
   durableOperationsEnabled: R2D2_DURABLE_OPERATION_ENABLED,
   remediationProposalEnabled: R2D2_ENGINEERING_PROPOSAL_ENABLED,
   remediationExecutionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
+  llmCredentialMutationEnabled: OSAA_LLM_CREDENTIAL_MUTATION_ENABLED,
+  llmCredentialDeletionEnabled: OSAA_LLM_CREDENTIAL_DELETION_ENABLED,
   embeddingDim: OSAA_EMBED_DIM,
   providerAllowedOrigins: OSAA_PROVIDER_ALLOWED_ORIGINS,
 });

@@ -294,7 +294,16 @@ test('outbox claiming and evidence ledgers are durable and least privilege', () 
   assert.match(serverSource, /payload digest mismatch/);
   assert.match(serverSource, /application\/apply-patch\+yaml/);
   assert.match(serverSource, /propagationPolicy: 'Foreground'/);
-  assert.doesNotMatch(gatewayDeploy, /resources: \[secrets\], verbs: \[[^\]]*(?:create|patch|delete)/);
+  const gatewayDocuments = gatewayDeploy.split(/\r?\n---\r?\n/u);
+  const credentialRole = gatewayDocuments.find((document) =>
+    /kind: Role\r?\nmetadata: \{ name: opensphere-console-osaa-gateway-credentials, namespace: opensphere-osaa-credentials \}/u.test(document));
+  assert.ok(credentialRole);
+  assert.match(credentialRole,
+    /resources: \[secrets\], verbs: \[get, list, create, patch, delete\]/u);
+  assert.doesNotMatch(credentialRole, /verbs: \[[^\]]*(?:update|\*)/u);
+  for (const document of gatewayDocuments.filter((item) => item !== credentialRole)) {
+    assert.doesNotMatch(document, /resources: \[secrets\], verbs: \[[^\]]*(?:create|patch|delete)/u);
+  }
   assert.match(runtimeWatchMigration, /runtime_event_append_only/);
   assert.match(runtimeWatchMigration, /payload_digest/);
   assert.match(watchObserverMigration, /PRIMARY KEY \(source, observer_id, kind, namespace\)/);
