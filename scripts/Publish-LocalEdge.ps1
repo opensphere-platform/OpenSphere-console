@@ -525,11 +525,11 @@ for ($index = 0; $index -lt $imagesToBuild.Count; $index += 1) {
 # Labels prove declared lineage, but they do not prove that BuildKit copied the
 # current source bytes. Compare the policy contract inside the exact image with
 # the detached checkout before any date or channel tag can move.
-if ($digests.consoleApi) {
+if ($digests.Contains('consoleApi')) {
   $contractPath = Join-Path $consoleCheckout 'apps\console-api\runtime\platform-release-contract.js'
   $expectedContractSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $contractPath).Hash.ToLowerInvariant()
   $contractHashOutput = & docker run --rm --pull always --entrypoint sha256sum `
-    "$Registry/opensphere-console-api@$($digests.consoleApi)" `
+    "$Registry/opensphere-console-api@$($digests['consoleApi'])" `
     /workspace/apps/console-api/runtime/platform-release-contract.js
   if ($LASTEXITCODE -ne 0) {
     throw "Console API runtime contract verification failed with exit code $LASTEXITCODE"
@@ -544,7 +544,7 @@ if ($digests.consoleApi) {
 # Immutable source images may be built above, but date/channel tags must not move
 # until the exact packaged C_API digest has started and served DB-backed Ready.
 if ($digests.Contains('consoleApi')) {
-  $apiReference = "$Registry/opensphere-console-api@$($digests.consoleApi)"
+  $apiReference = "$Registry/opensphere-console-api@$($digests['consoleApi'])"
   Write-Host '[gate] Run the exact Console API image against isolated PostgreSQL'
   Invoke-Checked docker pull $apiReference
   Invoke-Checked node (Join-Path $consoleCheckout 'scripts/verify-console-api-image.mjs') --image $apiReference
@@ -658,7 +658,7 @@ foreach ($item in $images | Where-Object { $_.Key -ne 'console' }) {
 }
 $console = $images | Where-Object { $_.Key -eq 'console' }
 if ($console -and (-not $partialPublication -or $AdvanceOsShellUxConsoleEdge)) {
-  Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests.console -Tag edge
+  Set-RemoteTag -Repository "$Registry/$($console.Image)" -Digest $digests['console'] -Tag edge
 }
 if ($console -and $partialPublication -and -not $AdvanceOsShellUxConsoleEdge) {
   $integratedAnchorAfter = Get-RemoteDigest -Reference "$Registry/opensphere-console:edge"
@@ -679,7 +679,7 @@ Write-Host '[success] Local edge publish completed'
 Write-Host "[release] $releaseTag"
 Write-Host "[immutable] $localTag"
 if ($console -and -not $partialPublication) {
-  Write-Host "[anchor] $Registry/opensphere-console@$($digests.console)"
+  Write-Host "[anchor] $Registry/opensphere-console@$($digests['console'])"
 } elseif ($console) {
   Write-Host "[anchor] preserved $Registry/opensphere-console@$integratedAnchorBefore"
 } else {

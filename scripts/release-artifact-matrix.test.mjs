@@ -180,6 +180,8 @@ test('local edge moves its anchor only with canonical 18 and auxiliary four at o
   assert.ok(runtimeBytesGate > 0 && runtimeBytesGate < immutableTagPromotion,
     'Console API runtime contract bytes must match source before immutable or channel tags move');
   assert.match(source, /docker run --rm --pull always --entrypoint sha256sum/u);
+  assert.doesNotMatch(source, /\$digests\.(?:consoleApi|console)\b/u,
+    'partial publication must not use strict-mode property access for omitted components');
   assert.match(source, /gh api user --jq \.login/u);
   assert.match(source, /docker login ghcr\.io -u \$registryActor --password-stdin/u);
   assert.doesNotMatch(source, /docker login ghcr\.io -u opensphere-platform/u);
