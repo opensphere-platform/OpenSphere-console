@@ -75,7 +75,7 @@ const {
 } = require('./r2d2-incident-relay');
 const { projectAuthorityAdapters } = require('./r2d2-source-adapters');
 const { createConsoleIdentityVerifier } = require('./console-identity-client');
-const { createCAiOwnerApi } = require('./c-ai-owner-api');
+const { createCAiOwnerApi, developmentUserMfaDisabled } = require('./c-ai-owner-api');
 const {
   RUNTIME_RESOURCE_KINDS,
   WATCH_RESOURCE_KINDS,
@@ -149,6 +149,13 @@ const R2D2_ENGINEERING_EXECUTION_ENABLED = process.env.R2D2_ENGINEERING_EXECUTIO
 const OSAA_PROVIDER_ALLOWED_ORIGINS = String(process.env.OSAA_PROVIDER_ALLOWED_ORIGINS || 'https://api.openai.com,https://api.deepseek.com')
   .split(',').map((value) => value.trim()).filter(Boolean).slice(0, 32);
 const R2D2_CLUSTER_ID = String(process.env.R2D2_CLUSTER_ID || 'local').trim().slice(0, 128);
+const C_AI_RUNTIME_PROFILE = Object.freeze({
+  channel: String(process.env.OPENSPHERE_RELEASE_CHANNEL || ''),
+  environment: String(process.env.OPENSPHERE_AUTH_ENVIRONMENT || ''),
+  clusterId: R2D2_CLUSTER_ID,
+  consoleOrigin: String(process.env.OPENSPHERE_CONSOLE_ORIGIN || ''),
+});
+const C_AI_DEVELOPMENT_USER_MFA_DISABLED = developmentUserMfaDisabled(C_AI_RUNTIME_PROFILE);
 const R2D2_OBSERVER_PG_USER = String(process.env.R2D2_OBSERVER_PG_USER || '').trim();
 const R2D2_OBSERVER_PG_PASSWORD = String(process.env.R2D2_OBSERVER_PG_PASSWORD || '');
 const R2D2_RELAY_PG_USER = String(process.env.R2D2_RELAY_PG_USER || '').trim();
@@ -9176,9 +9183,12 @@ async function persistCAiOwnerMutationAudit(actor, event) {
   try {
     const written = await pool.query(
       `SELECT osaa.c_ai_append_audit_event(
-         $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text
+         $1::uuid,$2::uuid,$3::uuid,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::boolean
        ) AS value`,
-      [requestId, actorId, browserSessionId, action, targetType, target, reason, phase, result, payloadDigest],
+      [
+        requestId, actorId, browserSessionId, action, targetType, target, reason, phase, result, payloadDigest,
+        C_AI_DEVELOPMENT_USER_MFA_DISABLED,
+      ],
     );
     const receipt = written.rows?.[0]?.value;
     if (!receipt || String(receipt.requestId || receipt.request_id || '') !== requestId) {
@@ -9659,12 +9669,7 @@ const cAiOwnerApi = createCAiOwnerApi({
   remediationExecutionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
   llmCredentialMutationEnabled: OSAA_LLM_CREDENTIAL_MUTATION_ENABLED,
   llmCredentialDeletionEnabled: OSAA_LLM_CREDENTIAL_DELETION_ENABLED,
-  runtimeProfile: Object.freeze({
-    channel: String(process.env.OPENSPHERE_RELEASE_CHANNEL || ''),
-    environment: String(process.env.OPENSPHERE_AUTH_ENVIRONMENT || ''),
-    clusterId: R2D2_CLUSTER_ID,
-    consoleOrigin: String(process.env.OPENSPHERE_CONSOLE_ORIGIN || ''),
-  }),
+  runtimeProfile: C_AI_RUNTIME_PROFILE,
   embeddingDim: OSAA_EMBED_DIM,
   providerAllowedOrigins: OSAA_PROVIDER_ALLOWED_ORIGINS,
 });

@@ -40,3 +40,19 @@ test('C_AI credential custody is namespace-limited while general mutation stays 
   assert.doesNotMatch(manifest,
     /name: opensphere-console-osaa-gateway-credentials[\s\S]{0,500}verbs: \[[^\]]*(?:\*|update)[^\]]*\]/u);
 });
+
+test('local edge development MFA exception reaches the durable C_AI audit boundary', () => {
+  const server = read('apps', 'osaa-gateway', 'server.js');
+  const migration = read('migrations', 'versions', '0034_local_edge_development_mfa_audit.sql');
+
+  assert.match(server, /const C_AI_RUNTIME_PROFILE = Object[.]freeze\(\{[\s\S]+OPENSPHERE_RELEASE_CHANNEL[\s\S]+OPENSPHERE_AUTH_ENVIRONMENT[\s\S]+R2D2_CLUSTER_ID[\s\S]+OPENSPHERE_CONSOLE_ORIGIN/u);
+  assert.match(server, /developmentUserMfaDisabled\(C_AI_RUNTIME_PROFILE\)/u);
+  assert.match(server, /\$10::text,\$11::boolean[\s\S]+C_AI_DEVELOPMENT_USER_MFA_DISABLED/u);
+  assert.match(server, /runtimeProfile: C_AI_RUNTIME_PROFILE/u);
+
+  assert.match(migration, /p_allow_development_user_aal1 boolean/u);
+  assert.match(migration, /assert_current_actor\([\s\S]+NOT p_allow_development_user_aal1/u);
+  assert.match(migration, /developmentUserMfaDisabled',p_allow_development_user_aal1/u);
+  assert.match(migration, /REVOKE ALL ON FUNCTION[\s\S]+FROM PUBLIC,anon,authenticated,service_role/u);
+  assert.doesNotMatch(migration, /GRANT EXECUTE[\s\S]+TO (?:PUBLIC|anon|authenticated|service_role)/u);
+});
