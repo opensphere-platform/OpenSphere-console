@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash, generateKeyPairSync, sign} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {createShellDelegationBroker, createShellConsoleHandler} from '../src/shell-delegation.mjs';
 import {REGISTRY_NAMESPACES} from '../src/registry-lifecycle-contract.mjs';
 
@@ -146,4 +147,12 @@ test('private Shell Console API exposes only the explicit delegated route set', 
 
 test('registry credential propagation includes the OS Shell runtime namespace', () => {
   assert.ok(REGISTRY_NAMESPACES.includes('opensphere-shell-sessions'));
+});
+
+test('Console API image carries the native Shell context verifier', () => {
+  const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
+  assert.match(
+    dockerfile,
+    /COPY apps\/os-shell-control\/authority\/os-shell-context[.]js \/workspace\/apps\/os-shell-control\/authority\/os-shell-context[.]js/u,
+  );
 });
