@@ -208,6 +208,11 @@ interface LlmKeyForm {
   enabled: boolean;
   reason: string;
 }
+interface LlmModelChoice {
+  id: string;
+  label: string;
+  lifecycle: 'active' | 'deprecated';
+}
 interface LlmUsageMetric {
   requests: number;
   successfulRequests: number;
@@ -1241,10 +1246,28 @@ interface OsaaActionBindingManifest {
               <strong>Model routing</strong>
               <span>기본 응답 모델과 knowledge embedding 모델</span>
             </div>
-            <clr-input-container>
-              <label>Default model</label>
-              <input clrInput [(ngModel)]="llmForm.defaultModel" name="osaa-key-model" placeholder="gpt-4.1" [disabled]="llmSaving()" maxlength="128" />
-            </clr-input-container>
+            @if (llmModelChoices().length) {
+              <clr-select-container>
+                <label>Default model</label>
+                <select clrSelect [(ngModel)]="llmForm.defaultModel" name="osaa-key-model" [disabled]="llmSaving()">
+                  @if (llmConfiguredModelOutsideCatalog()) {
+                    <option [value]="llmForm.defaultModel">{{ llmForm.defaultModel }} (기존 설정)</option>
+                  }
+                  @for (model of llmModelChoices(); track model.id) {
+                    <option [value]="model.id">{{ model.label }}</option>
+                  }
+                </select>
+                <clr-control-helper>DeepSeek OpenAI 호환 API · 저장 직후 /models 응답으로 선택 모델을 검증합니다.</clr-control-helper>
+              </clr-select-container>
+              @if (llmSelectedModelDeprecated()) {
+                <p class="clr-subtext osaa-field-wide">이 모델은 2026-07-24부터 deprecated로 분류된 호환 항목입니다. 신규 설정에는 active 모델을 선택하세요.</p>
+              }
+            } @else {
+              <clr-input-container>
+                <label>Default model</label>
+                <input clrInput [(ngModel)]="llmForm.defaultModel" name="osaa-key-model" placeholder="gpt-4.1" [disabled]="llmSaving()" maxlength="128" />
+              </clr-input-container>
+            }
             <clr-input-container>
               <label>Embedding model (선택)</label>
               <input clrInput [(ngModel)]="llmForm.embeddingModel" name="osaa-key-embed" placeholder="text-embedding-3-large" [disabled]="llmSaving()" maxlength="128" />
@@ -2074,6 +2097,24 @@ export class AdminOsaa implements OnInit, OnDestroy {
   }
 
   // ---------- LLM provider keys ----------
+  private readonly deepSeekModels: readonly LlmModelChoice[] = [
+    { id: 'deepseek-v4-flash', label: 'deepseek-v4-flash', lifecycle: 'active' },
+    { id: 'deepseek-v4-pro', label: 'deepseek-v4-pro', lifecycle: 'active' },
+    { id: 'deepseek-chat', label: 'deepseek-chat · deprecated 2026-07-24', lifecycle: 'deprecated' },
+    { id: 'deepseek-reasoner', label: 'deepseek-reasoner · deprecated 2026-07-24', lifecycle: 'deprecated' },
+  ];
+  llmModelChoices(): readonly LlmModelChoice[] {
+    return this.llmForm.provider === 'deepseek' ? this.deepSeekModels : [];
+  }
+  llmConfiguredModelOutsideCatalog(): boolean {
+    const choices = this.llmModelChoices();
+    return Boolean(this.llmForm.defaultModel) && !choices.some((model) => model.id === this.llmForm.defaultModel);
+  }
+  llmSelectedModelDeprecated(): boolean {
+    return this.llmModelChoices().some(
+      (model) => model.id === this.llmForm.defaultModel && model.lifecycle === 'deprecated',
+    );
+  }
   private emptyLlmForm(): LlmKeyForm {
     return {
       id: 'openai-main', provider: 'openai', displayName: '', apiKey: '',

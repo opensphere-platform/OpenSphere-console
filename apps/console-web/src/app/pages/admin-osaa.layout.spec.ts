@@ -66,3 +66,14 @@ test('operational authority table presents the canonical HISS name', () => {
   assert.match(source, /\^\(\?:his\|hiss\)\$/);
   assert.match(source, /\? 'HISS'/);
 });
+
+test('DeepSeek credentials expose governed model selection and lifecycle guidance', () => {
+  assert.match(source, /llmModelChoices\(\)\.length/);
+  assert.match(source, /<select clrSelect \[\(ngModel\)\]="llmForm\.defaultModel" name="osaa-key-model"/);
+  assert.match(source, /deepseek-v4-flash/);
+  assert.match(source, /deepseek-v4-pro/);
+  assert.match(source, /deepseek-chat · deprecated 2026-07-24/);
+  assert.match(source, /deepseek-reasoner · deprecated 2026-07-24/);
+  assert.match(source, /저장 직후 \/models 응답으로 선택 모델을 검증합니다/);
+  assert.match(source, /llmSelectedModelDeprecated\(\)/);
+});
