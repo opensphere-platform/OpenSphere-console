@@ -414,21 +414,21 @@ interface OsaaActionBindingManifest {
             R2D2의 최종 목표는 기대 상태와 실제 상태를 지속해서 비교하고, 관측 한계와 수행 가능 범위를 증거로 설명하며,
             위험을 전파하고, 승인된 범위에서 운영 복구부터 소스 수정·빌드·배포·검증·롤백까지 하나의 추적 가능한 폐쇄 루프로 연결하는 것입니다.
           </p>
-          <div class="r2d2-target-badges" aria-label="R2D2 목표 상태">
-            <span>Target model</span>
-            <span>Phased enablement</span>
-            <span class="guarded">Operational runtime ON · Engineering {{ engineeringStatus()?.workerReady ? 'READY' : (engineeringStatus()?.executionEnabled ? 'RUNNER 대기' : (engineeringStatus() ? 'OFF' : 'UNKNOWN')) }}</span>
+          <div class="r2d2-target-badges" aria-label="R2D2 현재 활성화 단계">
+            <span>Current stage</span>
+            <span>Console baseline</span>
+            <span class="guarded">Operational runtime {{ operationalStatus()?.flags?.observer ? 'ON' : (operationalStatus() ? 'OFF · Cluster Manager 필요' : 'UNKNOWN') }} · Engineering {{ engineeringStatus()?.workerReady ? 'READY' : (engineeringStatus()?.executionEnabled ? 'RUNNER 대기' : (engineeringStatus() ? 'OFF' : 'UNKNOWN')) }}</span>
           </div>
         </div>
         <aside class="r2d2-position-card" aria-label="현재 위치와 최종 목표">
-          <div class="r2d2-position-head"><span>현재 위치</span><strong>Operational Intelligence</strong></div>
+          <div class="r2d2-position-head"><span>현재 위치</span><strong>Console Baseline</strong></div>
           <ol>
             <li class="done"><span>01</span><div><strong>관측 기반</strong><small>runtime projection · owner API · HISS</small></div></li>
-            <li class="active"><span>02</span><div><strong>상황 이해</strong><small>graph · coverage · incident · impact</small></div></li>
+            <li><span>02</span><div><strong>상황 이해</strong><small>graph · coverage · incident · impact</small></div></li>
             <li><span>03</span><div><strong>운영 복구</strong><small>governed capability · postcondition</small></div></li>
             <li [class.done]="engineeringStatus()?.workerReady"><span>04</span><div><strong>Engineering Remediation</strong><small>source · build · exact digest deploy</small></div></li>
           </ol>
-          <p>관측·상황 이해·승인 기반 운영 복구와 exact patch-bound Engineering Remediation을 연결했습니다. 실제 source·build·배포 권한은 Windows local edge Repair Runner의 짧은 lease가 살아 있을 때만 열립니다.</p>
+          <p>현재 Console baseline은 LLM credential custody, OSDST와 기본 runtime projection을 제공합니다. Operational Graph·Incident·Durable Operation은 Cluster Manager가 전용 schema·login·reconcile scope를 설치한 뒤에만 활성화합니다. source·build·배포 권한은 이후에도 Windows local edge Repair Runner의 짧은 lease가 살아 있을 때만 열립니다.</p>
         </aside>
       </section>
       </ng-template>
