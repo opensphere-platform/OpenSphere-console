@@ -172,6 +172,12 @@ test('Extension Controller deployment keeps its exact image, database secret, pr
   assert.throws(() => verifyExtensionControllerDeployment({ documents: withBroadCli }),
     /cluster RBAC must contain only CLIDownload/);
 
+  const withBroadDiscovery = structuredClone(documents);
+  withBroadDiscovery.find((document) => document?.kind === 'Role'
+    && document.metadata?.name === 'opensphere-extension-controller-kubernetes-egress-discovery').rules[1].verbs.push('watch');
+  assert.throws(() => verifyExtensionControllerDeployment({ documents: withBroadDiscovery }),
+    /endpoint discovery RBAC/);
+
   const withoutTrustBinding = structuredClone(documents);
   delete withoutTrustBinding.find((document) => document?.kind === 'Role'
     && document.metadata?.name === 'opensphere-extension-controller').rules
@@ -275,6 +281,9 @@ test('Console API registry activation rejects every expansion of the approved si
     docs => {docs.find(d=>d.kind==='NetworkPolicy').spec.egress[0].ports[0].port=6443;},
     docs => docs.find(d=>d.kind==='NetworkPolicy').spec.egress.push({ports:[{protocol:'TCP',port:6443}]}),
     docs => {docs.find(d=>d.kind==='NetworkPolicy').spec.egress[1]={to:[{ipBlock:{cidr:'0.0.0.0/0'}}],ports:[{protocol:'TCP',port:6443}]};},
+    docs => {docs.find(d=>d.metadata?.name==='opensphere-console-api-kubernetes-egress').metadata.labels['opensphere.io/contract']='unowned/v1';},
+    docs => docs.find(d=>d.metadata?.name==='opensphere-console-api-kubernetes-egress').spec.egress.push({to:[{ipBlock:{cidr:'0.0.0.0/0'}}]}),
+    docs => {docs.find(d=>d.metadata?.name==='opensphere-console-api-kubernetes-egress').spec.podSelector={};},
   ];
   for (const mutate of mutations) {
     const changed=structuredClone(documents); mutate(changed);

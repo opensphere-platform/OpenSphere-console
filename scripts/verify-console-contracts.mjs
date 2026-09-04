@@ -336,11 +336,16 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
   const [serviceAccount] = documentByKind(documents, 'ServiceAccount');
   const [deployment] = documentByKind(documents, 'Deployment');
   const [service] = documentByKind(documents, 'Service');
-  const [networkPolicy] = documentByKind(documents, 'NetworkPolicy');
+  const networkPolicies = documentByKind(documents, 'NetworkPolicy');
+  const networkPolicy = networkPolicies.find(({ metadata }) => metadata?.name === 'opensphere-console-api');
+  const kubernetesEgressPolicy = networkPolicies.find(
+    ({ metadata }) => metadata?.name === 'opensphere-console-api-kubernetes-egress',
+  );
   assert(documentByKind(documents, 'ServiceAccount').length === 1, 'C_API must have one dedicated ServiceAccount');
   assert(documentByKind(documents, 'Deployment').length === 1, 'C_API must have one component-owned Deployment');
   assert(documentByKind(documents, 'Service').length === 1, 'C_API must have one internal Service');
-  assert(documentByKind(documents, 'NetworkPolicy').length === 1, 'C_API must have one closed NetworkPolicy');
+  assert(networkPolicies.length === 2 && networkPolicy && kubernetesEgressPolicy,
+    'C_API must have exactly the closed base and Kubernetes API egress policies');
   assert(serviceAccount.automountServiceAccountToken === false, 'C_API ServiceAccount token automount must be disabled');
   assert(deployment.spec?.template?.spec?.automountServiceAccountToken === false, 'C_API Pod token automount must be disabled');
   assert(deployment.spec?.replicas === 1, 'C_API foundational deployment must not claim unverified HA');
@@ -409,19 +414,29 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
     'C_API egress to Beszel must be limited to the private Hub pod on TCP/8090',
   );
   const egressRules = networkPolicy.spec?.egress || [];
-  const apiSlot = '__OPENSPHERE_REGISTRY_KUBERNETES_EGRESS__';
   const providerRule = { ports: [{ protocol: 'TCP', port: 443 }] };
-  assert(egressRules.filter(rule => rule === apiSlot).length === 1,
-    'C_API must require exactly one Setup-discovered Kubernetes API egress slot');
   assert(egressRules.filter(rule => JSON.stringify(rule) === JSON.stringify(providerRule)).length === 1,
     'C_API provider egress must be limited to TCP/443');
-  const internalRules = egressRules.filter(rule => rule !== apiSlot && JSON.stringify(rule) !== JSON.stringify(providerRule));
+  const internalRules = egressRules.filter(rule => JSON.stringify(rule) !== JSON.stringify(providerRule));
   assert(internalRules.length === 6 && internalRules.every(rule =>
     Array.isArray(rule.to) && rule.to.length === 1 && rule.to.every(peer =>
       peer.ipBlock === undefined && peer.podSelector && Object.keys(peer.podSelector).length > 0)
     && Array.isArray(rule.ports) && rule.ports.length > 0
     && rule.ports.every(port => Number.isInteger(port.port) && !port.endPort)),
     'C_API must not add an unbounded IP, port or namespace egress escape');
+
+  const apiSlot = '__OPENSPHERE_REGISTRY_KUBERNETES_EGRESS__';
+  assert(JSON.stringify(kubernetesEgressPolicy.metadata?.labels) === JSON.stringify({
+    'app.kubernetes.io/managed-by': 'opensphere-extension-controller',
+    'app.kubernetes.io/part-of': 'opensphere-console',
+    'opensphere.io/contract': 'registry-kubernetes-egress/v1',
+  }), 'C_API Kubernetes egress policy must remain inside the C_EXT ownership contract');
+  assert(JSON.stringify(kubernetesEgressPolicy.spec?.podSelector) === JSON.stringify({
+    matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' },
+  }) && JSON.stringify(kubernetesEgressPolicy.spec?.policyTypes) === JSON.stringify(['Egress']),
+  'C_API Kubernetes egress policy must select only C_API egress');
+  assert(JSON.stringify(kubernetesEgressPolicy.spec?.egress) === JSON.stringify([apiSlot]),
+    'C_API must require exactly one Setup-discovered Kubernetes API egress slot');
 
   const routedNginxSource = nginxSource + '\n' + targetRouteSource;
   assert(nginxSource.includes('include /etc/nginx/target-api-routes.conf;'),
@@ -445,12 +460,17 @@ export function verifyExtensionControllerDeployment({ documents }) {
   const serviceAccount = one('ServiceAccount', 'opensphere-extension-controller');
   const role = one('Role', 'opensphere-extension-controller');
   const roleBinding = one('RoleBinding', 'opensphere-extension-controller');
+  const egressDiscoveryRole = one('Role', 'opensphere-extension-controller-kubernetes-egress-discovery');
+  const egressDiscoveryRoleBinding = one('RoleBinding', 'opensphere-extension-controller-kubernetes-egress-discovery');
   const cliRole = one('ClusterRole', 'opensphere-extension-controller-cli-downloads');
   const cliRoleBinding = one('ClusterRoleBinding', 'opensphere-extension-controller-cli-downloads');
   const deployment = one('Deployment', 'opensphere-extension-controller');
   for (const resource of [serviceAccount, role, roleBinding, deployment]) {
     assert(resource.metadata?.namespace === 'opensphere-console', 'C_EXT ' + resource.kind + ' escaped its namespace');
   }
+  assert(egressDiscoveryRole.metadata?.namespace === 'default'
+    && egressDiscoveryRoleBinding.metadata?.namespace === 'default',
+  'C_EXT Kubernetes endpoint discovery must be scoped to the default namespace');
   assert(cliRole.metadata?.namespace == null && cliRoleBinding.metadata?.namespace == null,
     'C_EXT CLIDownload authority must be explicitly cluster scoped');
   assert(serviceAccount.automountServiceAccountToken === true, 'C_EXT requires its scoped Kubernetes service-account token');
@@ -485,13 +505,26 @@ export function verifyExtensionControllerDeployment({ documents }) {
     { apiGroups: [''], resources: ['serviceaccounts', 'services'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
     { apiGroups: ['apps'], resources: ['deployments'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
     { apiGroups: ['policy'], resources: ['poddisruptionbudgets'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
+    { apiGroups: ['networking.k8s.io'], resources: ['networkpolicies'], resourceNames: ['opensphere-console-api-kubernetes-egress'], verbs: ['get', 'patch'] },
   ]);
   assert(JSON.stringify(normalizeRules(role.rules)) === JSON.stringify(namespacedRules),
     'C_EXT namespaced RBAC differs from its exact lifecycle and management contract');
   assert(JSON.stringify(normalizeRules(cliRole.rules)) === JSON.stringify(normalizeRules([
     { apiGroups: ['console.opensphere.io'], resources: ['clidownloads'], verbs: ['get', 'list', 'patch'] },
   ])), 'C_EXT cluster RBAC must contain only CLIDownload get/list/patch');
-  const serializedRules = JSON.stringify([role.rules, cliRole.rules]);
+  assert(JSON.stringify(normalizeRules(egressDiscoveryRole.rules)) === JSON.stringify(normalizeRules([
+    { apiGroups: [''], resources: ['services'], resourceNames: ['kubernetes'], verbs: ['get'] },
+    { apiGroups: ['discovery.k8s.io'], resources: ['endpointslices'], verbs: ['get', 'list'] },
+  ])), 'C_EXT endpoint discovery RBAC must read only the default Kubernetes Service and EndpointSlices');
+  assert(egressDiscoveryRoleBinding.roleRef?.apiGroup === 'rbac.authorization.k8s.io'
+    && egressDiscoveryRoleBinding.roleRef?.kind === 'Role'
+    && egressDiscoveryRoleBinding.roleRef?.name === 'opensphere-extension-controller-kubernetes-egress-discovery'
+    && egressDiscoveryRoleBinding.subjects?.length === 1
+    && egressDiscoveryRoleBinding.subjects[0]?.kind === 'ServiceAccount'
+    && egressDiscoveryRoleBinding.subjects[0]?.name === 'opensphere-extension-controller'
+    && egressDiscoveryRoleBinding.subjects[0]?.namespace === 'opensphere-console',
+  'C_EXT endpoint discovery RoleBinding has an unexpected authority');
+  const serializedRules = JSON.stringify([role.rules, egressDiscoveryRole.rules, cliRole.rules]);
   assert(!serializedRules.includes('"*"'), 'C_EXT RBAC must not contain wildcards');
   assert(!serializedRules.includes('"secrets"'), 'C_EXT runtime must not receive Secret API authority');
 
