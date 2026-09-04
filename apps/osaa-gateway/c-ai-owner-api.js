@@ -72,10 +72,23 @@ function requireResourceVersion(value, label) {
   return normalized;
 }
 
-function requireAal2Actor(actor, purpose) {
+function developmentUserMfaDisabled(profile) {
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return false;
+  let origin;
+  try { origin = new URL(String(profile.consoleOrigin || '')); } catch { return false; }
+  return profile.channel === 'edge'
+    && profile.environment === 'development'
+    && profile.clusterId === 'local'
+    && origin.protocol === 'https:'
+    && ['localhost', '127.0.0.1', '::1'].includes(origin.hostname);
+}
+
+function requireAal2Actor(actor, purpose, runtimeProfile) {
   const subject = String(actor?.subject || actor?.sub || '');
   const sessionId = String(actor?.browserSessionId || '');
-  if (actor?.assurance !== 'aal2') fail(403, `AAL2 ${purpose} required`);
+  if (!developmentUserMfaDisabled(runtimeProfile) && actor?.assurance !== 'aal2') {
+    fail(403, `AAL2 ${purpose} required`);
+  }
   if (!UUID.test(subject) || !UUID.test(sessionId)) fail(401, `stable actor and browser session are required for ${purpose}`);
   return { subject, sessionId, authzRevision: String(actor?.authzRevision || actor?.credentialRevision || '0') };
 }
@@ -467,6 +480,7 @@ function createCAiOwnerApi({
   remediationExecutionEnabled = false,
   llmCredentialMutationEnabled = false,
   llmCredentialDeletionEnabled = false,
+  runtimeProfile = Object.freeze({}),
   embeddingDim = 1536,
   providerAllowedOrigins = ['https://api.openai.com', 'https://api.deepseek.com'],
 } = {}) {
@@ -520,7 +534,7 @@ function createCAiOwnerApi({
     const reason = String(body.reason || '').trim();
     if (!DIALOGUE_MODES.has(mode)) fail(400, 'unsupported OSDST mode');
     if (reason.length < 8 || reason.length > 500) fail(400, 'management reason must be 8 to 500 characters');
-    requireAal2Actor(actor, 'Dialogue State change');
+    requireAal2Actor(actor, 'Dialogue State change', runtimeProfile);
     const current = await getDialogueState();
     if (current.mode === mode) return { changed: false, ...current };
     const resourceVersion = requireResourceVersion(current.controlRevision, 'OSDST Deployment');
@@ -597,7 +611,7 @@ function createCAiOwnerApi({
     if (!durableOperationsEnabled) fail(503, 'R2D2 durable operation approval is not activated', 'durable_operation_approval_disabled');
     const body = closedObject(input, ['confirmation'], 'operation approval');
     const id = requireUuid(operationId, 'operationId');
-    const coordinates = requireAal2Actor(actor, 'operation approval');
+    const coordinates = requireAal2Actor(actor, 'operation approval', runtimeProfile);
     const value = await rpc('c_ai_get_module_operation', [id]);
     const operation = value?.operation;
     if (!operation) fail(404, 'operation not found');
@@ -692,7 +706,7 @@ function createCAiOwnerApi({
     if (!remediationExecutionEnabled) fail(503, 'R2D2 Engineering Remediation execution is not activated', 'engineering_remediation_execution_disabled');
     const body = closedObject(input, ['confirmation', 'approvalExpiresAt'], 'source approval');
     const id = requireUuid(remediationRequestId, 'remediationRequestId');
-    const coordinates = requireAal2Actor(actor, 'Engineering Remediation source approval');
+    const coordinates = requireAal2Actor(actor, 'Engineering Remediation source approval', runtimeProfile);
     const value = await rpc('c_ai_get_engineering_remediation', [id]);
     const request = value?.request;
     if (!request) fail(404, 'Engineering Remediation request not found');
@@ -730,7 +744,7 @@ function createCAiOwnerApi({
       'consoleErrorCount', 'networkFailureCount',
     ], 'browser verification');
     const id = requireUuid(remediationRequestId, 'remediationRequestId');
-    const { subject } = requireAal2Actor(actor, 'Engineering Remediation browser verification');
+    const { subject } = requireAal2Actor(actor, 'Engineering Remediation browser verification', runtimeProfile);
     const value = await rpc('c_ai_get_engineering_remediation', [id]);
     const request = value?.request;
     if (!request) fail(404, 'Engineering Remediation request not found');
@@ -779,7 +793,7 @@ function createCAiOwnerApi({
     if (!llmCredentialMutationEnabled) {
       fail(503, 'C_AI LLM credential mutation is not activated', 'llm_credential_mutation_disabled');
     }
-    const coordinates = requireAal2Actor(actor, 'LLM credential change');
+    const coordinates = requireAal2Actor(actor, 'LLM credential change', runtimeProfile);
     const body = validateLlmKeyWrite(input, allowedOrigins);
     const name = `osaa-llm-${body.id}`;
     const secretPath = `/api/v1/namespaces/${encodeURIComponent(keyNamespace)}/secrets/${encodeURIComponent(name)}`;
@@ -879,7 +893,7 @@ function createCAiOwnerApi({
     if (!llmCredentialDeletionEnabled) {
       fail(503, 'C_AI LLM credential deletion is not activated', 'llm_credential_deletion_disabled');
     }
-    requireAal2Actor(actor, 'LLM credential deletion');
+    requireAal2Actor(actor, 'LLM credential deletion', runtimeProfile);
     const body = closedObject(input, ['reason', 'confirmation'], 'LLM key deletion');
     const id = String(keyId || '');
     if (!KEY_ID.test(id)) fail(400, 'invalid LLM key id');
@@ -942,7 +956,7 @@ function createCAiOwnerApi({
 
   async function testLlmKey(actor, keyId, input = {}) {
     closedObject(input, [], 'LLM key validation');
-    requireAal2Actor(actor, 'LLM credential validation');
+    requireAal2Actor(actor, 'LLM credential validation', runtimeProfile);
     const id = String(keyId || '');
     if (!KEY_ID.test(id)) fail(400, 'invalid LLM key id');
     const secretPath = `/api/v1/namespaces/${encodeURIComponent(keyNamespace)}/secrets/${encodeURIComponent(`osaa-llm-${id}`)}`;
@@ -1031,4 +1045,5 @@ module.exports = {
   dialogueProjection,
   probeProviderCredential,
   digest,
+  developmentUserMfaDisabled,
 };

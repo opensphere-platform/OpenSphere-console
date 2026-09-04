@@ -147,6 +147,7 @@ function apiWith(overrides = {}) {
     remediationExecutionEnabled: overrides.remediationExecutionEnabled !== false,
     llmCredentialMutationEnabled: overrides.llmCredentialMutationEnabled === true,
     llmCredentialDeletionEnabled: overrides.llmCredentialDeletionEnabled === true,
+    ...(overrides.runtimeProfile ? { runtimeProfile: overrides.runtimeProfile } : {}),
     ...(overrides.providerAllowedOrigins ? { providerAllowedOrigins: overrides.providerAllowedOrigins } : {}),
   });
   return { instance, dbCalls, k8sCalls, auditCalls, eventOrder };
@@ -187,6 +188,32 @@ test('operation approval is AAL2, exact digest bound, independent, and feature g
     code: 503, errorCode: 'durable_operation_approval_disabled',
   });
   assert.equal(disabled.dbCalls.length, 0);
+});
+
+test('development MFA exception is confined to exact local edge profile and preserves stable actor coordinates', async () => {
+  const confirmation = 'approve R2D2 operation ' + OPERATION_ID + ' ' + DESCRIPTOR_DIGEST;
+  const exactProfile = {
+    channel: 'edge', environment: 'development', clusterId: 'local',
+    consoleOrigin: 'https://localhost:1114',
+  };
+  const allowed = apiWith({ runtimeProfile: exactProfile });
+  await allowed.instance.approveOperation(actor({ assurance: 'aal1' }), OPERATION_ID, { confirmation });
+  const write = allowed.dbCalls.find((call) => call.sql.includes('c_ai_approve_module_operation'));
+  assert.deepEqual(write.params.slice(0, 4), [OPERATION_ID, ACTOR_ID, SESSION_ID, '19']);
+
+  for (const runtimeProfile of [
+    { ...exactProfile, channel: 'candidate' },
+    { ...exactProfile, environment: 'production' },
+    { ...exactProfile, clusterId: 'remote' },
+    { ...exactProfile, consoleOrigin: 'https://console.example.test' },
+    { ...exactProfile, consoleOrigin: 'http://localhost:1114' },
+  ]) {
+    const denied = apiWith({ runtimeProfile });
+    await assert.rejects(
+      denied.instance.approveOperation(actor({ assurance: 'aal1' }), OPERATION_ID, { confirmation }),
+      { code: 403 },
+    );
+  }
 });
 
 test('remediation reads omit patch bytes and retain exact source/build evidence', async () => {

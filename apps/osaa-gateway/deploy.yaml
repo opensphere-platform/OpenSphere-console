@@ -248,6 +248,12 @@ spec:
             - { name: R2D2_INCIDENT_RELAY_ENABLED, value: "true" }
             - { name: R2D2_INCIDENT_LLM_ENABLED, value: "false" }
             - { name: R2D2_CLUSTER_ID, value: local }
+            # Setup renders these values from the verified release lock and
+            # install inputs. C_AI accepts the development MFA exception only
+            # for the exact edge/development/local/loopback tuple.
+            - { name: OPENSPHERE_RELEASE_CHANNEL, value: "__OPENSPHERE_RELEASE_CHANNEL__" }
+            - { name: OPENSPHERE_AUTH_ENVIRONMENT, value: "__OPENSPHERE_AUTH_ENVIRONMENT__" }
+            - { name: OPENSPHERE_CONSOLE_ORIGIN, value: "__OPENSPHERE_CONSOLE_URL__" }
             - name: R2D2_OBSERVER_PG_USER
               valueFrom: { secretKeyRef: { name: opensphere-osaa-runtime, key: observer-pg-user, optional: true } }
             - name: R2D2_OBSERVER_PG_PASSWORD

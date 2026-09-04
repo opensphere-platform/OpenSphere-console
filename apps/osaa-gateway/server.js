@@ -9659,6 +9659,12 @@ const cAiOwnerApi = createCAiOwnerApi({
   remediationExecutionEnabled: R2D2_ENGINEERING_EXECUTION_ENABLED,
   llmCredentialMutationEnabled: OSAA_LLM_CREDENTIAL_MUTATION_ENABLED,
   llmCredentialDeletionEnabled: OSAA_LLM_CREDENTIAL_DELETION_ENABLED,
+  runtimeProfile: Object.freeze({
+    channel: String(process.env.OPENSPHERE_RELEASE_CHANNEL || ''),
+    environment: String(process.env.OPENSPHERE_AUTH_ENVIRONMENT || ''),
+    clusterId: R2D2_CLUSTER_ID,
+    consoleOrigin: String(process.env.OPENSPHERE_CONSOLE_ORIGIN || ''),
+  }),
   embeddingDim: OSAA_EMBED_DIM,
   providerAllowedOrigins: OSAA_PROVIDER_ALLOWED_ORIGINS,
 });

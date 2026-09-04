@@ -20,6 +20,8 @@ test('C_AI manifest uses the canonical OSAA gateway release artifact', () => {
   assert.match(dockerfile, /COPY console-identity-client[.]js \/app\/console-identity-client[.]js/u);
   assert.match(matrix, /\['osaaGateway', 'opensphere-console-osaa-gateway', 'apps\/osaa-gateway\/Dockerfile'\]/u);
   assert.match(publisher, /Key = 'osaaGateway'; Image = 'opensphere-console-osaa-gateway'/u);
+  assert.match(manifest,
+    /OPENSPHERE_RELEASE_CHANNEL, value: "__OPENSPHERE_RELEASE_CHANNEL__"[\s\S]+OPENSPHERE_AUTH_ENVIRONMENT, value: "__OPENSPHERE_AUTH_ENVIRONMENT__"[\s\S]+OPENSPHERE_CONSOLE_ORIGIN, value: "__OPENSPHERE_CONSOLE_URL__"/u);
 });
 
 test('C_AI credential custody is namespace-limited while general mutation stays closed', () => {
