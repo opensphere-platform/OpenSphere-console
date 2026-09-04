@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "repository": "OpenSphere-Console",
-  "latestGlobalId": "opensphere-console/20260904/0033",
-  "migrationCount": 33,
-  "setDigest": "sha256:7ab6ab5ab25adaf811d1becc867e987c1b32e745c00b21e6603b7ef433bbb663",
+  "latestGlobalId": "opensphere-console/20260904/0034",
+  "migrationCount": 34,
+  "setDigest": "sha256:97648638173f621644684c4b4c2c9a84f95226aba4ccf49a374ae94471a19182",
   "migrations": [
     {
       "globalId": "opensphere-console/20260902/0001",
@@ -334,6 +334,16 @@
       "sourceRevision": "2b53b5a7b1df255082384943251019b1672c64d7",
       "setSize": 33,
       "setDigest": "sha256:7ab6ab5ab25adaf811d1becc867e987c1b32e745c00b21e6603b7ef433bbb663"
+    },
+    {
+      "globalId": "opensphere-console/20260904/0034",
+      "semanticKey": "console.osaa.local_edge_development_mfa_audit",
+      "predecessorGlobalId": "opensphere-console/20260904/0033",
+      "path": "migrations/versions/0034_local_edge_development_mfa_audit.sql",
+      "sha256": "bbe9c6a44d1db7b2b8240037bcaeee3ad260266d2e20cb945f0b05a5700278d4",
+      "sourceRevision": "76e4aa5557298863ba88c446637c91332d58ccf9",
+      "setSize": 34,
+      "setDigest": "sha256:97648638173f621644684c4b4c2c9a84f95226aba4ccf49a374ae94471a19182"
     }
   ]
 }
