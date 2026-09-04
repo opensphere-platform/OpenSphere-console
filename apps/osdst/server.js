@@ -6,15 +6,16 @@ const { Pool } = require('pg');
 const { createConversationStore } = require('./conversation-store');
 const { dialogueModePolicy } = require('./dialogue-rollout');
 const { dialogueTransitionForToolResult } = require('./dialogue-transition');
+const { createNativeIdentityVerifier } = require('./native-identity-client');
 
 const PORT = Number(process.env.PORT || 8080);
 const VERSION = String(process.env.APP_VERSION || '1.0.0');
 const INSTANCE = String(process.env.HOSTNAME || 'local');
-const CONSOLE_IDENTITY_URL = (process.env.CONSOLE_IDENTITY_URL || 'http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
+const CONSOLE_IDENTITY_URL = (process.env.CONSOLE_IDENTITY_URL || 'http://opensphere-console-api.opensphere-console.svc.cluster.local:8080').replace(/\/$/, '');
 const PG_HOST = process.env.OSDST_PG_HOST || 'opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local';
 const PG_PORT = Number(process.env.OSDST_PG_PORT || 5432);
 const PG_DB = process.env.OSDST_PG_DB || 'postgres';
-const PG_USER = process.env.OSDST_PG_USER || 'opensphere_osaa_gateway';
+const PG_USER = process.env.OSDST_PG_USER || 'opensphere_osdst_runtime';
 const PG_PASSWORD = process.env.OSDST_PG_PASSWORD || '';
 const PG_TLS = process.env.OSDST_PG_TLS === 'true';
 const PG_CA_PATH = process.env.OSDST_PG_CA_PATH || '/etc/osdst-postgres-ca/ca.crt';
@@ -59,7 +60,8 @@ function poolOptions(user, password, applicationName) {
     password,
     application_name: applicationName,
     ssl: sslOptions(),
-    options: '-c search_path=osaa,extensions,public',
+    options: `-c role=${applicationName === 'opensphere-osdst-maintenance' ? 'opensphere_osdst_maintenance' : 'opensphere_osdst'} -c search_path=osaa,extensions,public`,
+    query_timeout: 10000, statement_timeout: 10000,
     max: 6,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
@@ -102,37 +104,7 @@ async function readBody(req) {
   catch { throw Object.assign(new Error('invalid JSON body'), { code: 400 }); }
 }
 
-async function verifyActor(req) {
-  const authorization = String(req.headers.authorization || '');
-  const cookie = String(req.headers.cookie || '');
-  if (!/^Bearer\s+\S+/i.test(authorization) && !cookie) {
-    throw Object.assign(new Error('Console session required'), { code: 401 });
-  }
-  let response;
-  try {
-    response = await fetch(`${CONSOLE_IDENTITY_URL}/api/identity/session`, {
-      headers: {
-        accept: 'application/json',
-        ...(authorization ? { authorization } : {}),
-        ...(cookie ? { cookie } : {}),
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-  } catch {
-    throw Object.assign(new Error('Console identity authority unavailable'), { code: 503 });
-  }
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(body.error || 'invalid Console session'), { code: response.status === 403 ? 403 : 401 });
-  const subject = String(body.subject || '').trim();
-  if (!subject) throw Object.assign(new Error('identity response has no subject'), { code: 401 });
-  return {
-    subject,
-    username: body.username || subject,
-    groups: Array.isArray(body.groups) ? body.groups : [],
-    permissions: Array.isArray(body.permissions) ? body.permissions : [],
-    assurance: body.assurance || 'aal1',
-  };
-}
+const verifyActor = createNativeIdentityVerifier({baseUrl: CONSOLE_IDENTITY_URL});
 
 function requireAdminAal2(actor) {
   if (!actor.groups.includes(ADMIN_GROUP)) throw Object.assign(new Error(`requires ${ADMIN_GROUP}`), { code: 403 });
@@ -154,7 +126,7 @@ async function readiness() {
       to_regclass('osaa.dialogue_state_transition') IS NOT NULL AS transition_ready
   `);
   const row = result.rows[0] || {};
-  const ready = row.conversation_ready && row.message_ready && row.projection_ready && row.transition_ready;
+  const ready = row.writer === 'opensphere_osdst' && row.conversation_ready && row.message_ready && row.projection_ready && row.transition_ready;
   return { ready, writer: row.writer || PG_USER, schema: ready ? 'osaa.dialogue-state/v1' : 'missing' };
 }
 

@@ -15,6 +15,8 @@ const publisher = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'P
 const admissionHarness = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Test-OsShellRuntimeAdmission.ps1'), 'utf8');
 const backendServer = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'server.js'), 'utf8');
 const backendDeploy = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'runtime', 'deploy.yaml'), 'utf8');
+const targetApiDeploy = fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-api', 'deploy.yaml'), 'utf8');
+const nativeInstaller = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'Install-ConsoleNativeRuntime.ps1'), 'utf8');
 const canonicalConsoleNginx = [
   fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'default.conf.template'), 'utf8'),
   fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'console-web', 'nginx', 'target-api-routes.conf'), 'utf8'),
@@ -48,14 +50,15 @@ test('local-edge deploy joins completed kubectl output instead of binding -join 
   assert.match(deployScript, /deploymentToolingSourceRevision = \$deploymentToolingSourceRevision/g);
 });
 
-test('control workloads are distinct, exact-rendered, and default-off without Kubernetes token leakage', () => {
+test('control workloads are distinct, exact-rendered, and installer-activated without Kubernetes token leakage', () => {
+  const replicas = { api: 2, gateway: 2, reconciler: 1 };
   for (const mode of ['api', 'gateway', 'reconciler']) {
     const deployment = find('Deployment', `opensphere-shell-${mode}`, 'opensphere-console');
-    assert.equal(deployment.spec.replicas, 0); const spec = deployment.spec.template.spec;
+    assert.equal(deployment.spec.replicas, replicas[mode]); const spec = deployment.spec.template.spec;
     assert.equal(spec.serviceAccountName, `opensphere-shell-${mode}`);
     assert.equal(spec.automountServiceAccountToken, mode === 'reconciler');
     const env = Object.fromEntries(spec.containers[0].env.filter((entry) => 'value' in entry).map((entry) => [entry.name, entry.value]));
-    assert.equal(env.OS_SHELL_CONTROL_ENABLED, 'false'); assert.equal(env.OS_SHELL_MODE, mode);
+    assert.equal(env.OS_SHELL_CONTROL_ENABLED, 'true'); assert.equal(env.OS_SHELL_MODE, mode);
     assert.equal(spec.containers[0].image, '__OPENSPHERE_OS_SHELL_CONTROL_IMAGE__');
     assert.equal(env.OS_SHELL_RUNTIME_IMAGE, '__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__');
     assert.equal(env.OS_SHELL_RUNTIME_MAX_PROCESSES, '256');
@@ -63,15 +66,8 @@ test('control workloads are distinct, exact-rendered, and default-off without Ku
   }
   assert.equal((source.match(/__OPENSPHERE_OS_SHELL_CONTROL_IMAGE__/g) || []).length, 3);
   assert.equal((source.match(/__OPENSPHERE_OS_SHELL_RUNTIME_IMAGE__/g) || []).length, 4);
-  const consoleApi = find('Deployment', 'opensphere-shell-console-api', 'opensphere-console');
-  assert.equal(consoleApi.spec.replicas, 0);
-  assert.equal(consoleApi.spec.template.spec.automountServiceAccountToken, false);
-  const consoleContainer = consoleApi.spec.template.spec.containers[0];
-  assert.equal(consoleContainer.image, '__OPENSPHERE_CONSOLE_IMAGE__');
-  assert.equal(consoleContainer.securityContext.readOnlyRootFilesystem, true);
-  assert.ok(consoleContainer.volumeMounts.some((mount) => mount.name === 'nginx-conf' && mount.mountPath === '/etc/nginx/conf.d'));
-  assert.ok(consoleContainer.volumeMounts.some((mount) => mount.name === 'nginx-tmp' && mount.mountPath === '/tmp'));
-  assert.equal((source.match(/__OPENSPHERE_CONSOLE_IMAGE__/g) || []).length, 1);
+  assert.equal(find('Deployment', 'opensphere-shell-console-api', 'opensphere-console'), undefined);
+  assert.equal((source.match(/__OPENSPHERE_CONSOLE_IMAGE__/g) || []).length, 0);
 });
 
 test('session namespace has a global resource budget and exact runtime template admission boundary', () => {
@@ -177,22 +173,24 @@ test('TLS services and leaves are separated across API, registration, credential
   const consoleApi = find('Service', 'opensphere-shell-console-api', 'opensphere-console');
   assert.equal(consoleApi.spec.ports[0].port, 8445);
   assert.equal(consoleApi.spec.ports[0].targetPort, 'console-api-tls');
-  assert.deepEqual(consoleApi.spec.selector, { app: 'opensphere-shell-console-api' });
+  assert.deepEqual(consoleApi.spec.selector, { 'app.kubernetes.io/name': 'opensphere-console-api' });
   assert.match(source, /opensphere-shell-api-tls/); assert.match(source, /opensphere-shell-reconciler-tls/);
-  assert.match(source, /opensphere-shell-credential-authority-tls/);
-  assert.match(source, /opensphere-shell-console-api-tls/);
+  assert.match(targetApiDeploy, /opensphere-shell-credential-authority-tls/);
+  assert.match(targetApiDeploy, /opensphere-shell-console-api-tls/);
+  assert.match(nativeInstaller, /opensphere-shell-credential-authority-tls/);
+  assert.match(nativeInstaller, /opensphere-shell-console-api-tls/);
   assert.match(source, /opensphere-shell-control-ca/);
 });
 
-test('OS Shell owns durable Backend gates that survive Backend-only deployment', () => {
+test('OS Shell owns durable C_API gates that survive C_API-only deployment', () => {
   const gates = find('ConfigMap', 'opensphere-shell-control-gates', 'opensphere-console');
   assert.deepEqual(gates.data, {
     'admission-enabled': 'true',
     'credential-authority-enabled': 'true',
   });
-  assert.match(backendDeploy, /name: OS_SHELL_ADMISSION_ENABLED[\s\S]*?configMapKeyRef: \{ name: opensphere-shell-control-gates, key: admission-enabled, optional: true \}/);
-  assert.match(backendDeploy, /name: OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED[\s\S]*?configMapKeyRef: \{ name: opensphere-shell-control-gates, key: credential-authority-enabled, optional: true \}/);
-  assert.doesNotMatch(backendDeploy, /OS_SHELL_(?:ADMISSION|CREDENTIAL_AUTHORITY)_ENABLED, value: "false"/);
+  assert.match(targetApiDeploy, /name: OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED[\s\S]*?name: opensphere-shell-control-gates[\s\S]*?key: credential-authority-enabled[\s\S]*?optional: true/);
+  assert.match(targetApiDeploy, /name: OS_SHELL_DELEGATION_SIGNING_KEY[\s\S]*?name: opensphere-shell-control-runtime[\s\S]*?key: delegation-signing-key/);
+  assert.doesNotMatch(targetApiDeploy, /OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED, value: "false"/);
 });
 
 test('local-edge activation projects and verifies the Setup-owned Backend credential authority before control rollout', () => {
@@ -222,9 +220,9 @@ test('NetworkPolicy peers are exact and runtime egress uses post-DNAT target por
   assert.deepEqual(runtime.spec.egress[1], {
     to: [{
       namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'opensphere-console' } },
-      podSelector: { matchLabels: { app: 'opensphere-shell-console-api' } },
+      podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } },
     }],
-    ports: [{ protocol: 'TCP', port: 8443 }],
+    ports: [{ protocol: 'TCP', port: 8445 }],
   });
   const consoleIngress = find('NetworkPolicy', 'opensphere-shell-console-api-ingress', 'opensphere-console');
   assert.deepEqual(consoleIngress.spec.ingress[0], {
@@ -232,23 +230,20 @@ test('NetworkPolicy peers are exact and runtime egress uses post-DNAT target por
       namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'opensphere-shell-sessions' } },
       podSelector: { matchLabels: { app: 'opensphere-os-shell-runtime' } },
     }],
-    ports: [{ protocol: 'TCP', port: 8443 }],
+    ports: [{ protocol: 'TCP', port: 8445 }],
   });
   assert.deepEqual(consoleIngress.spec.ingress[1], {
     from: [{ podSelector: { matchLabels: { app: 'opensphere-shell-api' } } }],
-    ports: [{ protocol: 'TCP', port: 8443 }],
+    ports: [{ protocol: 'TCP', port: 8445 }],
   });
-  const consoleEgress = find('NetworkPolicy', 'opensphere-shell-console-api-egress', 'opensphere-console');
-  assert.deepEqual(consoleEgress.spec.egress[0], {
-    to: [{ podSelector: {} }], ports: [{ protocol: 'TCP', port: 8080 }],
-  });
+  assert.equal(find('NetworkPolicy', 'opensphere-shell-console-api-egress', 'opensphere-console'), undefined);
   const apiEgress = find('NetworkPolicy', 'opensphere-shell-api-egress', 'opensphere-console');
   assert.deepEqual(apiEgress.spec.egress[0], {
     to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
     ports: [{ protocol: 'TCP', port: 8080 }],
   });
   assert.deepEqual(apiEgress.spec.egress[1], {
-    to: [{ podSelector: { matchLabels: { app: 'opensphere-console-backend' } } }],
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
     ports: [{ protocol: 'TCP', port: 8444 }],
   });
   assert.deepEqual(apiEgress.spec.egress[2], {
@@ -256,8 +251,8 @@ test('NetworkPolicy peers are exact and runtime egress uses post-DNAT target por
     ports: [{ protocol: 'TCP', port: 8080 }],
   });
   assert.deepEqual(apiEgress.spec.egress[3], {
-    to: [{ podSelector: { matchLabels: { app: 'opensphere-shell-console-api' } } }],
-    ports: [{ protocol: 'TCP', port: 8443 }],
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
+    ports: [{ protocol: 'TCP', port: 8445 }],
   });
   const gatewayIngress = find('NetworkPolicy', 'opensphere-shell-gateway-ingress', 'opensphere-console');
   assert.deepEqual(gatewayIngress.spec.ingress[1], {
@@ -281,10 +276,10 @@ test('NetworkPolicy peers are exact and runtime egress uses post-DNAT target por
   });
 });
 
-test('internal Console API uses the canonical data-driven Registry and plugin/PFSS frontdoor instead of a copied router', () => {
-  const deployment = find('Deployment', 'opensphere-shell-console-api', 'opensphere-console');
-  assert.equal(deployment.spec.template.spec.containers[0].name, 'console-frontdoor');
-  assert.equal(deployment.spec.template.spec.containers[0].image, '__OPENSPHERE_CONSOLE_IMAGE__');
+test('internal Shell API terminates on the canonical C_API instead of a copied frontdoor', () => {
+  assert.equal(find('Deployment', 'opensphere-shell-console-api', 'opensphere-console'), undefined);
+  assert.deepEqual(find('Service', 'opensphere-shell-console-api', 'opensphere-console').spec.selector,
+    { 'app.kubernetes.io/name': 'opensphere-console-api' });
   assert.match(canonicalConsoleNginx, /location = \/api\/v1\/registry/);
   assert.match(canonicalConsoleNginx, /location ~ \^\/api\/\(\?:proxy\|modules\|module-operations\)\(\?:\/\|\$\)/);
   assert.match(canonicalConsoleNginx, /return 410 '\{"schemaVersion":"1\.0","code":"RouteRetired"/);
@@ -448,15 +443,15 @@ test('0062 owner operation is projected-SA, bidirectional, signed-intent-first a
   assert.match(backendServer, /scale-down-complete/);
 });
 
-test('target Owner admission is prewired while optional OS Shell activation remains disabled', () => {
+test('target Owner admission is prewired for Setup-activated OS Shell', () => {
   for (const name of ['opensphere-shell-api', 'opensphere-shell-gateway']) {
     const deployment = find('Deployment', name, 'opensphere-console');
     const env = Object.fromEntries(deployment.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry.value]));
-    assert.equal(deployment.spec.replicas, 0);
-    assert.equal(env.OS_SHELL_CONTROL_ENABLED, 'false');
+    assert.equal(deployment.spec.replicas, 2);
+    assert.equal(env.OS_SHELL_CONTROL_ENABLED, 'true');
     assert.equal(env.OS_SHELL_TARGET_OWNER_ADMISSION, 'true');
     assert.equal(env.OS_SHELL_OWNER_AUTHORITY_URL, 'http://opensphere-console-api.opensphere-console.svc.cluster.local:8080');
-    assert.equal(env.OS_SHELL_PUBLIC_ORIGIN, 'https://localhost:1114');
+    assert.equal(env.OS_SHELL_PUBLIC_ORIGIN, '__OPENSPHERE_CONSOLE_URL__');
   }
   const reconciler = find('Deployment', 'opensphere-shell-reconciler', 'opensphere-console');
   const names = reconciler.spec.template.spec.containers[0].env.map((entry) => entry.name);

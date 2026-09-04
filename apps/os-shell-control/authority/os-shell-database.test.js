@@ -53,11 +53,11 @@ test('mode health checks the exact login role and every required RPC privilege w
   const call = calls.at(-1);
   assert.equal(call.values[1], 'opensphere_shell_gateway');
   assert.deepEqual(call.values[0], [
-    'console.current_shell_permission_revision(uuid)',
-    'console.resolve_shell_attach_binding(text,uuid,uuid,uuid,text,text,text)',
-    'console.consume_shell_attach_ticket(text,uuid,uuid,uuid,text,bigint,bigint,text,text,text)',
-    'console.revalidate_shell_session(uuid,uuid,uuid,text,bigint,bigint,text,text)',
-    'console.touch_shell_session_activity(uuid,uuid,uuid,text,bigint,bigint,text,text)',
+    'console_shell.current_shell_permission_revision(uuid)',
+    'console_shell.resolve_shell_attach_binding(text,uuid,uuid,uuid,text,text,text)',
+    'console_shell.consume_shell_attach_ticket(text,uuid,uuid,uuid,text,bigint,bigint,text,text,text)',
+    'console_shell.revalidate_shell_session(uuid,uuid,uuid,text,bigint,bigint,text,text)',
+    'console_shell.touch_shell_session_activity(uuid,uuid,uuid,text,bigint,bigint,text,text)',
   ]);
   assert.match(call.text, /has_schema_privilege/);
   assert.match(call.text, /has_function_privilege/);
@@ -125,5 +125,5 @@ test('feature state is read only through its closed RPC', async () => {
     return { rows: [{ enabled: false, revision: 3, active_sessions: 0, scale_down_allowed: true }] }; } });
   const state = await db.featureState();
   assert.equal(state.scale_down_allowed, true);
-  assert.deepEqual(calls, [{ text: 'SELECT * FROM console.get_shell_feature_state()', values: [] }]);
+  assert.deepEqual(calls, [{ text: 'SELECT * FROM console_shell.get_shell_feature_state()', values: [] }]);
 });

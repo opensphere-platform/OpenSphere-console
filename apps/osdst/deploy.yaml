@@ -43,21 +43,22 @@ spec:
       securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: osdst
-          image: ghcr.io/opensphere-platform/opensphere-osdst@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          image: __OPENSPHERE_OSDST_IMAGE__
           imagePullPolicy: IfNotPresent
           env:
-            - { name: CONSOLE_IDENTITY_URL, value: "http://opensphere-console-backend.opensphere-console.svc.cluster.local:8080" }
+            - { name: CONSOLE_IDENTITY_URL, value: "http://opensphere-console-api.opensphere-console.svc.cluster.local:8080" }
             - { name: CONSOLE_ADMIN_GROUP, value: console-admins }
             - { name: OSDST_PG_HOST, value: opensphere-supabase-postgres.opensphere-console-data.svc.cluster.local }
             - { name: OSDST_PG_PORT, value: "5432" }
             - { name: OSDST_PG_DB, value: postgres }
-            - { name: OSDST_PG_USER, value: opensphere_osaa_gateway }
+            - name: OSDST_PG_USER
+              valueFrom: { secretKeyRef: { name: opensphere-osdst-db, key: username } }
             - name: OSDST_PG_PASSWORD
-              valueFrom: { secretKeyRef: { name: opensphere-osaa-runtime, key: pg-password } }
+              valueFrom: { secretKeyRef: { name: opensphere-osdst-db, key: password } }
             - name: OSDST_MAINTENANCE_PG_USER
-              valueFrom: { secretKeyRef: { name: opensphere-osaa-maintenance-runtime, key: dialogue-pg-user } }
+              valueFrom: { secretKeyRef: { name: opensphere-osdst-maintenance-db, key: username } }
             - name: OSDST_MAINTENANCE_PG_PASSWORD
-              valueFrom: { secretKeyRef: { name: opensphere-osaa-maintenance-runtime, key: dialogue-pg-password } }
+              valueFrom: { secretKeyRef: { name: opensphere-osdst-maintenance-db, key: password } }
             - name: OSDST_MODE
               valueFrom:
                 fieldRef:
@@ -101,5 +102,5 @@ spec:
             matchExpressions:
               - key: app
                 operator: In
-                values: [opensphere-console-osaa-gateway, opensphere-console-backend]
+                values: [opensphere-console-osaa-gateway]
       ports: [{ protocol: TCP, port: 8080 }]

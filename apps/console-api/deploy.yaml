@@ -45,9 +45,39 @@ spec:
           image: __OPENSPHERE_CONSOLE_API_IMAGE__
           imagePullPolicy: IfNotPresent
           ports:
+            - name: shell-cred-tls
+              containerPort: 8444
+            - name: console-api-tls
+              containerPort: 8445
             - name: http
               containerPort: 8080
           env:
+            # The native-runtime installer owns this gate and the referenced
+            # Secrets. A pre-native bootstrap therefore starts C_API with the
+            # listener disabled; the installer restarts it after the complete
+            # trust set and credentials have been provisioned.
+            - name: OS_SHELL_CREDENTIAL_AUTHORITY_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: opensphere-shell-control-gates
+                  key: credential-authority-enabled
+                  optional: true
+            - name: OS_SHELL_DELEGATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-shell-control-runtime
+                  key: delegation-secret
+                  optional: true
+            - name: OS_SHELL_DELEGATION_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: opensphere-shell-control-runtime
+                  key: delegation-signing-key
+                  optional: true
+            - { name: OS_SHELL_CREDENTIAL_AUTHORITY_CERT_FILE, value: /var/run/opensphere-shell-credential-authority-tls/tls.crt }
+            - { name: OS_SHELL_CREDENTIAL_AUTHORITY_KEY_FILE, value: /var/run/opensphere-shell-credential-authority-tls/tls.key }
+            - { name: OS_SHELL_CONSOLE_API_CERT_FILE, value: /var/run/opensphere-shell-console-api-tls/tls.crt }
+            - { name: OS_SHELL_CONSOLE_API_KEY_FILE, value: /var/run/opensphere-shell-console-api-tls/tls.key }
             # Approved 2026-09-03: only the six named registry Secrets below.
             - name: CONSOLE_REGISTRY_AUTH_CONTRACT
               value: registry-auth/v1
@@ -120,6 +150,12 @@ spec:
             - name: CONSOLE_INSTALLATION_RELEASE_PATH
               value: /var/run/opensphere/release/release.json
           volumeMounts:
+            - name: opensphere-shell-credential-authority-tls
+              mountPath: /var/run/opensphere-shell-credential-authority-tls
+              readOnly: true
+            - name: opensphere-shell-console-api-tls
+              mountPath: /var/run/opensphere-shell-console-api-tls
+              readOnly: true
             - name: registry-kubernetes-identity
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
@@ -147,6 +183,14 @@ spec:
             capabilities:
               drop: [ALL]
       volumes:
+        - name: opensphere-shell-credential-authority-tls
+          secret:
+            secretName: opensphere-shell-credential-authority-tls
+            optional: true
+        - name: opensphere-shell-console-api-tls
+          secret:
+            secretName: opensphere-shell-console-api-tls
+            optional: true
         # Short-lived projected identity; never a persisted service-account Secret.
         - name: registry-kubernetes-identity
           projected:

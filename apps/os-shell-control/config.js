@@ -8,11 +8,13 @@ function on(name) { return process.env[name] === 'true'; }
 function required(name) { const value = String(process.env[name] || '').trim(); if (!value) throw new Error(`${name} is required`); return value; }
 function digest(name) { const value = required(name); if (!DIGEST.test(value)) throw new Error(`${name} must be an exact SHA-256 digest`); return value; }
 function runtimeImage() { const value = required('OS_SHELL_RUNTIME_IMAGE'); if (!RUNTIME_IMAGE.test(value)) throw new Error('OS_SHELL_RUNTIME_IMAGE must be the canonical exact-digest runtime image'); return value; }
-function database() {
-  if (process.env.DATABASE_URL) return { connectionString: process.env.DATABASE_URL, max: 8 };
+function database(mode) {
+  if (process.env.DATABASE_URL) return { connectionString: process.env.DATABASE_URL, max: 8, connectionTimeoutMillis: 3000, query_timeout: 5000, statement_timeout: 5000, options: '-c role=opensphere_shell_' + mode };
   return {
     host: required('PGHOST'), port: Number(process.env.PGPORT || 5432), database: process.env.PGDATABASE || 'postgres',
     user: required('PGUSER'), password: required('PGPASSWORD'), max: 8,
+    connectionTimeoutMillis: 3000, query_timeout: 5000, statement_timeout: 5000,
+    options: '-c role=opensphere_shell_' + mode,
     ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: true } : false,
   };
 }
@@ -28,7 +30,7 @@ function loadConfig(mode = process.env.OS_SHELL_MODE) {
     targetOwnerAdmission: on('OS_SHELL_TARGET_OWNER_ADMISSION'),
     consoleOwnerAuthorityURL: on('OS_SHELL_TARGET_OWNER_ADMISSION') ? required('OS_SHELL_OWNER_AUTHORITY_URL') : '',
     publicOrigin: on('OS_SHELL_TARGET_OWNER_ADMISSION') ? required('OS_SHELL_PUBLIC_ORIGIN') : '',
-    database: enabled ? database() : null, admissionSecret: enabled && mode !== 'reconciler' ? required('OS_SHELL_ADMISSION_SECRET') : '',
+    database: enabled ? database(mode) : null, admissionSecret: enabled && mode !== 'reconciler' ? required('OS_SHELL_ADMISSION_SECRET') : '',
     worker: process.env.OS_SHELL_WORKER_ID || process.env.HOSTNAME || `shell-${process.pid}`,
     namespace: process.env.OS_SHELL_SESSION_NAMESPACE || 'opensphere-shell-sessions',
     runtimeServiceAccount: process.env.OS_SHELL_RUNTIME_SERVICE_ACCOUNT || 'opensphere-shell-runtime',
