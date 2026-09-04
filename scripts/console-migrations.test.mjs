@@ -9,8 +9,8 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 33);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260904/0033');
+  assert.equal(manifest.migrationCount, 34);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260904/0034');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');
   assert.equal(manifest.migrations[1].sourceRevision, 'e6f3f2dc54012a9d655e4ec292da182f6b9ae5dd');
   assert.equal(manifest.migrations[2].sourceRevision, 'd7c5d09ecdcfbeed01b32fd13a447c15b5692116');
@@ -44,6 +44,7 @@ test('fresh migration manifest binds the exact source revision and ordered SQL i
   assert.equal(manifest.migrations[30].sourceRevision, '67ff04ddb1b9ef2fb2a5ea3a22bb1d48c6545909');
   assert.equal(manifest.migrations[31].sourceRevision, '05d983360cefd938f1aecaeeefc894a5b56ed5dd');
   assert.equal(manifest.migrations[32].sourceRevision, '2b53b5a7b1df255082384943251019b1672c64d7');
+  assert.equal(manifest.migrations[33].sourceRevision, '76e4aa5557298863ba88c446637c91332d58ccf9');
   const transaction = migrationTransactionSql(root, manifest.migrations[0]);
   assert.match(transaction, /CREATE SCHEMA console_migration;/);
   assert.match(transaction, /INSERT INTO console_migration\.applied_migration\(/);
@@ -231,6 +232,7 @@ test('native authorities and Extension supply-chain successor are independently 
   const osaa = renderMigration({ root, globalId: 'opensphere-console/20260903/0031' });
   const watch = renderMigration({ root, globalId: 'opensphere-console/20260903/0032' });
   const extensions = renderMigration({ root, globalId: 'opensphere-console/20260904/0033' });
+  const localDevelopmentMfa = renderMigration({ root, globalId: 'opensphere-console/20260904/0034' });
   assert.match(shell, /CREATE TABLE console_shell[.]shell_session/);
   assert.match(osdst, /CREATE TABLE osaa[.]conversation/);
   assert.match(osaa, /CREATE TABLE IF NOT EXISTS osaa[.]osaa_knowledge_documents/);
@@ -238,6 +240,8 @@ test('native authorities and Extension supply-chain successor are independently 
   assert.match(extensions, /replacement_image_ref/);
   assert.match(extensions, /bandOverride/);
   assert.match(extensions, /opensphere-console\/20260904\/0033/);
+  assert.match(localDevelopmentMfa, /p_allow_development_user_aal1 boolean/);
+  assert.match(localDevelopmentMfa, /opensphere-console\/20260904\/0034/);
 });
 
 test('migration renderer emits only a manifest-bound transaction body', () => {
