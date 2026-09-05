@@ -1230,7 +1230,9 @@ export function createIdentitySessionBroker({
         const ownerMarker = String(request?.headers?.['x-os-owner-admission'] || '');
         const ownerAuthorityPath = new URL(String(request?.url || ''), 'http://console-api.local').pathname;
         if (!ownerMatch || ownerMatch[1].length > 16384
-            || request?.method !== 'GET' || ownerAuthorityPath !== '/api/identity/me'
+            || !((request?.method === 'GET' && ownerAuthorityPath === '/api/identity/me')
+              || (request?.method === 'POST' && ownerAuthorityPath === '/api/internal/cluster-manager/events'
+                && ownerMarker === 'extension-controller-v1'))
             || request?.headers?.cookie || request?.headers?.['x-os-csrf-token']
             || !OWNER_ADMISSION_MARKER_SET.has(ownerMarker)
             || !authClient?.inspectAccessToken || !store?.resolveOwnerAccessAuthority) {

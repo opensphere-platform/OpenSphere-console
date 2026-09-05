@@ -1,3 +1,4 @@
+import { createClusterManagerAudit } from './cluster-manager-audit.mjs';
 import {GITHUB_OAUTH_CLIENT_ID} from './github-oauth-app.mjs';
 import {requiredImages as requiredRegistryImages} from './registry-lifecycle-contract.mjs';
 import {createGitHubRegistryAuth} from './github-registry-auth.mjs';
@@ -169,6 +170,7 @@ const handlerOptions = {
   registryOperations,
   catalogOperations,
   ownerAdmissionOperations,
+  clusterManagerAudit: createClusterManagerAudit({query:pool.query.bind(pool)}),
   auditOperations,
   identityOperations,
   identitySessionBroker,

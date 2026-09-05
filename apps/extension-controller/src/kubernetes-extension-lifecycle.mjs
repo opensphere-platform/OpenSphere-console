@@ -448,7 +448,7 @@ export function createKubernetesExtensionLifecycle({
       try {
         pkg = (await request('GET', `${packages}/${current.name}`)).value;
         plan = buildExtensionWorkloadPlan(pkg, { namespace,
-          trustedKeys: pkg.spec?.permissionProfile === 'cluster-read' ? await loadTrustedKeys() : {},
+          trustedKeys: ['cluster-read', 'cluster-infrastructure-manager-v1'].includes(pkg.spec?.permissionProfile) ? await loadTrustedKeys() : {},
         });
       } catch (error) {
         return markFailure(registration, error);

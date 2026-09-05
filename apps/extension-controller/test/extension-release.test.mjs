@@ -31,6 +31,33 @@ test('only the signed official Cluster Manager can mount the fixed read-only ide
   assert.throws(() => buildExtensionWorkloadPlan(tampered, { trustedKeys: signed.trustedKeys }), { code: 'UnsupportedPermissionProfile' });
 });
 
+test('only the signed official Cluster Manager can mount the separate infrastructure identity and fixed local policy', () => {
+  const signed = moduleFixture();
+  const pkg = makeReleaseFixture().pkg;
+  pkg.metadata.name = 'cluster-manager';
+  Object.assign(pkg.spec, signed.release.spec);
+  pkg.spec.resolution = { ...makeReleaseFixture().pkg.spec.resolution, ...signed.release.spec.resolution };
+  pkg.spec.permissionProfile = 'cluster-infrastructure-manager-v1';
+  signed.release.spec = pkg.spec;
+  pkg.metadata.annotations = { 'opensphere.io/module-release': signed.seal() };
+  const plan = buildExtensionWorkloadPlan(pkg, { trustedKeys: signed.trustedKeys });
+  assert.equal(plan.serviceAccountName, 'opensphere-cluster-manager-runtime');
+  assert.ok(plan.resources.every(r => r.manifest.kind !== 'ServiceAccount'));
+  const pod = plan.resources.find(r => r.manifest.kind === 'Deployment').manifest.spec.template.spec;
+  assert.equal(pod.automountServiceAccountToken, false);
+  assert.equal(pod.volumes.find(v => v.projected).projected.sources[0].serviceAccountToken.expirationSeconds, 3600);
+  assert.ok(pod.volumes.every(v => !v.secret));
+  const policy = pod.volumes.find(v => v.configMap?.name === 'opensphere-installation-lock');
+  assert.deepEqual(policy.configMap.items, [{key:'config.json',path:'config.json'}]);
+  assert.ok(pod.containers[0].volumeMounts.some(v => v.name===policy.name && v.readOnly && v.mountPath==='/var/run/opensphere/installation'));
+  assert.equal(pod.volumes.find(v => v.emptyDir).emptyDir.sizeLimit, '256Mi');
+  assert.throws(() => buildExtensionWorkloadPlan(pkg), { code: 'ModuleReleaseInvalid' });
+  const tampered = structuredClone(pkg); tampered.spec.env = [{ name: 'UNAPPROVED', value: 'true' }];
+  assert.throws(() => buildExtensionWorkloadPlan(tampered, { trustedKeys: signed.trustedKeys }), { code: 'ModuleReleaseInvalid' });
+  tampered.metadata.name = 'other';
+  assert.throws(() => buildExtensionWorkloadPlan(tampered, { trustedKeys: signed.trustedKeys }), { code: 'UnsupportedPermissionProfile' });
+});
+
 function copy(value) {
   return structuredClone(value);
 }
@@ -346,4 +373,11 @@ test('pure GC planner refuses more than two inactive revisions or eight resource
     inventories: current.resources.map((item) => ({ basePath: item.basePath, kind: item.manifest.kind, items: [] })),
     maximumDeletes: 9,
   }), TypeError);
+});
+
+test('closed ESM allows a library member named require but still rejects the ambient CommonJS loader', async () => {
+  const fixture = makeReleaseFixture({entrySource: 'const optional = {}; export const activate = () => optional.require && optional.require("util");'});
+  await assert.doesNotReject(verifyExtensionRelease({pkg:fixture.pkg,serviceName:'workspace-r-0123456789abcdef0123',trustedKeys:fixture.trustedKeys,fetchImpl:artifactFetch(fixture)}));
+  const ambient = makeReleaseFixture({entrySource:'export const activate = () => require("util");'});
+  await assert.rejects(verifyExtensionRelease({pkg:ambient.pkg,serviceName:'workspace-r-0123456789abcdef0123',trustedKeys:ambient.trustedKeys,fetchImpl:artifactFetch(ambient)}),{code:'NonClosedModuleArtifact'});
 });

@@ -108,7 +108,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformChangeTemplateOperations, platformReleaseOperations, baselineMonitoringOperations, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformChangeTemplateOperations, platformReleaseOperations, baselineMonitoringOperations, clusterManagerAudit, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -471,6 +471,13 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           currentIdentity,
           correlationId,
         }));
+      }
+      if (url.pathname === '/api/internal/cluster-manager/events' && request.method === 'POST') {
+        if (!clusterManagerAudit || request.headers['x-os-owner-admission'] !== 'extension-controller-v1' || request.headers.cookie) {
+          throw Object.assign(new Error('Internal Cluster Manager owner admission required'), {code:'PermissionDenied',status:403});
+        }
+        const session = await resolveSession(request, {requireCsrf:false, correlationId});
+        return send(response, 201, await clusterManagerAudit({session, body:await jsonBody(request)}));
       }
       if (url.pathname === '/api/identity/me' && request.method === 'GET') {
         const session = await resolveSession(request, { requireCsrf: false, correlationId });

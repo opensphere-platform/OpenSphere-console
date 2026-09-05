@@ -2,6 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {verifyModuleRelease, verifyModulePackage, moduleReleaseFromIndex} from '../src/module-release.mjs';
 import {moduleFixture} from './module-release-fixture.mjs';
+test('original infrastructure profile is signed and remains restricted to the official Cluster Manager', () => {
+  const f=moduleFixture();
+  const release={...f.release,spec:{...f.release.spec,permissionProfile:'cluster-infrastructure-manager-v1'}};
+  assert.equal(verifyModuleRelease(f.seal(release),f.trustedKeys,{now:f.now}).spec.permissionProfile,'cluster-infrastructure-manager-v1');
+  for(const update of [{id:'other'},{spec:{...release.spec,image:{...release.spec.image,repository:'ghcr.io/opensphere-platform/other'}}},{spec:{...release.spec,permissionProfile:'cluster-admin'}}]) {
+    assert.throws(()=>verifyModuleRelease(f.seal({...release,...update}),f.trustedKeys,{now:f.now}),{code:'ModuleReleaseInvalid'});
+  }
+});
 test('signed official package binds executable, identity, privileges and channel', () => {
   const f=moduleFixture();
   assert.deepEqual(verifyModuleRelease(f.envelope,f.trustedKeys,{now:f.now}),f.release);

@@ -16,6 +16,43 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /api/internal/cluster-manager/events:
+    post:
+      operationId: appendClusterManagerOwnerAudit
+      security:
+        - OwnerAccess: []
+      parameters:
+        - in: header
+          name: x-os-owner-admission
+          required: true
+          schema: {type: string, const: extension-controller-v1}
+      tags: [Audit]
+      x-opensphere-owner: C_API
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: append-only-owner-event
+      description: Internal HISS/Ceph owner event. Only an exchanged Supabase bearer and extension-controller-v1 marker are accepted. Current browser-session binding, administrator role and database MFA policy are revalidated. Browser cookies and caller-supplied actor identity are rejected. No raw metadata or credentials are stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/cluster-manager-audit.schema.json
+      responses:
+        '201':
+          description: Durable audit receipt with eventId and eventHash; retry may append another correlated event
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eventId, eventHash]
+                additionalProperties: false
+                properties:
+                  eventId: {type: string, format: uuid}
+                  eventHash: {type: string}
+        '400': {description: Closed event contract rejected}
+        '401': {description: Invalid or revoked owner session}
+        '403': {description: Wrong owner, role or MFA policy}
+        '503': {description: Audit authority unavailable; no product mutation may begin}
   /api/v1/registry:
     get:
       operationId: getRegistryInventory
@@ -2328,6 +2365,11 @@ paths:
         "428": { $ref: "#/components/responses/StepUpRequired" }
 components:
   securitySchemes:
+    OwnerAccess:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Current Supabase access token exchanged by the Console owner. Live session binding is required.
     BrowserSession:
       type: apiKey
       in: cookie

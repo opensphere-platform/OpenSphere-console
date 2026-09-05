@@ -28,7 +28,7 @@ export function verifyModuleRelease(envelope, trustedKeys, { now = Date.now(), r
       || !/^sha256:[a-f0-9]{64}$/.test(spec.image.digest || '') || spec.kind !== 'subShell' || spec.hostRef !== 'main'
       || spec.trust?.keyId !== signed.keyId || spec.resolution?.requestedChannel !== release.channel
       || spec.resolution?.resolvedDigest !== spec.image.digest || spec.resolution?.buildAuthority !== 'localhost'
-      || spec.resolution?.signatureIdentity !== signed.keyId || spec.permissionProfile !== 'cluster-read'
+      || spec.resolution?.signatureIdentity !== signed.keyId || !['cluster-read', 'cluster-infrastructure-manager-v1'].includes(spec.permissionProfile)
       || release.id !== 'cluster-manager') throw fault();
     const issued = Date.parse(release.issuedAt), expires = Date.parse(release.expiresAt);
     if (!Number.isFinite(issued) || !Number.isFinite(expires) || issued > now + 60_000 || expires <= issued

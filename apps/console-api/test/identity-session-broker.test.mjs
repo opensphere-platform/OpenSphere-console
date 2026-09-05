@@ -2044,6 +2044,9 @@ test('internal Owner bearer resolves only through Supabase and an active bound b
   assert.deepEqual(observed, OWNER_ADMISSION_MARKERS.map(() => ({
     subjectId, authSessionRef: 'auth-session-0001',
   })));
+  const auditActor = await broker.resolveSession({method:'POST',url:'/api/internal/cluster-manager/events',headers:{authorization:'Bearer '+accessToken,'x-os-owner-admission':'extension-controller-v1'}});
+  assert.equal(auditActor.subjectId,subjectId);
+  await assert.rejects(broker.resolveSession({method:'POST',url:'/api/internal/cluster-manager/events',headers:{authorization:'Bearer '+accessToken,'x-os-owner-admission':'osaa-gateway-v1'}}),{code:'AuthenticationRequired'});
   for (const request of [
     { method: 'GET', url: '/api/identity/me', headers: { authorization: 'Bearer ' + accessToken } },
     { method: 'POST', url: '/api/identity/me', headers: { authorization: 'Bearer ' + accessToken, 'x-os-owner-admission': 'osaa-gateway-v1' } },

@@ -104,7 +104,7 @@ function packageContract(pkg, namespace) {
   const permissionProfile = String(spec.permissionProfile || 'none');
   if (keyId === 'opensphere-module-local-v1'
       && (name !== 'cluster-manager' || repository !== MODULE_REPOSITORIES['cluster-manager']
-        || spec.kind !== 'subShell' || permissionProfile !== 'cluster-read')) {
+        || spec.kind !== 'subShell' || !['cluster-read', 'cluster-infrastructure-manager-v1'].includes(permissionProfile))) {
     throw fault('Module signing key is restricted to the official Cluster Manager', 'ModuleReleaseInvalid');
   }
   const port = runtime.port == null ? 8080 : Number(runtime.port);
@@ -141,10 +141,10 @@ function packageContract(pkg, namespace) {
       || !/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/u.test(healthPath)) {
     throw fault('UIPluginPackage lacks exact immutable runtime coordinates');
   }
-  if (permissionProfile !== 'none' && !(permissionProfile === 'cluster-read'
+  if (permissionProfile !== 'none' && !(['cluster-read', 'cluster-infrastructure-manager-v1'].includes(permissionProfile)
       && name === 'cluster-manager' && spec.kind === 'subShell' && spec.hostRef === 'main'
       && repository === MODULE_REPOSITORIES['cluster-manager'])) {
-    throw fault('target C_EXT does not materialize cluster permission profiles', 'UnsupportedPermissionProfile');
+    throw fault('Only the signed official Cluster Manager may use its installed infrastructure profile', 'UnsupportedPermissionProfile');
   }
   if (security.runAsNonRoot === false || security.readOnlyRootFilesystem === false
       || security.automountServiceAccountToken === true || availability.autoscaling?.enabled === true
@@ -210,14 +210,15 @@ function revisionName(name, token) {
 export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-console', trustedKeys = {} } = {}) {
   if (!DNS_LABEL.test(namespace)) throw new TypeError('Extension namespace must be a DNS label');
   const contract = packageContract(pkg, namespace);
-  const clusterRead = contract.permissionProfile === 'cluster-read';
+  const clusterRead = ['cluster-read', 'cluster-infrastructure-manager-v1'].includes(contract.permissionProfile);
+  const infrastructure = contract.permissionProfile === 'cluster-infrastructure-manager-v1';
   // The signed envelope binds the executable digest and the complete privilege contract.
   // Expiry blocks new discovery; it must not terminate an already admitted installation.
   if (clusterRead) verifyModulePackage(pkg, trustedKeys, { requireFresh: false });
   const staticContractSha256 = staticContractDigest(pkg, contract);
   const revision = hash(Buffer.from(`${contract.name}\n${contract.imageDigest}\n${contract.manifestSha256}`, 'utf8')).slice(0, 20);
   const revisionResourceName = revisionName(contract.name, revision);
-  const serviceAccountName = clusterRead ? 'opensphere-cluster-manager' : revisionName(`uip-${contract.name}`, revision.slice(0, 12));
+  const serviceAccountName = infrastructure ? 'opensphere-cluster-manager-runtime' : clusterRead ? 'opensphere-cluster-manager' : revisionName(`uip-${contract.name}`, revision.slice(0, 12));
   const labels = {
     'app.kubernetes.io/name': contract.name,
     'app.kubernetes.io/managed-by': MANAGED_BY,
@@ -275,9 +276,11 @@ export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-consol
                 },
                 securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ['ALL'] } },
                 volumeMounts: [{ name: 'runtime-tmp', mountPath: '/tmp' },
+                  ...(infrastructure ? [{name:'installation-policy',mountPath:'/var/run/opensphere/installation',readOnly:true}] : []),
                   ...(clusterRead ? [{ name: 'cluster-identity', mountPath: '/var/run/secrets/kubernetes.io/serviceaccount', readOnly: true }] : [])],
               }],
-              volumes: [{ name: 'runtime-tmp', emptyDir: { sizeLimit: '32Mi' } },
+              volumes: [{ name: 'runtime-tmp', emptyDir: { sizeLimit: infrastructure ? '256Mi' : '32Mi' } },
+                ...(infrastructure ? [{name:'installation-policy',configMap:{name:'opensphere-installation-lock',items:[{key:'config.json',path:'config.json'}]}}] : []),
                 ...(clusterRead ? [{ name: 'cluster-identity', projected: { defaultMode: 420, sources: [
                   { serviceAccountToken: { path: 'token', expirationSeconds: 3600 } },
                   { configMap: { name: 'kube-root-ca.crt', items: [{ key: 'ca.crt', path: 'ca.crt' }] } },
@@ -439,7 +442,8 @@ function moduleDependencySpecifiers(source) {
     while ((match = expression.exec(source))) specifiers.add(match[2]);
   }
   if (/\bimport[ \t]*\(/u.test(source)) specifiers.add('<dynamic-import>');
-  if (/\brequire[ \t]*\(/u.test(source)) specifiers.add('<commonjs-require>');
+  // A member named require is an ordinary method, not the CommonJS loader.
+  if (/(?:^|[^\w$.])require[ \t]*\(/u.test(source)) specifiers.add('<commonjs-require>');
   return [...specifiers];
 }
 
@@ -504,11 +508,13 @@ export async function verifyExtensionRelease({
   timeoutMs = 10000,
   manifestMaximumBytes = 256 * 1024,
   entryMaximumBytes = 4 * 1024 * 1024,
+  assetMaximumBytes = 8 * 1024 * 1024,
   assetMaximumTotalBytes = 16 * 1024 * 1024,
 } = {}) {
   if (typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000
       || !Number.isInteger(manifestMaximumBytes) || manifestMaximumBytes < 1 || manifestMaximumBytes > 1024 * 1024
       || !Number.isInteger(entryMaximumBytes) || entryMaximumBytes < 1 || entryMaximumBytes > 16 * 1024 * 1024
+      || !Number.isInteger(assetMaximumBytes) || assetMaximumBytes < 1 || assetMaximumBytes > 16 * 1024 * 1024
       || !Number.isInteger(assetMaximumTotalBytes) || assetMaximumTotalBytes < 1
       || assetMaximumTotalBytes > 64 * 1024 * 1024) {
     throw new TypeError('Extension verifier configuration is invalid');
@@ -577,7 +583,7 @@ export async function verifyExtensionRelease({
     }
     ids.add(asset.id);
     const remainingBytes = assetMaximumTotalBytes - assetBytesUsed;
-    const bytes = await fetchBytes(asset.path, Math.min(entryMaximumBytes, remainingBytes), 'AssetUnreachable');
+    const bytes = await fetchBytes(asset.path, Math.min(assetMaximumBytes, remainingBytes), 'AssetUnreachable');
     assetBytesUsed += bytes.length;
     if (hash(bytes) !== asset.sha256) throw fault('Auxiliary asset bytes differ from the signed manifest', 'AssetDigestMismatch');
     if (asset.type === 'module' && moduleDependencySpecifiers(bytes.toString('utf8')).length) {
