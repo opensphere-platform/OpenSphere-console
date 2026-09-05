@@ -14,6 +14,10 @@ Accepted by the user on 2026-09-06. Scope: CON-FR-014/017, C_WEB and the read-on
 
 Extensions remains the existing discovery/installation/management menu. It is not a product type. Product names remain Console, Cluster Manager, Foundation, Developer, AI Workbench, Pulse and Workspace. Their work categories are navigation descriptions, not new execution layers or claims of implementation readiness.
 
+Display the classification basis alongside the official term: product/installation unit → Module; work unit → Feature; inclusion property → Built-in Feature; executing/consumed target → Service; connection relationship → Integration; presentation addition → UI Extension. These are different classification axes, not six mutually exclusive peer product types. Label product cards as modules and contained work as features; explicitly name built-in features. Tool, Library and Reference Template describe supporting deliverables. A concrete example is Cluster Manager (Module) using Ceph management (Feature) to connect (Integration) an external Ceph (Service).
+
+The 2026-09-06 clarification edits existing content values only. Copy keys, renderer signature, model shape and Web source remain unchanged, so only the index-content image needs publication. API, authorization and deployment topology are unaffected.
+
 Cluster Manager's functional labels are Kubernetes 관리 / 기반 서비스 관리(HISS) / Ceph 스토리지 관리. Restore existing product implementations; do not replace them because naming changed.
 
 ## Architecture page
