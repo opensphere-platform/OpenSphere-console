@@ -211,6 +211,8 @@ spec:
             items:
               - key: release.json
                 path: release.json
+              - key: config.json
+                path: config.json
 ---
 apiVersion: v1
 kind: Service

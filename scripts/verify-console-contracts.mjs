@@ -395,6 +395,10 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
     assert(entry?.valueFrom?.secretKeyRef?.key === key, name + ' uses the wrong projected Secret key');
   }
   assert(service.spec?.type === 'ClusterIP', 'C_API Service must remain cluster-internal');
+  const installationConfig = deployment.spec.template.spec.volumes?.find(volume => volume.name === 'installation-release')?.configMap;
+  assert(installationConfig?.name === 'opensphere-installation-lock'
+    && installationConfig.items?.some(item => item.key === 'config.json' && item.path === 'config.json'),
+    'C_API module installation policy requires the operator-controlled installation config projection');
 
   assert(JSON.stringify(networkPolicy.spec?.policyTypes) === JSON.stringify(['Ingress', 'Egress']), 'C_API NetworkPolicy must select both directions');
   const ingressRules = networkPolicy.spec?.ingress || [];

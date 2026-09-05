@@ -252,6 +252,10 @@ test('Console API deployment verification rejects credential ownership and legac
   const targetRouteSource = await readFile(new URL('../apps/console-web/nginx/target-api-routes.conf', import.meta.url), 'utf8');
   const documents = [];
   yaml.loadAll(deploymentSource, (document) => documents.push(document));
+  const missingConfig = structuredClone(documents);
+  const releaseVolume = missingConfig.find(d => d.kind === 'Deployment').spec.template.spec.volumes.find(v => v.name === 'installation-release');
+  releaseVolume.configMap.items = releaseVolume.configMap.items.filter(item => item.key !== 'config.json');
+  assert.throws(() => verifyConsoleApiDeployment({documents: missingConfig, nginxSource, targetRouteSource}), /operator-controlled installation config projection/);
   assert.throws(
     () => verifyConsoleApiDeployment({
       documents: [...documents, { apiVersion: 'v1', kind: 'Secret', metadata: { name: 'forbidden' } }],
