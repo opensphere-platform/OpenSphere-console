@@ -105,6 +105,10 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
       return json(200, { data: { 'trusted-keys.json': JSON.stringify({ trustedKeys: fixture.trustedKeys }) } });
     }
     if (method === 'PATCH' && parsed.pathname === registrations + '/workspace/status') {
+      if (body.status.phase === 'Activated') {
+        assert.equal(body.status.manifestUrl, `/api/plugins/${plan.revisionResourceName}${plan.contract.manifestPath}`);
+        assert.equal(body.status.serving.revision, plan.revision);
+      }
       return json(200, statusPatched(currentRegistration, body.status));
     }
 

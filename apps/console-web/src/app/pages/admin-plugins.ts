@@ -129,7 +129,7 @@ interface ExtensionViewDefinition {
 
 const EXTENSION_VIEW_DEFINITIONS: readonly ExtensionViewDefinition[] = [
   {id:'subshells',label:'설치된 기능',title:'설치된 기능',description:'사용 가능한 기능을 열고, 필요한 조치와 설치 상태를 확인합니다.'},
-  {id:'catalog',label:'기능 찾기',title:'기능 찾기',description:'제공된 배포본을 확인하고 설치 검토부터 승인·검증까지 진행합니다.'},
+  {id:'catalog',label:'기능 찾기',title:'기능 찾기',description:'제공된 배포본을 확인하고 설치 확인부터 실제 동작 검증까지 진행합니다.'},
   {id:'audit',label:'설치·변경 작업',title:'설치·변경 작업',description:'요청·승인·병합·적용·검증을 같은 작업으로 추적합니다.'},
   {id:'topology',label:'구성도',title:'구성·연결',description:'선택한 기능의 소유 관계와 연결을 확인합니다.'},
   {id:'plugins',label:'기능 기여',title:'기능 기여',description:'Console 내장 기능과 외부 제품의 기능 기여를 구분합니다.'},
@@ -153,7 +153,7 @@ const EXTENSION_PRIMARY_VIEWS = [
   template: `
     <div class="os-page">
       <os-page-header title="Extensions" tag="기능 설치 · 운영">
-        <p>필요한 기능을 찾고 설치·승인·실행 상태를 확인합니다. 설치한 기능을 열거나 문제가 있는 작업을 이어서 처리하세요.</p>
+        <p>필요한 기능을 찾고 설치·검증·실행 상태를 확인합니다. 설치한 기능을 열거나 문제가 있는 작업을 이어서 처리하세요.</p>
       </os-page-header>
 
     @if (msg(); as m) {
@@ -2335,7 +2335,6 @@ export class AdminPlugins implements OnInit, OnDestroy {
   }
 
   registrationMetric(metric: 'installed' | 'serving' | 'action' | 'pending' | 'disabled'): string {
-    if(metric==='pending')return this.pendingOperationCount()===null?'—':String(this.pendingOperationCount());
     if (!this.registrationsLoaded() || this.projections.registrationProjection()?.ready!==true) return '—';
     const registrations = this.registrations();
     if (metric === 'installed') return String(registrations.length);

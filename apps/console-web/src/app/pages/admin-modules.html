@@ -15,7 +15,7 @@
       @if (available(module.id); as release) { <dl><dt>제공 릴리스</dt><dd>{{ releaseLabel(release.release) }}</dd></dl> }
       @else if (fresh() && !status(module.id).ready) { <p class="module-note">현재 Registry에 검증된 설치 배포본이 없습니다.</p> }
       <footer>
-        @if (status(module.id).ready) { <a class="btn btn-primary" [routerLink]="'/p/' + module.id">관리 화면 열기</a> }
+        @if (status(module.id).ready) { <a class="btn btn-primary" [href]="'/p/' + module.id">관리 화면 열기</a> }
         @else { <button class="btn btn-primary" aria-haspopup="dialog" aria-controls="module-installation-drawer" [disabled]="busy() || operationPending() || !status(module.id).installable" (click)="inspect(module.id)">설치 검토</button> }
         <a class="btn btn-link" routerLink="/manage/extensions/audit">설치·변경 작업</a>
       </footer>
@@ -69,7 +69,7 @@
       <p>{{ submitted() ? '접수된 설치는 이 화면을 닫아도 계속됩니다.' : '설치를 누르기 전에는 클러스터를 변경하지 않습니다.' }}</p>
       <div class="drawer-actions">
         <button type="button" class="btn btn-outline" (click)="closeReview()">닫기</button>
-        @if (installedReceiptReady()) { <a class="btn btn-primary" [routerLink]="'/p/' + selected()">관리 화면 열기</a> }
+        @if (installedReceiptReady()) { <a class="btn btn-primary" [href]="'/p/' + selected()">관리 화면 열기</a> }
         @else if (canRetry()) { <button type="button" class="btn btn-primary" [disabled]="busy()" (click)="inspect(selected(), true)">다시 설치 검토</button> }
         @else if (candidate()) { <button type="button" class="btn btn-primary" [disabled]="busy() || !fresh() || !runtimeFresh()" (click)="install()">설치</button> }
       </div>

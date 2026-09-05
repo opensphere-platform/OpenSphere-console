@@ -68,7 +68,11 @@ import { CatalogItem, PluginControlClient, Registration } from '../core/plugin-c
           <div>
             <div class="module-management-eyebrow">MODULE MANAGEMENT</div>
             <h1 id="module-management-title">{{ item.catalog?.displayName || id() }}</h1>
-            <p>제품 화면은 현재 비활성 상태입니다. 이 관리 화면은 설치·활성화 여부와 관계없이 유지됩니다.</p>
+            @if (failure(); as failed) {
+              <p role="alert">제품 화면 로드 검증에 실패했습니다. {{ failed.error }} 설치 상태와 화면 사용 가능 여부는 별개입니다.</p>
+            } @else {
+              <p>제품 화면이 아직 준비되지 않았습니다. 아래에서 설치·활성화 상태와 필요한 조치를 확인하세요.</p>
+            }
           </div>
           <a class="btn btn-primary" routerLink="/manage/extensions">Extensions 관리</a>
         </div>
@@ -291,6 +295,7 @@ export class PluginHost {
   }
 
   blocker(registration: Registration | null): string {
+    if (this.failure()) return this.failure()!.error;
     if (!registration) return 'NotInstalled';
     return registration.status.admission?.reason || registration.status.reason || '없음';
   }

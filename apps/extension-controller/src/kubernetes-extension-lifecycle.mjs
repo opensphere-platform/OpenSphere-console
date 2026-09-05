@@ -528,10 +528,12 @@ export function createKubernetesExtensionLifecycle({
           currentSignatureIdentity: plan.contract.keyId,
           currentEvidenceRefs: plan.contract.evidenceRefs,
           currentRegistryCredentialsRequired: plan.contract.registryCredentialsRequired,
+          manifestUrl: `/api/plugins/${plan.revisionResourceName}${plan.contract.manifestPath}`,
           workload: { phase: 'Ready', deployment: plan.revisionResourceName },
           verification: { manifest: 'Verified', signature: verification.signature, entryDigest: 'Verified', permissions: 'Approved' },
           serving: {
             phase: active ? 'Current' : 'Disabled', digest: plan.contract.imageDigest,
+            revision: plan.revision,
             manifestSha256: plan.contract.manifestSha256,
             artifactServiceId: plan.revisionResourceName,
           },
