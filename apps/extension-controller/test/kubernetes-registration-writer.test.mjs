@@ -71,6 +71,28 @@ test('Kubernetes writer verifies Package coordinates before creating one Registr
   assert.equal(calls[0].options.headers.authorization, 'Bearer service-account-token-value');
 });
 
+test('official Cluster Manager install includes activation and waits for Activated, not only Installed', async () => {
+  const moduleCandidate={...candidate,id:'cluster-manager',descriptorId:'extension.cluster-manager',
+    image:'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@'+digest};
+  const pkg=packageObject();pkg.metadata.name='cluster-manager';pkg.spec.kind='subShell';
+  pkg.spec.image.repository='ghcr.io/opensphere-platform/opensphere-shell-cluster-manager';
+  let registration=null;const writes=[];
+  const writer=createKubernetesRegistrationWriter({baseUrl:'https://kubernetes.test',token:'service-account-token-value',fetchImpl:async(url,options)=>{
+    if(url.endsWith('/uipluginpackages/cluster-manager'))return json(200,pkg);
+    if(options.method==='POST') {const body=JSON.parse(options.body);writes.push(body);return json(201,{...body,metadata:{...body.metadata,uid:'registration-uid',resourceVersion:'18'}});}
+    return registration ? json(200,registration) : json(404,{reason:'NotFound'});
+  }});
+  await writer.applyInstall({candidate:moduleCandidate,operationId:'module-install-test',requestedBy:'installer',reason:'Drawer installation confirmation'});
+  assert.equal(writes.length,1);assert.equal(writes[0].spec.desiredState,'Enabled');
+  registration=readyRegistration();registration.metadata.name='cluster-manager';registration.spec.packageRef.name='cluster-manager';
+  assert.deepEqual(await writer.observeInstall({candidate:moduleCandidate,registrationUid:'registration-uid'}),{state:'Pending',reason:'RegistrationNotReady'});
+  registration.spec.desiredState='Enabled';registration.status.phase='Activated';
+  assert.equal((await writer.observeInstall({candidate:moduleCandidate,registrationUid:'registration-uid'})).state,'Ready');
+  registration.spec.desiredState='Disabled';
+  await writer.applyInstall({candidate:moduleCandidate,operationId:'replay-test',requestedBy:'installer',reason:'Idempotent replay'});
+  assert.equal(writes.length,1,'existing user-disabled registration is never silently enabled');
+});
+
 test('existing compatible Registration is an idempotent success without mutation', async () => {
   const methods = [];
   const writer = createKubernetesRegistrationWriter({

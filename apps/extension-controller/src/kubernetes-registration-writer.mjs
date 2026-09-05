@@ -90,7 +90,7 @@ function readyRegistration(registration, candidate, expectedUid) {
   if (['Failed', 'Removed'].includes(status.phase)) {
     throw fault('UIPluginRegistration reported a terminal installation failure', 'OwnerRejected', false, true, 'present');
   }
-  const desiredReady = (spec.desiredState === 'Installed' && status.phase === 'Ready')
+  const desiredReady = (candidate.id !== 'cluster-manager' && spec.desiredState === 'Installed' && status.phase === 'Ready')
     || (spec.desiredState === 'Enabled' && status.phase === 'Activated');
   const complete = desiredReady
     && Number(status.observedGeneration) >= Number(metadata.generation)
@@ -259,7 +259,9 @@ export function createKubernetesRegistrationWriter({
           kind: 'UIPluginRegistration',
           metadata: { name: id, namespace },
           spec: {
-            packageRef: { name: id }, desiredState: 'Installed',
+            // The reviewed Cluster Manager installation includes activation of its signed read-only UI.
+            // Other modules retain their existing separate installation/activation policy.
+            packageRef: { name: id }, desiredState: id === 'cluster-manager' ? 'Enabled' : 'Installed',
             installPolicy: { createWorkload: true, createProxyRoute: true, exposeInNavigation: true },
             approval: { requestedBy, reason },
             installation: {
