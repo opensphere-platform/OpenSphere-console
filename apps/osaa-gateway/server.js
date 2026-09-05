@@ -62,6 +62,7 @@ const {
   untrustedToolEvidenceContent,
 } = require('./r2d2-prompt-boundary');
 const { SOURCE_TOOL_NAMES, groundCanonicalSourceAnswer } = require('./r2d2-source-grounding');
+const { requiresConsoleInstallationSummary, consoleInstallationObservation } = require('./console-installation-observation');
 const {
   OS_SHELL_DEPLOYMENTS,
   buildManualAccessDiagnosis,
@@ -6705,6 +6706,7 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
   };
   const namespace = { type: 'string', description: `Allowed namespace: ${OSAA_ENV_NAMESPACES.join(', ')}` };
   const name = { type: 'string', description: 'Kubernetes resource name' };
+  add('osaa.system.read', 'get_console_installation_status', 'Read only node Ready counts, Console namespace deployment readiness and Cluster Manager registration readiness. No source code, credentials, personal data or other namespace details. This does not inspect approval operations or prove complete installation.', {});
   add('osaa.system.read', 'get_environment_snapshot', 'Read the current OpenSphere runtime snapshot. Use this for live facts, never manuals.', {
     namespace: { ...namespace, description: `${namespace.description}. Omit to inspect all allowed namespaces.` },
   });
@@ -8222,6 +8224,14 @@ async function executeAgentTool(name, args, actor, context = {}) {
   let result;
   let permissionCode = 'osaa.system.read';
   switch (name) {
+    case 'get_console_installation_status':
+      assertPermission(actor, 'osaa.system.read');
+      requireClosedOwnerInputs(input, []);
+      result = await consoleInstallationObservation({
+        listResources: (query) => listKubernetesResources(query, actor),
+        registrations: () => backendGet('/api/admin/plugins/registrations', actor),
+      });
+      break;
     case 'get_environment_snapshot':
       assertPermission(actor, 'osaa.system.read');
       result = await environmentSnapshot(input, actor);
@@ -8603,6 +8613,7 @@ async function chatCompletion(body, actor) {
   const evidenceMessages = [];
   const userContent = latestUserContent(baseMessages);
   const canonicalSourceIntent = requiresCanonicalSourceTools(userContent);
+  const installationSummaryIntent = !canonicalSourceIntent && requiresConsoleInstallationSummary(userContent);
   const extensionPresentationIntent = requiresExtensionPresentationStatus(userContent);
   const manualAccessDiagnosisIntent = requiresManualAccessDiagnosis(userContent);
   const osShellDiagnosisIntent = requiresOsShellDiagnosis(userContent);
@@ -8622,7 +8633,7 @@ async function chatCompletion(body, actor) {
       content: 'This request matches a deterministic Console surface diagnosis. Report the first failed stage from the verified diagnosis, keep unobservable browser state explicit, and do not replace the owner evidence with a generic restart or reinstall suggestion.',
     });
   }
-  if (!canonicalSourceIntent && !surfaceDiagnosisIntent) {
+  if (!canonicalSourceIntent && !surfaceDiagnosisIntent && !installationSummaryIntent) {
     try {
       sources = await searchKnowledge(userContent, OSAA_RAG_TOP_K, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
       if (sources.length) evidenceMessages.push(knowledgeSystemMessage(sources));
@@ -8638,7 +8649,7 @@ async function chatCompletion(body, actor) {
     }
   }
   try {
-    if (body.includeEnvironment !== false && !extensionPresentationIntent && !canonicalSourceIntent && !surfaceDiagnosisIntent) {
+    if (body.includeEnvironment !== false && !extensionPresentationIntent && !canonicalSourceIntent && !surfaceDiagnosisIntent && !installationSummaryIntent) {
       environment = await environmentSnapshot(body, actor);
       evidenceMessages.push(environmentSystemMessage(environment));
     }
@@ -8688,7 +8699,10 @@ async function chatCompletion(body, actor) {
   const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
   const liveToolMode = requiresLiveAgentTools(userContent);
   let tools = [];
-  if (canonicalSourceIntent) {
+  if (installationSummaryIntent) {
+    // Restrict provider tool selection as well as automatic context attachment.
+    tools = agentToolDefinitions(actor).filter((tool) => tool.function.name === 'get_console_installation_status');
+  } else if (canonicalSourceIntent) {
     tools = agentToolDefinitions(actor, new Set(), new Set(), new Set(), new Set())
       .filter((tool) => SOURCE_TOOL_NAMES.has(tool.function.name));
   } else if (liveToolMode && !extensionPresentationEvidence && !surfaceDiagnosisEvidence) {

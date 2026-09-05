@@ -109,6 +109,25 @@ test('automatic suggested actions are absent and status answers use the determin
   assert.match(server, /Failure to observe a resource is not evidence that the resource is absent/);
 });
 
+test('source prohibitions do not hijack operational questions, while positive source requests survive', () => {
+  for (const query of [
+    '현재 노드와 Console 배포 상태를 확인해 주세요. 다른 namespace의 상세정보, 키·Secret 값·개인정보·소스 코드는 조회하거나 출력하지 마세요.',
+    'Check live cluster health. Do not read source code or credentials.',
+    'Never search source code. Show node readiness.',
+    '소스 코드 조회 금지. 현재 상태 확인.',
+    '소스 코드를 읽지 말고 현재 노드를 확인해줘',
+  ]) {
+    assert.equal(requiresCanonicalSourceTools(query), false, query);
+    assert.equal(requiresLiveAgentTools(query), true, query);
+  }
+  for (const query of [
+    '키는 조회하지 마세요. 소스 코드를 조회해 주세요.',
+    'Do not read credentials, but read source code at the exact revision.',
+    '소스 코드를 조회해줘. 자격 증명은 출력하지 마세요.',
+    '소스 코드는 조회하지 마세요. 하지만 정본 원문을 확인해줘.',
+  ]) assert.equal(requiresCanonicalSourceTools(query), true, query);
+});
+
 test('durable operation completion is available to the live read-tool loop', () => {
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   assert.match(server, /add\('osaa\.system\.read', 'get_osaa_operation'/);

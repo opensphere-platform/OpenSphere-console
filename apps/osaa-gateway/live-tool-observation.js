@@ -1,5 +1,7 @@
 'use strict';
 
+const { renderConsoleInstallationObservation } = require('./console-installation-observation');
+
 const NON_RUNTIME_TOOLS = new Set([
   'search_opensphere_knowledge',
   'get_opensphere_source_catalog',
@@ -36,6 +38,10 @@ function renderVerifiedLiveToolObservation(observation, options = {}) {
       || !Array.isArray(observation.items) || observation.items.length === 0) return '';
   const redactText = typeof options.redactText === 'function' ? options.redactText : String;
   const sections = observation.items.map((item) => {
+    if (item.tool === 'get_console_installation_status') {
+      const summary = renderConsoleInstallationObservation(item.result);
+      if (summary) return summary;
+    }
     const target = [item.arguments?.namespace, item.arguments?.name || item.arguments?.pod]
       .filter(Boolean).join('/') || 'OpenSphere';
     const body = redactText(JSON.stringify(item.result, null, 2)).slice(0, 12000);

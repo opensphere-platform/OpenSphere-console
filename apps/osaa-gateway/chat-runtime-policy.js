@@ -50,7 +50,12 @@ function requiresExtensionPresentationStatus(query) {
 
 function requiresCanonicalSourceTools(query) {
   const text = String(query || '').trim();
-  return text.length > 0 && CANONICAL_SOURCE_PATTERNS.some((pattern) => pattern.test(text));
+  // Negated instructions are not requests to select the source-only tool set.
+  // Evaluate clauses separately so a source prohibition cannot consume a later
+  // positive request. This routing hint never changes authorization or evidence rules.
+  const clauses = text.split(/[.!?;\n。]|\b(?:but|however|instead)\b|(?:하지만|그러나|대신)|(?<=말고)/iu);
+  return clauses.some((clause) => CANONICAL_SOURCE_PATTERNS.some((pattern) => pattern.test(clause))
+    && !/\b(?:do\s+not|don't|must\s+not|never|avoid)\b|지\s*(?:마(?:세요|시오|라)|말(?:아|고|것))|(?:조회|읽기|검색|출력|접근)\s*(?:금지|제외)|(?:불필요|필요\s*없)/iu.test(clause));
 }
 
 function requiresManualAccessDiagnosis(query) {
