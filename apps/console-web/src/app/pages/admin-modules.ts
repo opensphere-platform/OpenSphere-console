@@ -1,9 +1,10 @@
 import {releaseLabel} from '../core/release-display';
-import { ChangeDetectionStrategy, Component, ElementRef, Input, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, Input, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink, ActivatedRoute, Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { HttpService } from '../core/http.service';
 import { AuthService } from '../core/auth.service';
+import { OsPanel } from '../os/os-panel';
 import { PluginControlClient, Registration, OperationReceipt } from '../core/plugin-control-client.service';
 import { ExtensionHostService } from '../core/extension-host.service';
 import { PLATFORM_MODULES, ModuleCandidate, moduleCandidate, moduleCatalogFresh, moduleStatus, operationStage, operationInProgress, validInstallReceipt } from './module-installation-state';
@@ -14,13 +15,12 @@ interface Receipt extends OperationReceipt { executionPlan?: {descriptorId?: str
 
 /** CON-FR-007/014/017 · C_WEB · RT-MODULE-01: existing C_API/C_REG/C_EXT contracts. */
 @Component({
-  selector: 'os-admin-modules', imports: [RouterLink, ClarityModule],
+  selector: 'os-admin-modules', imports: [RouterLink, ClarityModule, OsPanel],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './admin-modules.html', styleUrl: './admin-modules.scss',
 })
 export class AdminModules implements OnInit, OnDestroy {
   @Input() embedded=false;
-  @ViewChild('installationDrawer', {static: true}) private drawer!: ElementRef<HTMLDialogElement>;
   readonly releaseLabel=releaseLabel;
   readonly search=signal('');
   readonly visibleModules=computed(()=>this.modules.filter(m=>(m.name+' '+m.description).toLowerCase().includes(this.search().toLowerCase())));
@@ -39,12 +39,19 @@ export class AdminModules implements OnInit, OnDestroy {
   readonly busy = signal(false);
   readonly loaded = signal(false);
   readonly reviewOpen = signal(false);
+  // Reuse the Console administrators' panel; release it while shared MFA is open.
+  readonly panelVisible = computed(() => this.reviewOpen() && !this.auth.stepUpRequired());
   readonly reviewError = signal('');
   readonly error = signal('');
   readonly registryState = signal('확인 중');
   readonly selected = signal('');
   readonly candidate = signal<Candidate | null>(null);
   readonly receipt = signal<Receipt | null>(null);
+  private readonly retrySource = signal<Receipt | null>(null);
+  readonly previousOperation = signal('');
+  readonly canRetry = computed(() => (this.receipt() || this.retrySource())?.state === 'Failed' && !this.candidate() && this.selected() === 'cluster-manager'
+    && this.fresh() && this.runtimeFresh() && Boolean(this.available('cluster-manager'))
+    && this.registrations().some(r => r.name === 'cluster-manager' && r.desiredState === 'Enabled'));
   readonly reason = signal('');
   readonly stages = ['설치 확인', '설치 접수', '배포 중', '실제 동작 검증', '설치 완료'];
   readonly submitted = computed(() => Boolean(this.receipt()?.operationId));
@@ -62,20 +69,11 @@ export class AdminModules implements OnInit, OnDestroy {
   private submittedBody = '';
   private inspectionEpoch = 0;
 
-  constructor() {
-    effect(() => {
-      const open = this.reviewOpen();
-      const mfa = this.auth.stepUpRequired();
-      const dialog = this.drawer?.nativeElement;
-      // Native top-layer dialog must release focus while the shared MFA modal is active.
-      if (dialog?.open && (!open || mfa)) dialog.close();
-      else if (dialog && open && !mfa && !dialog.open) dialog.showModal();
-    });
-  }
-
   async ngOnInit() {
     const op = this.route.snapshot.queryParamMap.get('operation');
     if (op && /^[0-9a-f-]{36}$/.test(op)) this.receipt.set({ operationId: op } as Receipt);
+    const previous = this.route.snapshot.queryParamMap.get('retryOf');
+    if (previous && /^[0-9a-f-]{36}$/.test(previous)) this.previousOperation.set(previous);
     await this.refresh();
     if (this.receipt()?.executionPlan?.descriptorId) {
       this.selected.set(this.receipt()!.executionPlan!.descriptorId!.replace(/^extension\./, ''));
@@ -132,14 +130,15 @@ export class AdminModules implements OnInit, OnDestroy {
     }
     this.refreshing = false;
   }
-  async inspect(id: string) {
-    if (this.busy() || this.operationPending() || this.submittedBody && this.candidate() || !this.status(id).installable) return;
+  async inspect(id: string, retry = false) {
+    if (this.busy() || this.operationPending() || this.submittedBody && this.candidate()
+      || !(retry ? id === 'cluster-manager' && this.canRetry() : this.status(id).installable)) return;
+    this.retrySource.set(retry ? this.receipt() || this.retrySource() : null);
+    this.previousOperation.set(this.retrySource()?.operationId || '');
     const epoch = ++this.inspectionEpoch;
     this.busy.set(true); this.reviewError.set(''); this.candidate.set(null); this.selected.set(id); this.receipt.set(null);
     this.reviewOpen.set(true);
-    // A modal native dialog enters the top layer immediately, traps focus and makes the page inert.
-    // Closing it invalidates this inspection so a late network response cannot reopen an old review.
-    if (!this.drawer.nativeElement.open) this.drawer.nativeElement.showModal();
+    // Open the shared panel before fetching. Closing invalidates late inspection responses.
     this.installKey = crypto.randomUUID(); this.submittedBody = '';
     try {
       const result = await this.json<{data: {candidate: Candidate}}>('/api/admin/extensions/inspect', {
@@ -150,7 +149,7 @@ export class AdminModules implements OnInit, OnDestroy {
       const candidate = result.data?.candidate;
       if (candidate?.descriptorId !== `extension.${id}` || candidate.catalogRevision !== this.snapshot()?.revision
         || !/^ghcr\.io\/opensphere-platform\/[a-z0-9._-]+@sha256:[a-f0-9]{64}$/.test(candidate.image)) throw new Error('설치 후보가 현재 선택과 일치하지 않습니다.');
-      this.candidate.set(candidate); this.reason.set(`Console Drawer에서 ${this.selectedModule()?.name || id} 설치 확인`);
+      this.candidate.set(candidate); this.reason.set(`Console Drawer에서 ${this.selectedModule()?.name || id} 설치 확인${this.previousOperation() ? '; 이전 실패 작업 ' + this.previousOperation() + '의 기존 등록을 보존하여 재시도' : ''}`);
     } catch (error) { if (epoch === this.inspectionEpoch && !this.stopped) this.reviewError.set(String(error)); }
     finally { if (epoch === this.inspectionEpoch) this.busy.set(false); }
   }
@@ -158,8 +157,7 @@ export class AdminModules implements OnInit, OnDestroy {
     event?.preventDefault();
     ++this.inspectionEpoch;
     this.reviewOpen.set(false);
-    if (!this.submittedBody) { this.candidate.set(null); this.busy.set(false); }
-    if (this.drawer?.nativeElement.open) this.drawer.nativeElement.close();
+    if (!this.submittedBody) { this.candidate.set(null); this.busy.set(false); if (this.retrySource()) this.receipt.set(this.retrySource()); }
   }
   async install() {
     const candidate = this.candidate();
@@ -172,8 +170,8 @@ export class AdminModules implements OnInit, OnDestroy {
         method: 'POST', headers: {'content-type':'application/json','x-os-idempotency-key': this.installKey}, body: this.submittedBody,
       });
       if (!validInstallReceipt(receipt) || receipt.targetRef !== candidate.image) throw new Error('설치 작업 응답을 확인하지 못했습니다. 같은 요청으로 다시 확인하세요.');
-      this.receipt.set(receipt); this.candidate.set(null);
-      await this.router.navigate([], {relativeTo: this.route, queryParams: {operation: receipt.operationId}, queryParamsHandling: 'merge'});
+      this.receipt.set(receipt); this.retrySource.set(null); this.candidate.set(null);
+      await this.router.navigate([], {relativeTo: this.route, queryParams: {operation: receipt.operationId, retryOf: this.previousOperation() || null}, queryParamsHandling: 'merge'});
       await this.refresh();
     } catch (error) { this.reviewError.set(`${String(error)}. 응답이 불명확한 경우 같은 설치 요청으로 재시도합니다.`); }
     finally { this.busy.set(false); }

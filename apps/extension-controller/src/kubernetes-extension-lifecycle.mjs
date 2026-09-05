@@ -250,6 +250,10 @@ export function createKubernetesExtensionLifecycle({
 
   async function patchStatus(registration, status) {
     const current = exactRegistration(registration, namespace);
+    // A repeated reconciliation need not write an identical status. Kubernetes
+    // legitimately retains resourceVersion for no-op writes; changed writes below
+    // still require a new version and exact UID/generation/status evidence.
+    if (includesDesired(registration.status, status)) return registration;
     const result = await request('PATCH', `${registrations}/${current.name}/status`, {
       metadata: { resourceVersion: current.resourceVersion }, status,
     });
@@ -315,7 +319,21 @@ export function createKubernetesExtensionLifecycle({
       byPath.set(item.basePath, Object.freeze({
         basePath: item.basePath,
         kind: item.manifest.kind,
-        items: result.value.items,
+        // Typed Kubernetes lists omit TypeMeta on their items. Inherit only from
+        // an exact collection envelope; never replace an explicit conflicting type.
+        items: result.value.items.map((resource) => {
+          if (resource?.apiVersion !== undefined && resource?.kind !== undefined) return resource;
+          if (!resource || typeof resource !== 'object' || Array.isArray(resource)
+              || result.value.apiVersion !== item.manifest.apiVersion
+              || result.value.kind !== `${item.manifest.kind}List`) {
+            throw fault('Extension revision inventory has no authoritative item type', 'AuthorityContractViolation');
+          }
+          return {
+            ...resource,
+            apiVersion: resource.apiVersion === undefined ? result.value.apiVersion : resource.apiVersion,
+            kind: resource.kind === undefined ? item.manifest.kind : resource.kind,
+          };
+        }),
       }));
     }
     return [...byPath.values()];

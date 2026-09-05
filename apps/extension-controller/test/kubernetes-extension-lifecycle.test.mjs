@@ -109,11 +109,13 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
     }
 
     if (method === 'GET' && plan.resources.some((item) => item.basePath === parsed.pathname)) {
-      const kind = plan.resources.find((item) => item.basePath === parsed.pathname).manifest.kind;
+      const {kind, apiVersion} = plan.resources.find((item) => item.basePath === parsed.pathname).manifest;
       return json(200, {
+        apiVersion, kind: `${kind}List`,
         items: [...resources.entries()]
           .filter(([resourcePath, resource]) => resourcePath.startsWith(parsed.pathname + '/') && resource.kind === kind)
-          .map(([, resource]) => structuredClone(resource)),
+          // Real typed Kubernetes List responses omit item TypeMeta.
+          .map(([, resource]) => { const value = structuredClone(resource); delete value.kind; delete value.apiVersion; return value; }),
       });
     }
     if (method === 'GET') {
@@ -560,7 +562,7 @@ test('Uninstalled workload deletion binds both UID and resourceVersion precondit
 });
 
 
-test('Registration status evidence rejects replacement, stale RV, and no-op status', async () => {
+test('changed Registration status rejects replacement, stale RV, and missing status', async () => {
   const fixture = makeReleaseFixture();
   for (const mutate of [
     (value) => { value.metadata.uid = 'replacement-registration-uid'; },
@@ -585,6 +587,66 @@ test('Registration status evidence rejects replacement, stale RV, and no-op stat
       },
     });
     await assert.rejects(lifecycle.reconcileOnce(), { code: 'AuthorityContractViolation' });
+  }
+});
+
+test('repeated identical failure status is idempotent without another Kubernetes write', async () => {
+  const fixture = makeReleaseFixture();
+  const source = registration();
+  let writes = 0;
+  const lifecycle = createKubernetesExtensionLifecycle({
+    baseUrl: origin, token: 'service-account-token-value',
+    fetchImpl: async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      if (path === registrations) return json(200, {items: [source]});
+      if (path === packages + '/workspace') return json(200, {...fixture.pkg, kind: 'WrongKind'});
+      if (path === registrations + '/workspace/status' && options.method === 'PATCH') {
+        writes += 1;
+        Object.assign(source, statusPatched(source, JSON.parse(options.body).status));
+        return json(200, source);
+      }
+      throw new Error('unexpected request');
+    },
+  });
+  const first = await lifecycle.reconcileOnce();
+  assert.equal(first.state, 'Failed');
+  assert.deepEqual(await lifecycle.reconcileOnce(), first);
+  assert.equal(writes, 1, 'an unchanged status does not require a new resourceVersion');
+});
+
+test('typed inventory never inherits item authority from missing or conflicting List envelopes', async () => {
+  const fixture = makeReleaseFixture();
+  const plan = buildExtensionWorkloadPlan(fixture.pkg);
+  for (const envelope of [{}, {apiVersion: 'wrong/v1', kind: 'ServiceAccountList'}, {apiVersion: 'v1', kind: 'SecretList'}]) {
+    const source = registration();
+    let appliedStatus;
+    const artifacts = artifactFetch(fixture);
+    const lifecycle = createKubernetesExtensionLifecycle({
+      baseUrl: origin, token: 'service-account-token-value',
+      fetchImpl: async (url, options = {}) => {
+        const parsed = new URL(url), path = parsed.pathname;
+        if (parsed.origin !== origin) return artifacts(url, options);
+        if (path === registrations) return json(200, {items: [source]});
+        if (path === packages + '/workspace') return json(200, fixture.pkg);
+        if (path.endsWith('/configmaps/opensphere-extension-trusted-keys')) return json(200, {data: {'trusted-keys.json': JSON.stringify({trustedKeys: fixture.trustedKeys})}});
+        if (path === registrations + '/workspace/status' && options.method === 'PATCH') {
+          appliedStatus = JSON.parse(options.body).status;
+          return json(200, statusPatched(source, appliedStatus));
+        }
+        const item = [...plan.resources, plan.activeService].find(item => path === item.basePath + '/' + item.manifest.metadata.name);
+        if (item && options.method === 'GET') {
+          const value = structuredClone(item.manifest);
+          Object.assign(value.metadata, {uid: 'owned-resource', resourceVersion: '22', generation: 1});
+          if (value.kind === 'Deployment') value.status = {observedGeneration: 1, updatedReplicas: value.spec.replicas, availableReplicas: value.spec.replicas};
+          return json(200, value);
+        }
+        if (plan.resources.some(item => path === item.basePath) && options.method === 'GET') return json(200, {...envelope, items: [{metadata: {name: 'untyped'}}]});
+        throw new Error('unexpected request ' + path);
+      },
+    });
+    assert.equal((await lifecycle.reconcileOnce()).reason, 'AuthorityContractViolation');
+    assert.equal(appliedStatus.phase, 'Failed');
+    assert.notEqual(appliedStatus.serving.phase, 'Current');
   }
 });
 
