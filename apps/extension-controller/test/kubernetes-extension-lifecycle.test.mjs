@@ -48,7 +48,8 @@ test('lifecycle is idle without an authoritative Registration', async () => {
   assert.deepEqual(await lifecycle.reconcileOnce(), { state: 'Idle' });
 });
 
-test('lifecycle materializes an exact revision and cuts over only after byte verification', async () => {
+for (const startState of ['ready', 'pending', 'failed-previous']) {
+test('lifecycle independently verifies replacement after ' + startState, async () => {
   const fixture = makeReleaseFixture();
   const plan = buildExtensionWorkloadPlan(fixture.pkg);
   const currentRegistration = {
@@ -85,6 +86,8 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
       },
     },
   };
+  if (startState === 'failed-previous') { currentRegistration.status.verification.manifest = 'Failed'; currentRegistration.status.serving.phase = 'Unavailable'; }
+  let workloadReady = startState !== 'pending';
   const artifacts = artifactFetch(fixture);
   const resources = new Map();
   const calls = [];
@@ -109,7 +112,8 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
         assert.equal(body.status.manifestUrl, `/api/plugins/${plan.revisionResourceName}${plan.contract.manifestPath}`);
         assert.equal(body.status.serving.revision, plan.revision);
       }
-      return json(200, statusPatched(currentRegistration, body.status));
+      Object.assign(currentRegistration, statusPatched(currentRegistration, {...currentRegistration.status,...body.status}));
+      return json(200, currentRegistration);
     }
 
     if (method === 'GET' && plan.resources.some((item) => item.basePath === parsed.pathname)) {
@@ -132,7 +136,7 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
         value.status = {
           observedGeneration: 1,
           updatedReplicas: value.spec.replicas,
-          availableReplicas: value.spec.replicas,
+          availableReplicas: workloadReady ? value.spec.replicas : 0,
           unavailableReplicas: 0,
         };
       }
@@ -168,6 +172,14 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
     token: 'service-account-token-value',
     fetchImpl,
   });
+  if (!workloadReady) {
+    assert.equal((await lifecycle.reconcileOnce()).state, 'Pending');
+    assert.equal(currentRegistration.status.verification.manifest, 'Verified');
+    assert.equal(currentRegistration.status.currentVersion, '1.1.0');
+    assert.ok(!calls.some(c => c.url.startsWith('http://workspace-r-')));
+    workloadReady = true;
+  }
+  const activationResourceVersion = currentRegistration.metadata.resourceVersion;
   const result = await lifecycle.reconcileOnce();
   assert.equal(result.state, 'Activated');
   assert.equal(result.extensionId, 'workspace');
@@ -188,10 +200,12 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
   assert.ok(activeWriteIndex > Math.max(...artifactIndexes), 'stable Service cutover must follow all byte verification');
 
   const statusPatch = calls.find((call) => call.method === 'PATCH'
-    && call.path === registrations + '/workspace/status');
-  assert.equal(statusPatch.body.metadata.resourceVersion, '19');
+    && call.path === registrations + '/workspace/status' && call.body.status.phase === 'Activated');
+  assert.equal(statusPatch.body.metadata.resourceVersion, activationResourceVersion);
   assert.equal(statusPatch.body.status.phase, 'Activated');
-  assert.deepEqual({
+  if (startState === 'failed-previous') {
+    assert.equal(statusPatch.body.status.previousDigest, undefined);
+  } else assert.deepEqual({
     digest: statusPatch.body.status.previousDigest,
     manifestSha256: statusPatch.body.status.previousManifestSha256,
     version: statusPatch.body.status.previousVersion,
@@ -229,6 +243,7 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
     permissions: 'Approved',
   });
 });
+}
 
 test('an unowned resource collision is never patched or deleted', async () => {
   const fixture = makeReleaseFixture();
@@ -414,9 +429,7 @@ test('same release keeps prior rollback evidence and malformed current evidence 
       verification: { manifest: 'Pending' },
     },
   };
-  assert.throws(() => projectPreviousVerifiedRelease(malformed, plan), {
-    code: 'RegistrationContractViolation',
-  });
+  assert.deepEqual(projectPreviousVerifiedRelease(malformed, plan), {});
 });
 
 test('cross-namespace or wrong-kind Registration projection fails before Package access', async () => {

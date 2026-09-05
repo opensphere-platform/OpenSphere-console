@@ -182,7 +182,9 @@ export function projectPreviousVerifiedRelease(registration, plan) {
     && ['Current', 'Disabled'].includes(serving.phase)
     && serving.digest === digest && serving.manifestSha256 === manifestSha256;
   if (!valid) {
-    throw fault('previous Extension release evidence is incomplete or unverified', 'RegistrationContractViolation');
+    // Unverified old state is not eligible for rollback, but cannot veto a newly
+    // signed release that independently passed all byte and workload verification.
+    return Object.freeze({});
   }
   return Object.freeze({
     previousDigest: digest,
@@ -485,11 +487,17 @@ export function createKubernetesExtensionLifecycle({
           if (item.manifest.kind === 'Deployment') deployment = observed;
         }
         if (!rolloutReady(deployment, plan)) {
+          const oldReleaseVerified = Object.keys(projectPreviousVerifiedRelease(registration, plan)).length > 0;
           await patchStatus(registration, {
             observedGeneration: current.generation, phase: 'Installing', retryable: true,
             reason: 'WorkloadNotReady', workload: { phase: 'NotReady' },
-            verification: { manifest: 'Pending', signature: 'Pending', entryDigest: 'Pending', permissions: 'Approved' },
-            serving: { phase: 'Pending' }, revalidation: { phase: 'Pending' },
+            // Preserve evidence about the still-serving old digest while the new
+            // workload starts. Never label the new digest as verified prematurely.
+            ...(!oldReleaseVerified ? {
+              verification: { manifest: 'Pending', signature: 'Pending', entryDigest: 'Pending', permissions: 'Approved' },
+              serving: { phase: 'Pending' },
+            } : {}),
+            revalidation: { phase: 'Pending' },
           });
           return Object.freeze({ state: 'Pending', extensionId: current.name, reason: 'WorkloadNotReady' });
         }

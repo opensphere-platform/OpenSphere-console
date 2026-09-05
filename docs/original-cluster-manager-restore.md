@@ -22,3 +22,10 @@ checks passed before publication. Runtime and browser acceptance must be recorde
 Known integration gap: the current Console Ceph prerequisite reconciler is not connected.
 An absent external Ceph connection must not be reported as connected or verified. No disks,
 provider data, pools, credentials, or optional HISS workloads are modified by restoring the UI.
+
+Post-deployment integration findings: C_EXT overwrote old verification while waiting for a
+replacement Pod, causing a recovery deadlock. New artifact verification is now independent
+of old rollback eligibility; old unverified state is never promoted as evidence. The browser
+also interpreted canonical owner /app paths as website-root paths, contradicting C_EXT.
+They now map under the exact signed proxy revision, retaining origin/traversal isolation.
+The Catalog read-only-substitute description is corrected.

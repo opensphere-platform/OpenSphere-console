@@ -1,3 +1,4 @@
+import { extensionArtifactUrl } from './extension-artifact-url';
 import { hostCompatibilitySatisfied } from '../../../../../packages/registry-client/host-compatibility.mjs';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
@@ -984,7 +985,7 @@ export class ExtensionHostService {
       if (!/^[a-f0-9]{64}$/.test(declaration.sha256)) throw new Error(`asset '${declaration.id}' sha256이 유효하지 않음`);
     }
     const entries = await Promise.all(declarations.map(async (declaration): Promise<[string, VerifiedAsset]> => {
-      const url = new URL(declaration.path, new URL(manifestUrl, location.origin));
+      const url = extensionArtifactUrl(declaration.path, artifactBase, manifestUrl, location.origin);
       if (url.origin !== location.origin || !url.pathname.startsWith(`${artifactBase}/`)) {
         throw new Error(`asset '${declaration.id}'가 검증된 release namespace 밖에 있음`);
       }

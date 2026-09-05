@@ -2,7 +2,7 @@ export interface ModuleDefinition {
   id: string; name: string; description: string; stage: string; capabilities: readonly string[];
 }
 export const PLATFORM_MODULES: readonly ModuleDefinition[] = Object.freeze([
-  { id: 'cluster-manager', name: 'OpenSphere-Cluster-Manager', stage: '다음 단계', description: 'Kubernetes 운영 환경을 확인합니다. 현재 배포본은 조회 기능을 제공하며 기초 모듈·Ceph 변경 작업은 후속 범위입니다.', capabilities: ['클러스터 조회', '기초 모듈 상태', '저장소 상태'] },
+  { id: 'cluster-manager', name: 'OpenSphere-Cluster-Manager', stage: '다음 단계', description: '기존 Cluster Manager의 Kubernetes·HISS·Ceph 관리 기능입니다. 설치·변경에는 운영 권한과 각 서비스의 사전요소가 필요합니다.', capabilities: ['Kubernetes 관리', 'HISS 설치·검증', 'Ceph 연결·관리'] },
   { id: 'foundation', name: 'OpenSphere-Foundation', stage: '기반 서비스', description: '제품이 요구하는 데이터·스토리지 등의 기반 서비스를 제공합니다.', capabilities: ['서비스 제공', '소비자 연결', '수명주기'] },
   { id: 'workspace', name: 'OpenSphere-Workspace', stage: '사용자 서비스', description: 'Account, Portal, Apps를 통해 사용자에게 서비스를 제공합니다.', capabilities: ['Account', 'Portal', 'Apps'] },
   { id: 'developer', name: 'OpenSphere-Developer', stage: '개발 환경', description: '프로젝트와 개발 작업을 관리합니다.', capabilities: ['프로젝트', '개발 작업', '산출물'] },
