@@ -1,4 +1,10 @@
-import { Component, OnInit, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
+import {ExtensionsWorkspaceNav} from './extensions-workspace-nav';
+import { AdminModules } from './admin-modules';
+import { AdminChangeControl } from './admin-change-control';
+import { moduleCatalogFresh } from './module-installation-state';
+import { observeLifecycle, LifecycleReceipt } from './extension-lifecycle-observation';
+import { releaseLabel, productLogo } from '../core/release-display';
+import { Component, OnInit, OnDestroy, inject, signal, computed, ChangeDetectionStrategy } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
@@ -66,7 +72,7 @@ interface RegistryDescriptor {
   domain: string;
   owner: { id: string; lifecycleApi?: string };
   source: { kind: string; name: string };
-  release: { version?: string; imageDigest?: string };
+  release: { version?: string; artifactVersion?: string; compatibilityVersion?: string; channel?: string; imageDigest?: string };
   capabilities: string[];
   installation: { mode: string; eligible: boolean };
   evidence: { observedGeneration: number; sourceRevision: string };
@@ -122,22 +128,19 @@ interface ExtensionViewDefinition {
 }
 
 const EXTENSION_VIEW_DEFINITIONS: readonly ExtensionViewDefinition[] = [
-  { id: 'subshells', label: 'SubShells', eyebrow: 'OPERATING SHELLS', title: 'SubShell management', description: 'Manage first-level operating areas attached directly to the Main Shell.', architectureRole: 'Management View', implementation: 'C_EXT · Registry projection', boundary: 'Shared service management surface' },
-  { id: 'plugins', label: 'Plugins', eyebrow: 'HOSTED CAPABILITIES', title: 'Plugin management', description: 'Separate Main Shell surfaces, system plugins and Registry plugins by owner and lifecycle.', architectureRole: 'Management View', implementation: 'C_EXT · Main Shell composition', boundary: 'Shared service management surface' },
-  { id: 'topology', label: 'Topology', eyebrow: 'OWNERSHIP MAP', title: 'Extension topology', description: 'Inspect the current ownership graph from Main Shell through SubShell, Plugin and Binding.', architectureRole: 'Relationship View', implementation: 'Registry · Binding projections', boundary: 'Read-only composition of authorities' },
-  { id: 'catalog', label: 'Catalog', eyebrow: 'REGISTRY INVENTORY', title: 'Catalog', description: 'Resolve signed descriptors and installable packages at one exact Registry revision.', architectureRole: 'CBSS Core Service', implementation: 'OpenSphere Registry & Catalog', boundary: 'Independent revisioned API authority' },
-  { id: 'registry-connections', label: 'Registry Connections', eyebrow: 'PACKAGE ACCESS', title: 'Registry Connections', description: 'Manage private OCI access separately from Extension package lifecycle.', architectureRole: 'Control Surface', implementation: 'C_API Registry Credential Broker · Kubernetes Secret', boundary: 'No-secret operator projection' },
-  { id: 'trust', label: 'Trust & Revocation', eyebrow: 'SUPPLY CHAIN TRUST', title: 'Trust & Revocation', description: 'Revoke an exact image digest and optionally bind a same-repository replacement digest.', architectureRole: 'Security Control', implementation: 'C_API · C_EXT · Supabase ledger', boundary: 'Immutable supply-chain authority' },
-  { id: 'audit', label: 'Audit', eyebrow: 'OPERATION EVIDENCE', title: 'Extension audit', description: 'Review actors and results for lifecycle and supply-chain operations.', architectureRole: 'Evidence', implementation: 'Supabase audit ledger', boundary: 'Append-only shared evidence' },
-  { id: 'bindings', label: 'Bindings', eyebrow: 'EXTERNAL CONTRACTS', title: 'Extension Bindings', description: 'Manage explicit CLI and integration contracts outside Main Shell core.', architectureRole: 'Contract', implementation: 'C_EXT · Kubernetes resources', boundary: 'External capability contracts' },
-];
-
-const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; views: readonly ExtensionViewDefinition[] }[] = [
-  { label: 'Extension composition', description: 'Objects and ownership', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => ['subshells', 'plugins', 'topology'].includes(view.id)) },
-  { label: 'Registry & delivery', description: 'Candidates and package access', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => ['catalog', 'registry-connections'].includes(view.id)) },
-  { label: 'Security & evidence', description: 'Supply-chain controls', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => ['trust', 'audit'].includes(view.id)) },
-  { label: 'External contracts', description: 'Explicit integrations', views: EXTENSION_VIEW_DEFINITIONS.filter((view) => view.id === 'bindings') },
-];
+  {id:'subshells',label:'설치된 기능',title:'설치된 기능',description:'사용 가능한 기능을 열고, 필요한 조치와 설치 상태를 확인합니다.'},
+  {id:'catalog',label:'기능 찾기',title:'기능 찾기',description:'제공된 배포본을 확인하고 설치 검토부터 승인·검증까지 진행합니다.'},
+  {id:'audit',label:'설치·변경 작업',title:'설치·변경 작업',description:'요청·승인·병합·적용·검증을 같은 작업으로 추적합니다.'},
+  {id:'topology',label:'구성도',title:'구성·연결',description:'선택한 기능의 소유 관계와 연결을 확인합니다.'},
+  {id:'plugins',label:'기능 기여',title:'기능 기여',description:'Console 내장 기능과 외부 제품의 기능 기여를 구분합니다.'},
+  {id:'bindings',label:'외부 기능 연결',title:'외부 기능 연결',description:'CLI 등 명시적으로 제공되는 외부 기능 연결입니다.'},
+  {id:'registry-connections',label:'Registry 연결',title:'설정·보안',description:'배포본 접근·연결 갱신·신뢰 상태를 관리합니다.'},
+  {id:'trust',label:'신뢰·회수',title:'신뢰·회수',description:'검증 키와 영향 범위를 확인한 후 정확한 배포본을 회수합니다.'},
+].map(view=>({...view,id:view.id as ExtensionManagementView,eyebrow:'',architectureRole:'',implementation:'',boundary:''}));
+const EXTENSION_PRIMARY_VIEWS = [
+ {id:'subshells',label:'설치된 기능'}, {id:'catalog',label:'기능 찾기'}, {id:'audit',label:'설치·변경 작업'},
+ {id:'topology',label:'구성·연결'}, {id:'registry-connections',label:'설정·보안'},
+] as const;
 
 /**
  * Admin Control Page (계획서 §7) — Catalog/Installed/Audit 탭.
@@ -146,11 +149,11 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
  */
 @Component({
   selector: 'os-admin-plugins',
-  imports: [NgTemplateOutlet, RouterLink, ClarityModule, CdkDropList, CdkDrag, CdkDragHandle, OsPageHeader, OsRawIcon, OsNavIcon, OsPanel, OsActionDialog],
+  imports: [ExtensionsWorkspaceNav, AdminModules, AdminChangeControl, NgTemplateOutlet, RouterLink, ClarityModule, CdkDropList, CdkDrag, CdkDragHandle, OsPageHeader, OsRawIcon, OsNavIcon, OsPanel, OsActionDialog],
   template: `
     <div class="os-page">
-      <os-page-header title="Modules & Extensions" tag="Core Runtime">
-        <p>Console 내장 system plugin과 subShell·plugin의 소유 관계, 현재 서비스, 서명 검증, 워크로드 연결을 한곳에서 관리합니다.</p>
+      <os-page-header title="Extensions" tag="기능 설치 · 운영">
+        <p>필요한 기능을 찾고 설치·승인·실행 상태를 확인합니다. 설치한 기능을 열거나 문제가 있는 작업을 이어서 처리하세요.</p>
       </os-page-header>
 
     @if (msg(); as m) {
@@ -179,40 +182,9 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
       <div><span>상태 동기화</span><strong [class.warn]="projectionStatus()?.state === 'stale'">{{ projectionLabel() }}</strong><small>공유 Registry projection</small></div>
     </section>
 
-    <nav class="extension-view-navigation" aria-label="Console Extension management views">
-      @for (group of extensionViewGroups; track group.label) {
-        <section class="extension-view-navigation__group" [attr.aria-label]="group.label">
-          <div class="extension-view-navigation__group-heading">
-            <strong>{{ group.label }}</strong>
-            <span>{{ group.description }}</span>
-          </div>
-          <div class="extension-view-navigation__items">
-            @for (view of group.views; track view.id) {
-              <a class="extension-view-navigation__item"
-                 [class.is-active]="activeView() === view.id"
-                 [attr.aria-current]="activeView() === view.id ? 'page' : null"
-                 [routerLink]="'/manage/extensions/' + view.id">
-                <span>{{ view.label }}</span>
-                @if (viewCount(view.id); as count) { <strong>{{ count }}</strong> }
-              </a>
-            }
-          </div>
-        </section>
-      }
-    </nav>
-
-    <section class="extension-view-heading" aria-labelledby="extension-view-title">
-      <p class="view-kicker">{{ activeViewDefinition().eyebrow }}</p>
-      <div>
-        <h2 id="extension-view-title">{{ activeViewDefinition().title }}</h2>
-        <p>{{ activeViewDefinition().description }}</p>
-      </div>
-      <dl class="extension-view-heading__architecture" aria-label="Current architecture position">
-        <div><dt>Role</dt><dd><span class="architecture-role">{{ activeViewDefinition().architectureRole }}</span></dd></div>
-        <div><dt>Runtime</dt><dd>{{ activeViewDefinition().implementation }}</dd></div>
-        <div><dt>Boundary</dt><dd>{{ activeViewDefinition().boundary }}</dd></div>
-      </dl>
-    </section>
+    <os-extensions-workspace-nav [view]="activeView()" [title]="activeViewDefinition().title" [description]="activeViewDefinition().description" [empty]="activeView()==='subshells' && registrationsLoaded() && !registrations().length && projectionStatus()?.state==='live'" (refresh)="refresh()" />
+    @if(activeView()==='catalog'){<os-admin-modules [embedded]="true" />}
+    @if(activeView()==='audit'){<os-admin-change-control [embedded]="true" />}
 
     @if (activeView() === 'registry-connections') {
       <section class="registry-access" aria-labelledby="registry-access-title">
@@ -225,7 +197,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             <span class="label" [class.label-success]="registry.verified === true">{{ registry.phase || registry.configurationState }}</span>
           }
         </div>
-        <div class="registry-access-form registry-access-form--credentials">
+        <details><summary>연결 추가 · 인증 갱신 · 제거</summary><div class="registry-access-form registry-access-form--credentials">
           <div class="clr-form-control">
             <label for="registry-user" class="clr-control-label">GitHub username</label>
             <div class="clr-control-container"><div class="clr-input-wrapper">
@@ -254,14 +226,14 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
           <button class="btn btn-primary" [disabled]="!registryStatus()?.oauthAvailable || registryReason.value.trim().length < 8" (click)="beginRegistryOAuth(registryReason.value)">GitHub OAuth</button>
           <button class="btn btn-outline" [disabled]="!registryStatus()?.credentialPresent" (click)="verifyRegistryCredentials()">Verify current connection</button>
           <button class="btn btn-danger-outline" [disabled]="!registryStatus()?.credentialPresent || registryReason.value.trim().length < 8 || registryConfirmation.value !== 'REMOVE opensphere-ghcr'" (click)="removeRegistryCredentials(registryReason.value, registryConfirmation.value)">Remove</button>
-        </div>
+        </div></details>
       </section>
 
       @if (registryStatus(); as registry) {
         <section class="registry-access" aria-label="Registry credential lifecycle">
           <p>Authentication: {{ registry.authenticationMode || 'unknown' }} · refresh: {{ registry.refreshPolicy || 'manual' }} · access expiry: {{ registry.expiresAt || 'not reported' }}</p>
           <p>Pull Secret convergence: {{ registry.synchronizedNamespaces?.length || 0 }} / {{ registry.requiredNamespaceCount || 6 }} · last verified: {{ registry.verifiedAt || 'not verified' }}</p>
-          <p class="os-sub">Observed dependency impact: {{ registryDependentPackages().length }} installed package(s) — <span class="os-mono">{{ registryDependentPackages().join(', ') || 'none' }}</span></p>
+          <p class="os-sub">연결 의존 제품: {{ projectionsReady() ? registryDependentPackages().length+'개' : '조회 미확인' }} — <span class="os-mono">{{ registryDependentPackages().join(', ') || 'none' }}</span></p>
           @if (registry.errorCode) { <p class="os-sub" role="alert">Action required: {{ registry.errorCode }}.</p> }
           @if (registry.authorization; as authorization) {
             <p role="status"><a [href]="authorization.verificationUri" target="_blank" rel="noopener noreferrer">GitHub device authorization</a>: <strong>{{ authorization.userCode }}</strong> · expires {{ authorization.expiresAt }}</p>
@@ -277,9 +249,10 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             <h2 id="revocation-title">OCI image revocation ledger</h2>
             <p class="os-sub">The exact digest is appended to the C_EXT-owned Supabase ledger. New installation and readiness verification are blocked. A replacement must be a different digest in the same repository.</p>
           </div>
-          <span class="label label-danger">Revoked {{ revocations().length }}</span>
+          <span class="label label-danger">회수됨 {{ revocationsLoaded()?revocations().length:'—' }}</span>
         </div>
-        <div class="registry-access-form registry-access-form--revocation">
+        <p>신뢰 키: {{ foundationCatalogSnapshot()?.sources?.['trust.keys']?.ready ? foundationCatalogSnapshot()?.sources?.['trust.keys']?.count : '확인 불가' }}개 · 서명·배포본 검증은 설치 전에 반복됩니다.</p><p>회수는 해당 배포본의 새 설치를 막습니다. 이미 실행 중인 기능의 교체는 별도 작업입니다.</p>
+        <details><summary>특정 배포본 회수 · 보안 관리자 작업</summary><div class="registry-access-form registry-access-form--revocation">
           <div class="clr-form-control">
             <label for="revoke-image" class="clr-control-label">Repository digest</label>
             <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-image" #revokeImageRef class="clr-input" size="70" placeholder="ghcr.io/opensphere-platform/...@sha256:..." [value]="revocationImage()" (input)="revocationImage.set($any($event.target).value)" /></div></div>
@@ -297,8 +270,8 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             <div class="clr-control-container"><div class="clr-input-wrapper"><input id="revoke-confirmation" #revokeConfirmation class="clr-input" [placeholder]="revokeExpectedConfirmation(revokeImageRef.value)" /></div></div>
           </div>
           <button class="btn btn-danger" [disabled]="!revokeImageRef.value.includes('@sha256:') || revokeReason.value.trim().length < 8 || revokeConfirmation.value !== revokeExpectedConfirmation(revokeImageRef.value)" (click)="revokeImage(revokeImageRef.value, replacementImageRef.value, revokeReason.value, revokeConfirmation.value)">Revoke digest</button>
-        </div>
-        <p class="os-sub">Observed workload impact: {{ revocationImpact().length }} package(s) — <span class="os-mono">{{ revocationImpact().join(', ') || 'none' }}</span>. Already-running workloads require a separate replacement operation.</p>
+        </div></details>
+        <p class="os-sub">확인된 영향: {{ projectionsReady() ? revocationImpact().length+'개 패키지' : '영향 미확인' }} — <span class="os-mono">{{ revocationImpact().join(', ') || 'none' }}</span>. Already-running workloads require a separate replacement operation.</p>
         @if (revocations().length) {
           <table class="table table-compact">
             <thead><tr><th class="left">Revoked image</th><th class="left">Replacement</th><th>Operation</th><th>Epoch</th><th>Time</th></tr></thead>
@@ -307,29 +280,6 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             }</tbody>
           </table>
         }
-      </section>
-    }
-
-    @if (activeView() === 'catalog') {
-      <section class="oci-install" aria-labelledby="oci-install-title">
-        <h2 id="oci-install-title">Install Extension</h2>
-        <p class="os-sub">Select a signed descriptor from the current Registry snapshot. C_API re-resolves descriptorId and the exact catalog revision server-side before accepting the operation. 개발용 local edge의 설치·업데이트는 MFA를 생략하지만, 다른 환경과 다른 lifecycle 작업은 최근 MFA를 요구합니다. 사유는 항상 8자 이상 필요합니다.</p>
-        <div class="registry-access-form registry-access-form--install">
-          <div class="clr-form-control">
-            <label for="extension-descriptor" class="clr-control-label">Registry Extension</label>
-            <div class="clr-control-container"><div class="clr-select-wrapper"><select id="extension-descriptor" class="clr-select" [value]="extensionInstallDescriptorId()" (change)="extensionInstallDescriptorId.set($any($event.target).value)">
-              <option value="">Select Extension</option>
-              @for (descriptor of installableExtensionDescriptors(); track descriptor.id) {
-                <option [value]="descriptor.id">{{ descriptor.displayName }} · {{ descriptor.id }}</option>
-              }
-            </select></div></div>
-          </div>
-          <div class="clr-form-control">
-            <label for="extension-install-reason" class="clr-control-label">Install reason</label>
-            <div class="clr-control-container"><div class="clr-input-wrapper"><input id="extension-install-reason" class="clr-input" minlength="8" placeholder="Reason, at least 8 characters" [value]="extensionInstallReason()" (input)="extensionInstallReason.set($any($event.target).value)" /></div></div>
-          </div>
-          <button class="btn btn-primary" [disabled]="installing() || !extensionInstallDescriptorId() || !installCatalogReady() || extensionInstallReason().trim().length < 8" (click)="installModule(extensionInstallDescriptorId(), extensionInstallReason())">Install</button>
-        </div>
       </section>
     }
 
@@ -459,13 +409,11 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
     </ng-template>
 
     @if (activeView() !== 'registry-connections' && activeView() !== 'trust') {
-    <clr-tabs>
-      <clr-tab>
-        <button clrTabLink (click)="selectView('subshells')">SubShells <span class="view-count">{{ subShellMetric() }}</span></button>
-        <clr-tab-content *clrIfActive="activeView() === 'subshells'">
+    <div class="extension-workspace">
+      @if (activeView() === 'subshells') { <section class="extension-view-content">
           <div class="extension-view-intro">
-            <div><span class="view-kicker">FIRST-LEVEL OPERATING SHELLS</span><h2>SubShell 관리</h2></div>
-            <p>Main Shell에 직접 연결되어 1단 메뉴와 독립 운영 영역을 제공하는 subShell만 표시합니다. plugin은 이 view에 포함하지 않습니다.</p>
+            <div><span class="view-kicker">INSTALLED EXTENSIONS</span><h2>설치된 기능</h2></div>
+            <p>Console의 1단 메뉴에서 여는 설치된 제품 기능입니다. 제품에 속한 하위 기능은 구성·연결에서 확인합니다.</p>
           </div>
           <div class="status-guide">
             <strong>상태 읽는 법</strong>
@@ -473,20 +421,17 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             <span><i class="status-dot warning"></i>서비스 유지 또는 처리 대기</span>
             <span><i class="status-dot danger"></i>서비스 차단 — 운영자 조치 필요</span>
           </div>
-          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: orderedSubShellRegistrations(), emptyText: registrationsLoaded() ? '설치된 subShell이 없습니다.' : 'Extension 목록을 불러오는 중입니다.', showHost: false, showIcon: true, navigation: true }" />
-        </clr-tab-content>
-      </clr-tab>
+          <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: orderedSubShellRegistrations(), emptyText: registrationsLoaded() ? '설치된 기능이 없습니다.' : 'Extension 목록을 불러오는 중입니다.', showHost: false, showIcon: true, navigation: true }" />
+        </section> }
 
-      <clr-tab>
-        <button clrTabLink (click)="selectView('plugins')">Plugins <span class="view-count">{{ pluginMetric() }}</span></button>
-        <clr-tab-content *clrIfActive="activeView() === 'plugins'">
+      @if (activeView() === 'plugins') { <section class="extension-view-content">
           <div class="extension-view-intro">
-            <div><span class="view-kicker">SYSTEM &amp; HOSTED CAPABILITIES</span><h2>Plugin 관리</h2></div>
-            <p>Main Shell 핵심 표면, Console 내장 system plugin, subShell이 소유·호스팅하는 Registry plugin을 서로 다른 수명주기로 표시합니다.</p>
+            <div><span class="view-kicker">SYSTEM &amp; HOSTED CAPABILITIES</span><h2>하위 기능 관리</h2></div>
+            <p>Console 기본 화면, 기본 제공 기능, 설치된 제품에 속한 하위 기능을 구분합니다. 제품의 설치와 Console 자체 배포는 별개입니다.</p>
           </div>
-          <section class="plugin-host-group" aria-label="Console Core Surfaces">
+          <section class="plugin-host-group" aria-label="Console 기본 화면">
             <header>
-              <div><span class="view-kicker">MAIN SHELL CORE</span><h3>Core Surfaces</h3></div>
+              <div><span class="view-kicker">CONSOLE CORE</span><h3>기본 화면</h3></div>
               <div class="plugin-host-coordinate">
                 <span class="label">core</span>
                 <code>cbss-main-shell</code>
@@ -502,16 +447,16 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
                       <td><strong>{{ surface.displayName }}</strong><div class="state-detail"><code>{{ surface.id }}</code></div></td>
                       <td><span class="label">coreSurface</span></td>
                       <td><a [href]="surface.route"><code>{{ surface.route }}</code></a></td>
-                      <td><span class="label label-success">필수</span><div class="state-detail">Main Shell release와 함께 유지</div></td>
+                      <td><span class="label label-success">필수</span><div class="state-detail">Console release와 함께 유지</div></td>
                     </tr>
                   }
                 </tbody>
               </table>
             </div>
           </section>
-          <section class="plugin-host-group" aria-label="System Plugins">
+          <section class="plugin-host-group" aria-label="Console 내장 기능">
             <header>
-              <div><span class="view-kicker">CONSOLE-OWNED</span><h3>System Plugins</h3></div>
+              <div><span class="view-kicker">CONSOLE-OWNED</span><h3>Console 내장 기능</h3></div>
               <div class="plugin-host-coordinate">
                 <span class="label label-info">system</span>
                 <code>cbss-main-shell</code>
@@ -521,7 +466,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             @if (systemPluginFailures().length) {
               <clr-alert clrAlertType="danger" [clrAlertClosable]="false">
                 <clr-alert-item>
-                  <span class="alert-text">System Plugin descriptor {{ systemPluginFailures().length }}건이 격리되었습니다. 다른 Console 표면은 계속 사용할 수 있습니다.</span>
+                  <span class="alert-text">기본 제공 기능 정의 {{ systemPluginFailures().length }}건이 격리되었습니다. 다른 Console 표면은 계속 사용할 수 있습니다.</span>
                 </clr-alert-item>
               </clr-alert>
             }
@@ -541,14 +486,14 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
                   @for (descriptor of systemPluginDescriptors(); track descriptor.id) {
                     <tr>
                       <td>
-                        <strong>{{ descriptor.displayName }}</strong>
+                        <strong class="product-identity">@if(productLogo(descriptor.displayName);as logo){<img [src]="logo" alt="" width="32" height="32" (error)="$any($event.target).hidden=true"/>}{{ descriptor.displayName }}</strong>
                         <div class="state-detail"><code>{{ descriptor.id }}</code></div>
                       </td>
                       <td><span class="label label-info">systemPlugin</span><div class="state-detail">{{ descriptor.category }}</div></td>
                       <td><code>{{ descriptor.owner }}</code></td>
                       <td><a [href]="descriptor.route"><code>{{ descriptor.route }}</code></a></td>
                       <td><code>{{ descriptor.runtimeAdapterId || '—' }}</code></td>
-                      <td><span class="label label-success">Console 내장</span><div class="state-detail">Console exact digest에 결속된 읽기 전용 항목</div></td>
+                      <td><span class="label label-success">Console 내장</span><div class="state-detail">Console 릴리스에 포함된 읽기 전용 항목</div></td>
                     </tr>
                   } @empty {
                     <tr><td colspan="6" class="os-sub">검증된 system plugin이 없습니다.</td></tr>
@@ -558,10 +503,10 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             </div>
           </section>
           <div class="extension-view-intro">
-            <div><span class="view-kicker">REGISTRY-MANAGED</span><h2>Registry Plugins</h2></div>
+            <div><span class="view-kicker">REGISTRY-MANAGED</span><h2>Registry 기능 기여</h2></div>
             <p>{{ registryPluginCount() }} plugin</p>
           </div>
-          <p class="os-sub">Registry plugin은 1단 메뉴 객체가 아닙니다. 각 plugin을 소유·호스팅하는 subShell 아래에서 설치·활성화·검증 상태를 관리합니다.</p>
+          <p class="os-sub">하위 기능은 1단 메뉴 객체가 아닙니다. 해당 기능을 제공하는 제품 아래에서 설치·활성화·검증 상태를 관리합니다.</p>
           @for (group of pluginHostGroups(); track group.hostRef) {
             <section class="plugin-host-group" [attr.aria-label]="group.hostLabel + ' plugins'">
               <header>
@@ -571,21 +516,18 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
               <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: group.items, emptyText: '이 host에 설치된 plugin이 없습니다.', showHost: true, showIcon: false }" />
             </section>
           } @empty {
-            <div class="empty-view">설치된 plugin이 없습니다. plugin은 설치 후 선언된 <code>hostRef</code> 아래에 표시됩니다.</div>
+            <div class="empty-view">설치된 하위 기능이 없습니다. 설치 후 지정된 <code>hostRef</code> 아래에 표시됩니다.</div>
           }
           @if (unclassifiedRegistrations().length) {
             <section class="plugin-host-group contract-warning" aria-label="분류 확인 필요">
               <header><div><span class="view-kicker">CONTRACT WARNING</span><h3>분류 확인 필요</h3></div></header>
-              <p>Catalog의 kind/hostRef 계약과 연결되지 않은 Registration입니다. subShell이나 plugin 목록에 임의 편입하지 않습니다.</p>
+              <p>Catalog의 kind/hostRef 계약과 연결되지 않은 Registration입니다. 제품이나 하위 기능 목록에 임의 편입하지 않습니다.</p>
               <ng-container *ngTemplateOutlet="extensionStatusTable; context: { $implicit: unclassifiedRegistrations(), emptyText: '', showHost: true, showIcon: false }" />
             </section>
           }
-        </clr-tab-content>
-      </clr-tab>
+        </section> }
 
-      <clr-tab>
-        <button clrTabLink (click)="selectView('topology')">구성도 Topology</button>
-        <clr-tab-content *clrIfActive="activeView() === 'topology'">
+      @if (activeView() === 'topology') { <section class="extension-view-content">
           <p class="os-sub">
             Console 직할 system plugin과 Registry 기반 shell → plugin 귀속 위계 —
             Bindings는 shell 귀속 예외 범주
@@ -593,7 +535,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
           <div class="tree">
             @for (root of tree(); track root.id) {
               <div class="tn tn0 host">
-                <button class="caret" (click)="toggle(root.id)">{{ exp(root.id) ? '▾' : '▸' }}</button>
+                <button class="caret" (click)="toggle(root.id)" [attr.aria-label]="'구성 항목 펼치기: ' + root.id" [attr.aria-expanded]="exp(root.id)">{{ exp(root.id) ? '▾' : '▸' }}</button>
                 <span class="tt tt-{{ root.type }}">{{ typeLabel(root.type) }}</span>
                 <strong class="tl">{{ root.label }}</strong>
                 <span class="tm">{{ root.meta }}</span>
@@ -603,7 +545,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
                 @for (c of root.children; track c.id) {
                   <div class="tn tn1">
                     @if (c.children.length) {
-                      <button class="caret" (click)="toggle(c.id)">{{ exp(c.id) ? '▾' : '▸' }}</button>
+                      <button class="caret" (click)="toggle(c.id)" [attr.aria-label]="'구성 항목 펼치기: ' + c.id" [attr.aria-expanded]="exp(c.id)">{{ exp(c.id) ? '▾' : '▸' }}</button>
                     } @else {
                       <span class="caret-sp"></span>
                     }
@@ -650,7 +592,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
                     } @empty {
                       @if (c.type === 'subShell') {
                         <div class="tn tn2 empty">
-                          모듈 없음 — 이 shell에 귀속된 plugin 미배포 (Phase 2 예정)
+                          연결된 기능 기여 없음
                         </div>
                       }
                     }
@@ -660,17 +602,14 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             }
           </div>
           <p class="os-sub">
-            System Plugins는 Console exact digest에 결속된 검증된 내장 descriptor를 투영합니다.
+            Console 내장 기능는 Console exact digest에 결속된 검증된 내장 descriptor를 투영합니다.
             동적 확장은 Registry의 <code>kind</code>·<code>hostRef</code>와 동일 ID
             Package·Registration 계약만 투영하며, 계약을 충족하지 못한 항목은 추론하지 않습니다.
           </p>
-        </clr-tab-content>
-      </clr-tab>
+        </section> }
 
-      <clr-tab>
-        <button clrTabLink (click)="selectView('catalog')">Catalog</button>
-        <clr-tab-content *clrIfActive="activeView() === 'catalog'">
-          <section class="foundation-catalog" aria-labelledby="foundation-catalog-title">
+      @if (activeView() === 'catalog') { <section class="extension-view-content">
+          <details class="foundation-catalog"><summary>지원 자원 · 패키지 기술 상세</summary>
             <div class="foundation-catalog-head">
               <div>
                 <p class="foundation-catalog-eyebrow">CBSS CORE SERVICE · REGISTRY &amp; CATALOG</p>
@@ -714,11 +653,11 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
                       <article class="foundation-module">
                         <span class="foundation-module-state">{{ descriptor.installation.eligible ? '설치 후보' : '조회 전용' }}</span>
                         <strong>{{ descriptor.displayName }}</strong>
-                        <p class="os-mono">{{ descriptor.id }}</p>
+                        <details><summary>기술 식별자</summary><p class="os-mono">{{ descriptor.id }}</p><p class="os-mono">{{ descriptor.release.imageDigest }}</p><p class="os-mono">{{ descriptor.evidence.sourceRevision }}</p></details>
                         <dl>
                           <dt>Owner</dt><dd>{{ descriptor.owner.id }}</dd>
                           <dt>Source</dt><dd>{{ descriptor.source.kind }} · {{ descriptor.source.name }}</dd>
-                          <dt>Release</dt><dd class="os-mono">{{ shortDigest(descriptor.release.imageDigest || descriptor.release.version || '') }}</dd>
+                          <dt>릴리스</dt><dd>{{ releaseLabel(descriptor.release) }}</dd>
                         </dl>
                       </article>
                     } @empty {
@@ -761,20 +700,20 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
 
               <aside class="foundation-catalog-boundary">
                 <strong>이 화면의 경계</strong>
-                <span>Registry는 installableModule Descriptor만 설치 후보로 판정합니다. Core Service는 조회 전용이며 PostgreSQL 인스턴스 생성과 운영 설정은 설치된 PFSS의 <code>/pfss/postgres</code>에서 처리합니다.</span>
+                <span>Console 제품 모듈과 기반 서비스의 설치 후보를 구분합니다. 내장 자원은 조회 전용이며 설정은 각 자원의 관리 화면에서 처리합니다.</span>
                 <small>Registry는 런타임 상태·인스턴스·버전 프로파일·용량·복제·백업 값을 보유하지 않습니다.</small>
               </aside>
             } @else if (!foundationCatalogLoading()) {
               <p class="os-sub">Registry &amp; Catalog의 유효한 스냅샷이 없습니다. 0건으로 간주하지 않습니다.</p>
             }
-          </section>
+          </details>
 
-          <section class="extension-package-catalog" aria-labelledby="extension-package-catalog-title">
+          <details class="extension-package-catalog" ><summary>패키지별 수명주기 관리</summary>
             <div class="extension-package-catalog-head">
               <div>
                 <p class="foundation-catalog-eyebrow">CONSOLE EXTENSIONS</p>
                 <h2 id="extension-package-catalog-title">Extension Packages</h2>
-                <p>Console의 subShell·plugin 패키지와 설치·활성 상태를 관리합니다. Foundation service plan과는 다른 생명주기입니다.</p>
+                <p>Console의 제품 모듈·기능 기여 패키지와 설치·활성 상태를 관리합니다. Foundation service plan과는 다른 생명주기입니다.</p>
               </div>
             </div>
           <table class="table">
@@ -857,13 +796,10 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
               }
             </tbody>
           </table>
-          </section>
-        </clr-tab-content>
-      </clr-tab>
+          </details>
+        </section> }
 
-      <clr-tab>
-        <button clrTabLink (click)="selectView('audit')">Audit</button>
-        <clr-tab-content *clrIfActive="activeView() === 'audit'">
+      @if (activeView() === 'audit') { <section class="extension-view-content">
           <table class="table">
             <thead>
               <tr>
@@ -877,27 +813,24 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
             <tbody>
               @for (e of events(); track $index) {
                 <tr>
-                  <td class="left os-mono">{{ e.time }}</td>
-                  <td>{{ e.actor }}</td>
+                  <td class="left">{{ formatTime(e.time) }}</td>
+                  <td><span [title]="e.actor">{{ e.actor.length>24 ? '운영자 · ' + e.actor.slice(0,8) : e.actor }}</span></td>
                   <td>{{ e.action }}</td>
-                  <td>{{ e.target }}</td>
+                  <td><details><summary>{{ e.target.includes('cluster-manager') ? 'OpenSphere-Cluster-Manager' : '대상 상세' }}</summary><code>{{ e.target }}</code></details></td>
                   <td>{{ e.result }}{{ e.reason ? ' · ' + e.reason : '' }}</td>
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="5" class="os-sub">감사 이벤트 없음</td>
+                  <td colspan="5" class="os-sub">{{eventsLoaded()?'감사 이벤트 없음':'감사 이력을 확인할 수 없습니다'}} </td>
                 </tr>
               }
             </tbody>
           </table>
-        </clr-tab-content>
-      </clr-tab>
+        </section> }
 
-      <clr-tab>
-        <button clrTabLink (click)="selectView('bindings')">Bindings</button>
-        <clr-tab-content *clrIfActive="activeView() === 'bindings'">
+      @if (activeView() === 'bindings') { <section class="extension-view-content">
           <p class="os-sub">
-            향후 workforce 인증·권한·명령처럼 Main Shell core 밖의 CLI 확장을 선언하는 채널입니다.
+            향후 workforce 인증·권한·명령처럼 Console core 밖의 CLI 확장을 선언하는 채널입니다.
             native <code>os</code>는 이 목록에 포함되지 않습니다.
           </p>
           <table class="table">
@@ -943,14 +876,13 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="5" class="os-sub">바인딩 없음</td>
+                  <td colspan="5" class="os-sub" role="status">{{ bindingsState()==='notConfigured'?'외부 기능 연결 API 미구성 — 이 선택 기능을 제공하는 모듈이 아직 없습니다.':bindingsState()==='error'?'외부 기능 연결을 확인하지 못했습니다. 0건이 아닙니다.':bindingsState()==='loading'?'외부 기능 연결 확인 중':'연결된 외부 기능 없음' }} <button class="btn btn-link" (click)="refreshOperationalData()">다시 확인</button></td>
                 </tr>
               }
             </tbody>
           </table>
-        </clr-tab-content>
-      </clr-tab>
-    </clr-tabs>
+        </section> }
+    </div>
     }
 
     <!-- 우측 슬라이드 상세 패널 — 선택 플러그인의 정확한 설치/검증 상태 -->
@@ -1204,33 +1136,36 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
   changeDetection: ChangeDetectionStrategy.Eager,
   styles: [
     `
+
+
+
+
+
+
+
+
+      .product-identity{display:flex;gap:.5rem;align-items:center;}.product-identity img{object-fit:contain;flex-shrink:0;}
+      details>summary{cursor:pointer;padding:.6rem 0;font-weight:600;} .extension-package-catalog{margin-top:1rem;}
+      .registry-descriptor-group>header{background:var(--os-surface,#fff);color:var(--os-ink,#161616);height:auto;min-height:0;display:flex;padding:.6rem 0;}
+      .registry-descriptor-group>header h3{color:inherit;}
+      .registry-access-form--credentials,.registry-access-form--revocation{max-width:48rem;}
+      .registry-access-form input{max-width:100%;min-width:0;}.registry-access-form .clr-form-control{min-width:0;}
+
+      @media(max-width:48rem){.registry-access-form{display:flex!important;flex-direction:column!important;align-items:stretch!important;}}
+
       .os-sub {
         color: var(--os-muted);
         font-size: 0.7rem;
         margin: 0.3rem 0 0.8rem;
       }
-      .os-engine {
-        font-size: 0.6rem;
-        color: var(--os-muted);
-        font-weight: 400;
-        margin-left: 0.4rem;
-      }
+
       .os-mono {
         font-family: monospace;
         font-size: 0.62rem;
       }
-      .management-actions {
-        display: block;
-        margin: 0 0 0.8rem;
-      }
-      .management-actions .registry-access:first-child { margin-top: 0.7rem; }
-      .oci-install {
-        padding: 0.8rem 1rem;
-        margin-bottom: 1rem;
-        border: 1px solid var(--os-hairline);
-        border-radius: var(--os-radius);
-        background: var(--os-surface-1);
-      }
+
+
+
       .registry-access {
         padding: 0.8rem 1rem;
         margin-bottom: 1rem;
@@ -1253,9 +1188,9 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
       .registry-access-form--install .clr-form-control:nth-child(1) { flex: 1.5 1 36rem; }
       .registry-access-form--install .clr-form-control:nth-child(2) { flex: 1 1 28rem; }
       .registry-access-form > .btn { flex: 0 0 auto; }
-      .oci-install h2 { margin: 0; font-size: 1rem; }
-      .oci-install .clr-form-control { margin-top: 0.45rem; }
-      .inspection-plan { display: flex; align-items: center; gap: 0.45rem; margin-top: 0.65rem; flex-wrap: wrap; }
+
+
+
       .table .left {
         text-align: left;
       }
@@ -1303,18 +1238,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
       }
       .status-guide strong { color: var(--os-ink); }
       .status-guide span { display: inline-flex; align-items: center; gap: 0.25rem; }
-      .view-count {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 1.2rem;
-        margin-left: 0.3rem;
-        padding: 0 0.3rem;
-        border-radius: 0.65rem;
-        background: var(--clr-color-neutral-200, #e8e8e8);
-        font-size: 0.62rem;
-        line-height: 1.2rem;
-      }
+
       .extension-view-intro {
         display: flex;
         align-items: flex-start;
@@ -1553,8 +1477,8 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
       .cc-secondary { display: block; margin-bottom: 0.8rem; }
 
       .cc-iconpick { margin: 0 0 1rem; }
-      .cc-iconpick-h { font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--os-ink-muted); margin-bottom: 0.4rem; }
-      .cc-iconpick-h .os-mono { text-transform: none; color: var(--os-ink); }
+
+
       .cc-iconsearch { width: 100%; padding: 0.4rem 0.5rem; margin-bottom: 0.35rem; border: 1px solid var(--os-hairline); border-radius: var(--os-radius); font-size: 0.8rem; }
       .cc-iconpick-note { font-size: 0.68rem; color: var(--os-ink-subtle); margin-bottom: 0.45rem; }
       .cc-iconpick-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.35rem; max-height: 17rem; overflow-y: auto; padding-right: 0.15rem; }
@@ -1582,7 +1506,7 @@ const EXTENSION_VIEW_GROUPS: readonly { label: string; description: string; view
     `,
   ],
 })
-export class AdminPlugins implements OnInit {
+export class AdminPlugins implements OnInit, OnDestroy {
   private ctl = inject(PluginControlClient);
   private readonly http = inject(HttpService);
   private projections = inject(ExtensionProjectionStore);
@@ -1593,14 +1517,24 @@ export class AdminPlugins implements OnInit {
   private readonly router = inject(Router);
   readonly iconLib = inject(IconLibraryService);
   readonly activeView = signal<ExtensionManagementView>(this.normalizeView(this.route.snapshot.paramMap.get('view')));
-  readonly extensionViewGroups = EXTENSION_VIEW_GROUPS;
+  readonly primaryViews=EXTENSION_PRIMARY_VIEWS;
+  readonly primaryView=computed(()=>['plugins','bindings'].includes(this.activeView())?'topology':this.activeView()==='trust'?'registry-connections':this.activeView());
+  readonly secondaryViews=computed(()=>EXTENSION_VIEW_DEFINITIONS.filter(view=>this.primaryView()==='topology'?['topology','plugins','bindings'].includes(view.id):['registry-connections','trust'].includes(view.id)));
+  readonly releaseLabel=releaseLabel;
+  readonly productLogo=productLogo;
+  readonly projectionsReady=computed(()=>this.projections.catalogProjection()?.ready===true && this.projections.registrationProjection()?.ready===true);
+  readonly bindingsState=signal<'loading'|'ready'|'notConfigured'|'error'>('loading');
+  readonly pendingOperationCount=signal<number|null>(null);
+  private stopped=false;
+  private operationalRefresh:Promise<void>|null=null;
+  ngOnDestroy(){this.stopped=true;}
   readonly activeViewDefinition = computed(() =>
     EXTENSION_VIEW_DEFINITIONS.find((view) => view.id === this.activeView()) ?? EXTENSION_VIEW_DEFINITIONS[0]
   );
   readonly foundationCatalogSnapshot = signal<FoundationCatalogSnapshot | null>(null);
   readonly foundationCatalogError = signal<string | null>(null);
   readonly foundationCatalogLoading = signal(false);
-  readonly registryDescriptorClasses: readonly RegistryDescriptorClass[] = ['coreService', 'extension', 'installableModule'];
+  readonly registryDescriptorClasses: readonly RegistryDescriptorClass[] = ['extension', 'installableModule', 'coreService'];
 
   readonly catalog = this.projections.catalog;
   readonly registrations = this.projections.registrations;
@@ -1608,26 +1542,26 @@ export class AdminPlugins implements OnInit {
   readonly bindings = signal<Binding[]>([]);
   readonly registryStatus = signal<RegistryCredentialStatus | null>(null);
   readonly revocations = signal<ImageRevocation[]>([]);
-  readonly installing = signal(false);
   readonly pendingRollback = signal<string | null>(null);
   readonly foundationActivationAllowed = signal(false);
   readonly catalogLoaded = this.projections.catalogLoaded;
   readonly registrationsLoaded = this.projections.registrationsLoaded;
   readonly bindingsLoaded = signal(false);
+  readonly eventsLoaded=signal(false);
+  readonly revocationsLoaded=signal(false);
+  readonly formatTime=(value:string)=>new Intl.DateTimeFormat('ko-KR',{dateStyle:'short',timeStyle:'short',timeZone:'Asia/Seoul'}).format(new Date(value))+' KST';
   readonly projectionStatus = this.projections.projectionStatus;
   private readonly coreDataWarning = signal<string | null>(null);
   private readonly operationalDataWarning = signal<string | null>(null);
   readonly dataWarning = computed(() => [this.coreDataWarning(), this.operationalDataWarning()].filter(Boolean).join(' ') || null);
   readonly msg = signal<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
-  readonly extensionInstallDescriptorId = signal('');
-  readonly extensionInstallReason = signal('');
   readonly installableExtensionDescriptors = computed(() =>
     (this.foundationCatalogSnapshot()?.inventory?.descriptors || [])
       .filter((descriptor) => descriptor.class === 'extension' && descriptor.installation?.eligible === true),
   );
   readonly installCatalogReady = computed(() => {
     const snapshot = this.foundationCatalogSnapshot();
-    return Boolean(snapshot && !snapshot.stale && /^sha256:[a-f0-9]{64}$/.test(snapshot.revision));
+    return Boolean(snapshot && !this.foundationCatalogError() && moduleCatalogFresh(snapshot) && /^sha256:[a-f0-9]{64}$/.test(snapshot.revision));
   });
   readonly registryDependentPackages = computed(() =>
     this.catalog().filter((item) => Boolean(item.installedDigest)).map((item) => item.displayName || item.name),
@@ -1811,13 +1745,13 @@ export class AdminPlugins implements OnInit {
     const versionLabel = reportedArtifactVersion && registration
       ? `공식 ${this.artifactVersion(registration)}`
       : item?.version ? `호환 ${this.compatibilityValue(item.version)}` : '';
-    return [item?.kind || 'Extension', n, versionLabel].filter(Boolean).join(' · ');
+    return [item?.kind === 'subShell' ? '제품 기능' : item?.kind === 'plugin' ? '하위 기능' : '기능', n, versionLabel].filter(Boolean).join(' · ');
   }
   displayName(name: string): string {
     return this.catalog().find((c) => c.name === name)?.displayName || name;
   }
   extensionKind(r: Registration): string {
-    return this.catalogItem(r.name)?.kind || 'Extension';
+    const kind=this.catalogItem(r.name)?.kind; return kind==='subShell'?'제품 기능':kind==='plugin'?'하위 기능':'분류 확인 필요';
   }
   extensionParentRef(r: Registration): string {
     const item = this.catalogItem(r.name);
@@ -1825,11 +1759,10 @@ export class AdminPlugins implements OnInit {
   }
   extensionParentLabel(r: Registration): string {
     const parentRef = this.extensionParentRef(r);
-    return parentRef === 'main' ? 'OpenSphere Main Shell' : this.displayName(parentRef);
+    return parentRef === 'main' ? 'OpenSphere Console' : this.displayName(parentRef);
   }
   artifactVersion(r: Registration): string {
-    const version = r.status.currentVersion || r.status.observedVersion || '';
-    return !version ? '—' : /^[0-9]{12}$/.test(version) ? version : `규칙 위반 · ${version}`;
+    return releaseLabel({version:r.status.currentVersion || r.status.observedVersion, artifactVersion:r.status.currentArtifactVersion, channel:r.status.currentRequestedChannel});
   }
   compatibilityVersion(r: Registration): string {
     const version = r.status.currentCompatibilityVersion || this.catalogItem(r.name)?.version || '';
@@ -1962,7 +1895,7 @@ export class AdminPlugins implements OnInit {
       return {
         visible: false,
         label: '요청 화면 적재 중',
-        reason: '현재 요청한 SubShell만 검증·활성화하는 중',
+        reason: '현재 요청한 기능만 검증·활성화하는 중',
       };
     }
     if (pluginState === undefined && this.ext.loadState() === 'loading') {
@@ -2036,7 +1969,7 @@ export class AdminPlugins implements OnInit {
     if (isHostedPlugin && !menu.visible) {
       if (['queued', 'loading'].includes(this.ext.pluginLoadState(r.name) || '')) {
         return {
-          label: this.ext.pluginLoadState(r.name) === 'queued' ? '요청 시 적재' : 'Plugin 적재 중',
+          label: this.ext.pluginLoadState(r.name) === 'queued' ? '요청 시 적재' : '하위 기능 적재 중',
           detail: menu.reason,
           tone: this.ext.pluginLoadState(r.name) === 'queued' ? 'success' : 'warning',
         };
@@ -2196,7 +2129,7 @@ export class AdminPlugins implements OnInit {
     const result = await this.projections.refresh(force);
     const issues = [...result.issues];
     if (issues.length) {
-      const retained = this.catalogLoaded() || this.registrationsLoaded();
+      const retained = issues.every(issue => issue==='Catalog'?this.catalogLoaded():this.registrationsLoaded());
       this.coreDataWarning.set(`${issues.join(', ')} 조회 실패 — ${retained ? '마지막 정상 값을 유지합니다.' : '유효한 상태 스냅샷이 아직 없습니다. 0건으로 간주하지 않습니다.'}`);
     } else if (this.projectionStatus()?.state === 'stale') {
       this.coreDataWarning.set(`공유 Extension 스냅샷이 오래되었습니다. 마지막 정상 값(${this.projectionStatus()?.observedAt || '시각 미보고'})을 표시합니다.`);
@@ -2218,9 +2151,9 @@ export class AdminPlugins implements OnInit {
       this.foundationCatalogSnapshot.set(body);
       this.foundationCatalogError.set(body.stale
         ? 'Registry & Catalog 스냅샷이 stale 상태입니다. 마지막 정상 값은 보이지만 모듈 설치 판단에는 사용할 수 없습니다.'
-        : Object.values(body.sources || {}).every((source) => source.ready)
+        : moduleCatalogFresh(body)
           ? null
-          : 'Registry & Catalog source 일부가 Ready가 아닙니다. 모듈 설치 판단에는 사용할 수 없습니다.');
+          : '설치에 필요한 목록·신뢰 자료를 확인할 수 없습니다. Registry 연결과 소스 상태를 확인하세요.');
     } catch (error) {
       this.foundationCatalogError.set(error instanceof Error ? error.message : String(error));
     } finally {
@@ -2271,8 +2204,14 @@ export class AdminPlugins implements OnInit {
     })[className];
   }
 
-  private async refreshOperationalData(): Promise<void> {
-    const names = ['감사 이력', 'Binding', '플랫폼 준비 상태', 'Registry 자격증명', 'Digest 철회'];
+  async refreshOperationalData(): Promise<void> {
+    if(this.operationalRefresh)return this.operationalRefresh;
+    const pending=this.performOperationalRefresh();this.operationalRefresh=pending;
+    try{await pending;}finally{this.operationalRefresh=null;}
+  }
+  private async performOperationalRefresh(): Promise<void> {
+    const names = ['감사 이력', '외부 기능 연결', '플랫폼 준비 상태', 'Registry 자격증명', 'Digest 회수'];
+    try{const response=await this.http.request('/api/platform/gitea/status',{cache:'no-store'});if(!response.ok)throw new Error();const state=await response.json();const changes=state.changes;if(!Array.isArray(changes))throw new Error();this.pendingOperationCount.set(changes.filter((c:{action:string;target?:string;status:string})=>c.target?.includes('cluster-manager') && ['intent','authorized','committed'].includes(c.status)).length);}catch{this.pendingOperationCount.set(null);}
     const results = await Promise.allSettled([
       this.ctl.events(),
       this.ctl.bindings(),
@@ -2282,15 +2221,16 @@ export class AdminPlugins implements OnInit {
     ]);
     const issues: string[] = [];
     const [events, bindings, readiness, registry, revocations] = results;
-    if (events.status === 'fulfilled') this.events.set(events.value); else issues.push(names[0]);
+    if (events.status === 'fulfilled') {this.events.set(events.value);this.eventsLoaded.set(true);} else {this.eventsLoaded.set(false);issues.push(names[0]);}
     if (bindings.status === 'fulfilled') {
       this.bindings.set(bindings.value);
       this.bindingsLoaded.set(true);
-    } else issues.push(names[1]);
+      this.bindingsState.set('ready');
+    } else { const error=bindings.reason as {status?:number;code?:string}; this.bindingsState.set(error.status===404 && error.code==='ResourceNotFound'?'notConfigured':'error'); if(this.bindingsState()==='error')issues.push(names[1]); }
     if (readiness.status === 'fulfilled') this.foundationActivationAllowed.set(readiness.value.ready);
     else issues.push(names[2]);
     if (registry.status === 'fulfilled') this.registryStatus.set(registry.value); else issues.push(names[3]);
-    if (revocations.status === 'fulfilled') this.revocations.set(revocations.value); else issues.push(names[4]);
+    if (revocations.status === 'fulfilled') {this.revocations.set(revocations.value);this.revocationsLoaded.set(true);} else {this.revocationsLoaded.set(false);issues.push(names[4]);}
     this.operationalDataWarning.set(issues.length
       ? `${issues.join(', ')} 조회 실패 — 핵심 Extension 목록과 독립적으로 다시 시도할 수 있습니다.`
       : null);
@@ -2384,7 +2324,7 @@ export class AdminPlugins implements OnInit {
     if (view === 'plugins') return this.pluginMetric();
     if (view === 'catalog') return this.catalogMetric();
     if (view === 'audit') return String(this.events().length);
-    if (view === 'bindings') return String(this.bindings().length);
+    if (view === 'bindings') return this.bindingsState()==='ready'?String(this.bindings().length):'—';
     if (view === 'trust') return String(this.revocations().length);
     return null;
   }
@@ -2394,7 +2334,8 @@ export class AdminPlugins implements OnInit {
   }
 
   registrationMetric(metric: 'installed' | 'serving' | 'action' | 'pending' | 'disabled'): string {
-    if (!this.registrationsLoaded()) return '—';
+    if(metric==='pending')return this.pendingOperationCount()===null?'—':String(this.pendingOperationCount());
+    if (!this.registrationsLoaded() || this.projections.registrationProjection()?.ready!==true) return '—';
     const registrations = this.registrations();
     if (metric === 'installed') return String(registrations.length);
     if (metric === 'serving') return String(registrations.filter((r) => r.desiredState === 'Enabled' && this.menuState(r).visible).length);
@@ -2405,7 +2346,7 @@ export class AdminPlugins implements OnInit {
 
   projectionLabel(): string {
     const state = this.projectionStatus()?.state;
-    return state === 'live' ? 'Live' : state === 'stale' ? 'Stale' : '—';
+    return state === 'live' ? '최신' : state === 'stale' ? '지난 관측' : '확인 필요';
   }
   countUsable(): number {
     return this.registrations().filter((r) => this.effectiveState(r).tone === 'success').length;
@@ -2456,7 +2397,7 @@ export class AdminPlugins implements OnInit {
     });
     const systemPluginRoot: TreeNode = {
       id: 'system-plugins',
-      label: 'System Plugins',
+      label: '기본 제공 기능',
       meta: 'Console exact-digest 내장 기능',
       type: 'group',
       actionable: false,
@@ -2471,8 +2412,8 @@ export class AdminPlugins implements OnInit {
     };
     const coreSurfaceRoot: TreeNode = {
       id: 'core-surfaces',
-      label: 'Core Surfaces',
-      meta: 'Main Shell 필수 표면 · Console release-bound',
+      label: '기본 화면',
+      meta: 'Console 기본 제공 기능 · Console 릴리스에 포함',
       type: 'group',
       actionable: false,
       children: this.coreSurfaces.map((surface) => ({
@@ -2595,11 +2536,10 @@ export class AdminPlugins implements OnInit {
 
   private async execute(action: 'enable' | 'disable' | 'uninstall' | 'rollback', id: string, reason: string): Promise<void> {
     try {
-      if (action === 'rollback') await this.ctl.rollback(id, reason);
-      else await this.ctl[action](id, reason);
+      const receipt:LifecycleReceipt = action === 'rollback' ? await this.ctl.rollback(id, reason) : await this.ctl[action](id, reason);
       this.msg.set({ type: 'info', text: `${action} 요청됨: ${id} — controller가 조정 중…` });
       // controller reconcile + registry 반영을 잠깐 기다린 뒤 셸 메뉴 reload
-      await this.poll(id, action);
+      await observeLifecycle({id,action,receipt,read:()=>this.ctl.registrationsSnapshot(),wait:()=>new Promise(resolve=>setTimeout(resolve,1500)),stopped:()=>this.stopped});
       await this.ext.reload();
       await this.refresh();
       this.msg.set({ type: 'success', text: `${action} 완료: ${id}` });
@@ -2608,57 +2548,18 @@ export class AdminPlugins implements OnInit {
     }
   }
 
-  async installModule(descriptorId: string, reason: string): Promise<void> {
-    if (this.installing()) return;
-    this.installing.set(true);
-    try {
-      const snapshot = this.foundationCatalogSnapshot();
-      if (!snapshot || snapshot.stale || !/^sha256:[a-f0-9]{64}$/.test(snapshot.revision)) {
-        throw new Error('현재의 fresh Registry catalog revision이 필요합니다.');
-      }
-      if (!this.installableExtensionDescriptors().some((descriptor) => descriptor.id === descriptorId)) {
-        throw new Error('선택한 Extension이 현재 Registry 설치 후보가 아닙니다.');
-      }
-      const receipt = await this.ctl.install(descriptorId, snapshot.revision, reason);
-      this.extensionInstallDescriptorId.set('');
-      this.extensionInstallReason.set('');
-      this.msg.set({ type: 'info', text: `설치 요청 ${receipt.operationId}이 ${receipt.state} 상태로 접수되었습니다. 독립 승인과 C_EXT 적용·관측 후에만 완료됩니다.` });
-      await this.refresh();
-    } catch (error) {
-      this.msg.set({ type: 'danger', text: `install 실패: ${String(error)}` });
-    } finally {
-      this.installing.set(false);
-    }
-  }
-
   /** binding 소프트 토글(enable/disable) — UI plugin과 별개 채널(binding≠plugin). 토글 후 목록 갱신. */
   async runBinding(action: 'enable' | 'disable', name: string): Promise<void> {
     try {
       await this.ctl.bindingAction(name, action);
-      this.msg.set({ type: 'success', text: `binding ${action}: ${name}` });
-      await this.refresh();
+      const observed = await this.ctl.bindings();
+      const row = observed.find(item => item.name === name);
+      if (!row || row.enabled !== (action === 'enable')) throw new Error('연결 표시 설정을 아직 확인할 수 없습니다. 새로고침 후 확인하세요.');
+      this.bindings.set(observed);
+      this.msg.set({type:'success',text:`${name}: Console 연결 표시가 ${action === 'enable' ? '활성화' : '비활성화'}되었습니다. 외부 서비스 자체의 기동 상태와는 별개입니다.`});
     } catch (err) {
       this.msg.set({ type: 'danger', text: `binding ${action} 실패: ${err}` });
     }
   }
 
-  /** desired 상태에 도달할 때까지 짧게 폴링 (설치는 workload ready+검증까지 시간 필요) */
-  private async poll(id: string, action: string): Promise<void> {
-    const want = action === 'disable' ? 'Disabled' : 'Activated';
-    for (let i = 0; i < 40; i++) {
-      const regs = await this.ctl.registrations();
-      const r = regs.find((x) => x.name === id);
-      // uninstall: CR이 삭제되면(목록에서 사라지면) 완료
-      if (action === 'uninstall') {
-        if (!r) {
-          this.registrations.set(regs);
-          return;
-        }
-      } else if (r?.status.phase === want || r?.status.phase === 'Failed') {
-        this.registrations.set(regs);
-        return;
-      }
-      await new Promise((f) => setTimeout(f, 1500));
-    }
-  }
 }

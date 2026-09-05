@@ -15,6 +15,7 @@ export interface CatalogItem {
   channelCheckedAt?: string; channelReason?: string;
 }
 export interface Registration {
+  identity?: {uid: string; generation: number; resourceVersion: string};
   name: string; desiredState: string;
   installation?: {
     requestedAt?: string; requestedBy?: string; requestedById?: string;
@@ -23,7 +24,7 @@ export interface Registration {
   status: {
     phase?: string; reason?: string; manifestUrl?: string; lastTransitionTime?: string;
     retryable?: boolean; nextRetryAt?: string; observedGeneration?: number;
-    observedVersion?: string; currentVersion?: string; currentCompatibilityVersion?: string;
+    observedVersion?: string; currentVersion?: string; currentArtifactVersion?: string; currentCompatibilityVersion?: string;
     currentBuildAuthority?: 'localhost' | 'github-actions'; currentDigest?: string;
     currentManifestSha256?: string; currentRequestedRef?: string;
     currentRequestedChannel?: string; currentResolvedAt?: string;
@@ -139,7 +140,10 @@ export class PluginControlClient {
   /** headless 바인딩(CLIDownload 등) — UI plugin과 별개 채널. controller /api/admin/bindings. */
   async bindings(): Promise<Binding[]> {
     const r = await this.http.request('/api/admin/bindings', { cache: 'no-store' });
-    if (!r.ok) throw new Error(`bindings HTTP ${r.status}`);
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw Object.assign(new Error(`외부 기능 연결 조회 실패 (HTTP ${r.status})`), {status: r.status, code: body.code || (typeof body.error === 'string' ? body.error : body.error?.code)});
+    }
     return (await r.json()).items;
   }
   registryCredentialStatus(): Promise<RegistryCredentialStatus> {

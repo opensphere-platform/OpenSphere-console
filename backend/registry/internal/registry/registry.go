@@ -108,6 +108,7 @@ type ExtensionSummary struct {
 // ExtensionCandidate is a verified installable UIPluginPackage. Runtime state
 // remains in Plugin, which requires an activated UIPluginRegistration.
 type ExtensionCandidate struct {
+	ArtifactVersion        string        `json:"artifactVersion,omitempty"`
 	ID                     string        `json:"id"`
 	DescriptorID           string        `json:"descriptorId"`
 	Kind                   string        `json:"kind"`
@@ -173,9 +174,10 @@ type Response struct {
 }
 
 type ReleaseComponent struct {
-	Repository     string `json:"repository"`
-	Image          string `json:"image"`
-	SourceRevision string `json:"sourceRevision"`
+	ArtifactVersion string `json:"-"` // display metadata, never part of execution identity
+	Repository      string `json:"repository"`
+	Image           string `json:"image"`
+	SourceRevision  string `json:"sourceRevision"`
 }
 
 type ReleaseLock struct {
@@ -363,7 +365,8 @@ func installableExtensionFromPackage(pkg unstructured.Unstructured, trustedKeys 
 		ID: id, DescriptorID: "extension." + id, Kind: kind,
 		DisplayName: nestedString(pkg.Object, "spec", "displayName"),
 		Image:       image, Digest: digest, Channel: channel,
-		SourceRevision: sourceRevision, ManifestDigest: "sha256:" + manifest,
+		ArtifactVersion: nestedString(pkg.Object, "spec", "resolution", "artifactVersion"),
+		SourceRevision:  sourceRevision, ManifestDigest: "sha256:" + manifest,
 		CompatibilityVersion: compatibilityVersion, BuildAuthority: buildAuthority, KeyID: keyID, EvidenceRefs: evidenceRefs,
 		PackageResourceVersion: pkg.GetResourceVersion(), PackageGeneration: pkg.GetGeneration(),
 		Capabilities: extensionCapabilitiesFromMap(nestedMap(pkg.Object, "spec", "contributions")),
@@ -429,7 +432,7 @@ func pluginFrom(pkg, reg unstructured.Unstructured, nav map[string]interface{}, 
 		HostAPIVersion: nestedString(pkg.Object, "spec", "hostApiVersion"), HostCompat: nestedString(pkg.Object, "spec", "hostCompat"),
 		Contributions: contributions, TelemetryDescriptor: telemetryDescriptor(pkg), CLI: cli,
 		RequestedRef: nestedString(reg.Object, "status", "currentRequestedRef"), RequestedChannel: nestedString(reg.Object, "status", "currentRequestedChannel"),
-		InstalledDigest: digest, ResolvedAt: nestedString(reg.Object, "status", "currentResolvedAt"), ArtifactVersion: nestedString(reg.Object, "status", "currentVersion"),
+		InstalledDigest: digest, ResolvedAt: nestedString(reg.Object, "status", "currentResolvedAt"), ArtifactVersion: nestedString(reg.Object, "status", "currentArtifactVersion"),
 		CompatibilityVersion: nestedString(reg.Object, "status", "currentCompatibilityVersion"), BuildAuthority: nestedString(reg.Object, "status", "currentBuildAuthority"),
 		SourceRevision: nestedString(reg.Object, "status", "currentRevision"), EvidenceRefs: nestedSlice(reg.Object, "status", "currentEvidenceRefs"),
 		ArtifactServiceID: nestedString(reg.Object, "status", "serving", "artifactServiceId"), ReleaseRevision: nestedString(reg.Object, "status", "serving", "revision"),
@@ -606,7 +609,7 @@ func buildInventory(input Input, candidates []ExtensionCandidate, candidateRejec
 			ID: metadata.ID, Class: "coreService", DisplayName: metadata.DisplayName, Domain: metadata.Domain,
 			Owner:        catalog.Owner{ID: metadata.OwnerID, LifecycleAPI: metadata.LifecycleAPI},
 			Source:       catalog.Source{Kind: "OpenSphereReleaseLock", Name: componentName},
-			Release:      catalog.Release{Version: component.SourceRevision, ImageDigest: digest},
+			Release:      catalog.Release{ArtifactVersion: component.ArtifactVersion, Channel: input.ReleaseLock.Channel, ImageDigest: digest},
 			Capabilities: append([]string(nil), metadata.Capabilities...),
 			Installation: catalog.Installation{Mode: "built-in", Eligible: false},
 			Evidence:     catalog.Evidence{ObservedGeneration: observedGeneration(input.ReleaseLockResourceVersion), SourceRevision: component.SourceRevision},
@@ -618,7 +621,7 @@ func buildInventory(input Input, candidates []ExtensionCandidate, candidateRejec
 			ID: candidate.DescriptorID, Class: "extension", DisplayName: candidate.DisplayName, Domain: "console-extension",
 			Owner:        catalog.Owner{ID: "opensphere-console", LifecycleAPI: "/api/admin/extensions/registrations/" + candidate.ID},
 			Source:       catalog.Source{Kind: "UIPluginPackage", Name: candidate.ID},
-			Release:      catalog.Release{Version: candidate.CompatibilityVersion, ImageDigest: candidate.Digest},
+			Release:      catalog.Release{CompatibilityVersion: candidate.CompatibilityVersion, ArtifactVersion: candidate.ArtifactVersion, Channel: candidate.Channel, ImageDigest: candidate.Digest},
 			Capabilities: candidate.Capabilities, Installation: catalog.Installation{Mode: "extension-controller", Eligible: true},
 			Evidence: catalog.Evidence{ObservedGeneration: candidate.PackageGeneration, SourceRevision: candidate.SourceRevision},
 		})
@@ -654,7 +657,7 @@ func buildInventory(input Input, candidates []ExtensionCandidate, candidateRejec
 			ID: id, Class: "installableModule", DisplayName: item.GetName(), Domain: "foundation",
 			Owner:   catalog.Owner{ID: "pfss.foundation", LifecycleAPI: "/api/foundation/modules/" + item.GetName()},
 			Source:  catalog.Source{Kind: "FoundationModuleDescriptor", Name: item.GetName()},
-			Release: catalog.Release{Version: item.GetResourceVersion(), ImageDigest: digest}, Capabilities: capabilities,
+			Release: catalog.Release{ImageDigest: digest}, Capabilities: capabilities,
 			Installation: catalog.Installation{Mode: mode, Eligible: true},
 			Evidence:     catalog.Evidence{ObservedGeneration: item.GetGeneration(), SourceRevision: item.GetResourceVersion()},
 		})
@@ -870,7 +873,42 @@ func loadReleaseLock(ctx context.Context, dyn dynamic.Interface) (ReleaseLock, s
 	if !digestRE.MatchString(lock.ReleaseDigest) || len(lock.Components) == 0 {
 		return ReleaseLock{}, "", errors.New("release lock lacks canonical release evidence")
 	}
+	display, _, _ := unstructured.NestedString(cm.Object, "data", "release-display.json")
+	applyReleaseDisplay(&lock, display)
 	return lock, cm.GetResourceVersion(), nil
+}
+
+// Optional publication labels are bound to the installed image AND source.
+// Missing or mismatched display metadata cannot alter execution or hide a product.
+func applyReleaseDisplay(lock *ReleaseLock, raw string) {
+	if len(raw) > 65536 {
+		return
+	}
+	var display struct {
+		Schema     string `json:"schema"`
+		Components map[string]struct {
+			Image           string `json:"image"`
+			SourceRevision  string `json:"sourceRevision"`
+			ArtifactVersion string `json:"artifactVersion"`
+		} `json:"components"`
+	}
+	if json.Unmarshal([]byte(raw), &display) != nil || display.Schema != "opensphere.release-display/v1" || len(display.Components) > 64 {
+		return
+	}
+	for name, item := range display.Components {
+		component, ok := lock.Components[name]
+		if !ok || item.Image != component.Image || item.SourceRevision != component.SourceRevision {
+			continue
+		}
+		if len(item.ArtifactVersion) != 12 {
+			continue
+		}
+		if _, err := time.Parse("200601021504", item.ArtifactVersion); err != nil {
+			continue
+		}
+		component.ArtifactVersion = item.ArtifactVersion
+		lock.Components[name] = component
+	}
 }
 
 func loadTrustedKeys(ctx context.Context, dyn dynamic.Interface) (map[string]string, error) {

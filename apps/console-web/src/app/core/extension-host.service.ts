@@ -1,3 +1,4 @@
+import { hostCompatibilitySatisfied } from '../../../../../packages/registry-client/host-compatibility.mjs';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { AuthService } from './auth.service';
@@ -1023,32 +1024,7 @@ async function verifyP256(spkiB64: string, sigB64: string, text: string): Promis
 }
 
 /** 최소 semver 범위 검사 — ">=A <B" 형태(공백 구분, >=/>/<=/</= 지원) */
-export function semverSatisfies(version: string, range: string): boolean {
-  const v = parseVer(version);
-  if (!v) return false;
-  return range.trim().split(/\s+/).every((cond) => {
-    const m = cond.match(/^(>=|<=|>|<|=)?(\d+\.\d+\.\d+)$/);
-    if (!m) return false;
-    const c = cmp(v, parseVer(m[2])!);
-    switch (m[1] ?? '=') {
-      case '>=': return c >= 0;
-      case '<=': return c <= 0;
-      case '>': return c > 0;
-      case '<': return c < 0;
-      default: return c === 0;
-    }
-  });
-}
-
-function parseVer(s: string): number[] | null {
-  const m = s.trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-
-function cmp(a: number[], b: number[]): number {
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return 0;
-}
+export const semverSatisfies = hostCompatibilitySatisfied;
 
 function canonicalValue(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(canonicalValue);

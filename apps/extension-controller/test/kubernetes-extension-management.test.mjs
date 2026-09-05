@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {readFileSync} from 'node:fs';
+import Ajv2020 from 'ajv/dist/2020.js';
 import { extensionStaticContractSha256 } from '../src/extension-release.mjs';
 import { createKubernetesExtensionManagementAuthority } from '../src/kubernetes-extension-management.mjs';
 
@@ -7,6 +9,10 @@ const digest = 'sha256:' + 'a'.repeat(64);
 const previousDigest = 'sha256:' + 'b'.repeat(64);
 const manifest = 'c'.repeat(64);
 const previousManifest = 'd'.repeat(64);
+const contract = JSON.parse(readFileSync(new URL('../../../packages/contracts/schemas/extension-management.schema.json', import.meta.url)));
+const validator = new Ajv2020({strict:false,validateFormats:false});
+validator.addSchema(contract);
+const conforms=(name,value)=>assert.equal(validator.validate(contract.$id+'#/$defs/'+name,value),true,JSON.stringify(validator.errors));
 
 function pkg(overrides = {}) {
   return {
@@ -18,7 +24,7 @@ function pkg(overrides = {}) {
     },
     spec: {
       displayName: 'Metrics', owner: 'Platform', version: '1.2.3', description: 'Metrics UI',
-      kind: 'subShell', hostRef: 'main', hostApiVersion: '1.0', hostCompat: '1.0.0',
+      kind: 'subShell', hostRef: 'main', hostApiVersion: '1.0', hostCompat: '^1.0.0',
       image: { repository: 'ghcr.io/opensphere-platform/metrics', digest },
       resolution: {
         requestedRef: 'edge', requestedChannel: 'edge', resolvedDigest: digest,
@@ -106,6 +112,10 @@ test('management projections are bounded to canonical Package, Registration, pre
   assert.equal(registrations[0].health, 'Ready');
   assert.equal(registrations[0].status.phase, 'Activated');
   const bindings = await target.bindings();
+  const projection={ready:true,state:'live',observedAt:'2026-09-05T00:00:00Z',ageSeconds:0};
+  conforms('catalog',{items:catalog,projection});
+  conforms('registrations',{items:registrations,projection});
+  conforms('bindings',{items:bindings});
   assert.deepEqual(bindings.map((item) => item.name), ['workforce-cli']);
   assert.ok(calls.every((call) => call.options.headers.authorization === 'Bearer target-kubernetes-token-0001'));
 });
@@ -351,4 +361,15 @@ test('management rejects missing, unknown, or malformed Package scope before mut
     }), { code: 'PackageScopeInvalid', status: 409, sideEffect: 'none' });
     assert.equal(calls.filter((call) => call.method !== 'GET').length, 0);
   }
+});
+
+test('optional API 404 text is not misreported as JSON corruption; 403 and 503 remain errors', async () => {
+  for (const [status,code] of [[404,'ResourceNotFound'],[403,'OwnerRejected'],[503,'AuthorityUnavailable']]) {
+    await assert.rejects(authority(async()=>new Response('not JSON',{status,headers:{'content-type':'text/plain'}})).bindings(), error=>error.code===code && error.status===status);
+  }
+  await assert.rejects(authority(async()=>new Response('not JSON',{status:200})).bindings(), {code:'AuthorityContractViolation'});
+});
+test('malformed host ranges fail before catalog becomes usable', async () => {
+  const invalid=pkg(); invalid.spec.hostCompat='^1.0.0 surprise';
+  await assert.rejects(authority(async url=>json({items:pathOf(url).endsWith('/uipluginpackages')?[invalid]:[]})).catalog(), {code:'AuthorityContractViolation'});
 });

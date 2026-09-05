@@ -1,0 +1,674 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:extension-management:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {},
+  "$defs": {
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "projection"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "displayName",
+              "version",
+              "hostCompat",
+              "hostRef",
+              "kind",
+              "owner",
+              "description",
+              "permissions",
+              "contributions",
+              "core"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "shellCompat": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "hostRef": {
+                "type": "string"
+              },
+              "hostApiVersion": {
+                "type": "string"
+              },
+              "hostCompat": {
+                "type": "string",
+                "maxLength": 128,
+                "description": "Same bounded grammar as packages/registry-client/host-compatibility.mjs: exact x.y.z, ^, ~, comparisons, whitespace AND and up to four || branches. No wildcard or prerelease. Version is compatibility metadata, not a build identifier."
+              },
+              "scope": {
+                "type": "string"
+              },
+              "requestedChannel": {
+                "type": "string"
+              },
+              "installedDigest": {
+                "type": "string"
+              },
+              "currentChannelDigest": {
+                "type": "string"
+              },
+              "updateState": {
+                "type": "string"
+              },
+              "channelCheckedAt": {
+                "type": "string"
+              },
+              "channelReason": {
+                "type": "string"
+              },
+              "permissions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "contributions": {
+                "type": "object"
+              },
+              "core": {
+                "type": "boolean"
+              },
+              "nav": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "projection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ready",
+            "state",
+            "observedAt",
+            "ageSeconds"
+          ],
+          "properties": {
+            "ready": {
+              "const": true
+            },
+            "state": {
+              "const": "live"
+            },
+            "observedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "ageSeconds": {
+              "const": 0
+            }
+          }
+        }
+      }
+    },
+    "registrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "projection"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "identity",
+              "desiredState",
+              "status",
+              "health"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "identity": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "uid",
+                  "generation",
+                  "resourceVersion"
+                ],
+                "properties": {
+                  "uid": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "resourceVersion": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "desiredState": {
+                "enum": [
+                  "Installed",
+                  "Enabled",
+                  "Disabled",
+                  "Uninstalled"
+                ]
+              },
+              "status": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [],
+                "properties": {
+                  "phase": {},
+                  "reason": {},
+                  "manifestUrl": {},
+                  "lastTransitionTime": {},
+                  "retryable": {},
+                  "nextRetryAt": {},
+                  "observedGeneration": {},
+                  "observedVersion": {},
+                  "currentVersion": {},
+                  "currentArtifactVersion": {},
+                  "currentRepository": {},
+                  "currentManifestPath": {},
+                  "currentSignaturePath": {},
+                  "currentStaticContractSha256": {},
+                  "currentCompatibilityVersion": {},
+                  "currentBuildAuthority": {},
+                  "currentDigest": {},
+                  "currentManifestSha256": {},
+                  "currentRequestedRef": {},
+                  "currentRequestedChannel": {},
+                  "currentResolvedAt": {},
+                  "currentSource": {},
+                  "currentRevision": {},
+                  "currentSignatureIdentity": {},
+                  "currentEvidenceRefs": {},
+                  "currentRegistryCredentialsRequired": {},
+                  "previousDigest": {},
+                  "previousManifestSha256": {},
+                  "previousVersion": {},
+                  "previousArtifactVersion": {},
+                  "previousRepository": {},
+                  "previousManifestPath": {},
+                  "previousSignaturePath": {},
+                  "previousStaticContractSha256": {},
+                  "previousCompatibilityVersion": {},
+                  "previousBuildAuthority": {},
+                  "previousRequestedRef": {},
+                  "previousRequestedChannel": {},
+                  "previousResolvedAt": {},
+                  "previousSource": {},
+                  "previousRevision": {},
+                  "previousSignatureIdentity": {},
+                  "previousEvidenceRefs": {},
+                  "previousRegistryCredentialsRequired": {},
+                  "currentChannelDigest": {},
+                  "channelState": {},
+                  "channelCheckedAt": {},
+                  "channelReason": {},
+                  "host": {},
+                  "workload": {},
+                  "verification": {},
+                  "serving": {},
+                  "revalidation": {},
+                  "admission": {},
+                  "integrations": {}
+                },
+                "description": "Bounded Kubernetes status projection (maximum 64 KiB), not independently authoritative. Success additionally requires observedGeneration >= identity.generation. Nested values retain owner CRD semantics."
+              },
+              "health": {
+                "enum": [
+                  "Ready",
+                  "NotReady",
+                  "N/A"
+                ]
+              },
+              "installation": {
+                "type": "object"
+              },
+              "approval": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "requestedBy",
+                  "reason"
+                ],
+                "properties": {
+                  "requestedBy": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "projection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ready",
+            "state",
+            "observedAt",
+            "ageSeconds"
+          ],
+          "properties": {
+            "ready": {
+              "const": true
+            },
+            "state": {
+              "const": "live"
+            },
+            "observedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "ageSeconds": {
+              "const": 0
+            }
+          }
+        }
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "name",
+              "displayName",
+              "description",
+              "enabled",
+              "links"
+            ],
+            "properties": {
+              "kind": {
+                "const": "CLIDownload"
+              },
+              "name": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "links": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "text",
+                    "href"
+                  ],
+                  "properties": {
+                    "os": {
+                      "type": "string"
+                    },
+                    "arch": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "href": {
+                      "type": "string",
+                      "format": "uri",
+                      "pattern": "^https://"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted",
+        "id",
+        "desiredState",
+        "registrationUid",
+        "registrationGeneration",
+        "registrationResourceVersionBefore",
+        "registrationResourceVersion"
+      ],
+      "properties": {
+        "accepted": {
+          "const": true
+        },
+        "id": {
+          "type": "string"
+        },
+        "desiredState": {
+          "enum": [
+            "Enabled",
+            "Disabled",
+            "Uninstalled"
+          ]
+        },
+        "registrationUid": {
+          "type": "string"
+        },
+        "registrationGeneration": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "registrationResourceVersionBefore": {
+          "type": "string"
+        },
+        "registrationResourceVersion": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "artifactVersion": {
+          "type": "string"
+        },
+        "packageResourceVersionBefore": {
+          "type": "string"
+        },
+        "packageResourceVersion": {
+          "type": "string"
+        }
+      }
+    },
+    "reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 500,
+          "pattern": "^[^\\r\\n]+$"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error",
+        "message"
+      ],
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "trustedKeys",
+        "capabilities",
+        "plugins",
+        "installableExtensions",
+        "templates",
+        "schema",
+        "revision",
+        "observedAt",
+        "stale",
+        "sources",
+        "extensions",
+        "catalog",
+        "inventory",
+        "rejected"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer"
+        },
+        "trustedKeys": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "capabilities": {
+          "type": "array"
+        },
+        "plugins": {
+          "type": "array"
+        },
+        "installableExtensions": {
+          "type": "array"
+        },
+        "templates": {
+          "type": "array"
+        },
+        "schema": {
+          "const": "opensphere.registry-catalog/v1"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "observedAt": {
+          "type": "string"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "object"
+        },
+        "extensions": {
+          "type": "object"
+        },
+        "catalog": {
+          "type": "object"
+        },
+        "inventory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "descriptors",
+            "coverage"
+          ],
+          "properties": {
+            "descriptors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "class",
+                  "displayName",
+                  "domain",
+                  "owner",
+                  "source",
+                  "release",
+                  "capabilities",
+                  "installation",
+                  "evidence"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "class": {
+                    "enum": [
+                      "coreService",
+                      "extension",
+                      "installableModule"
+                    ]
+                  },
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "domain": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "lifecycleApi": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "source": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "name"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "release": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [],
+                    "properties": {
+                      "version": {
+                        "type": "string"
+                      },
+                      "artifactVersion": {
+                        "type": "string",
+                        "pattern": "^[0-9]{12}$"
+                      },
+                      "compatibilityVersion": {
+                        "type": "string"
+                      },
+                      "channel": {
+                        "type": "string"
+                      },
+                      "imageDigest": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "installation": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "mode",
+                      "eligible"
+                    ],
+                    "properties": {
+                      "mode": {
+                        "type": "string"
+                      },
+                      "eligible": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  "evidence": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "observedGeneration",
+                      "sourceRevision"
+                    ],
+                    "properties": {
+                      "observedGeneration": {
+                        "type": "integer"
+                      },
+                      "sourceRevision": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "coverage": {
+              "type": "object"
+            }
+          }
+        },
+        "rejected": {
+          "type": "array"
+        }
+      },
+      "description": "Existing public read-only Registry snapshot. Core and extension descriptor release labels are optional metadata, never installation authority; installed digest and source binding are enforced before labels are projected."
+    }
+  },
+  "description": "Fragments referenced by existing C_EXT compatibility endpoints. No new execution service or authorization exception."
+}

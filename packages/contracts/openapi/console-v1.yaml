@@ -16,6 +16,492 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /api/v1/registry:
+    get:
+      operationId: getRegistryInventory
+      tags:
+        - Catalog
+      security: []
+      x-opensphere-owner: C_REG
+      x-opensphere-requirement: CON-FR-006
+      x-opensphere-idempotency: read-only-no-state-transition
+      description: >-
+        Existing public same-origin read-only projection; contains public trust keys and no credentials. A 200
+        response may be stale and each source has its own readiness. Optional display metadata is bound to
+        installed image and source; missing labels never synthesize a release. POST /resolve remains unavailable
+        from the browser.
+      responses:
+        '200':
+          description: Registry inventory, including optional human release metadata
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/registry
+        '503':
+          description: No valid Registry snapshot observed
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+  /api/admin/plugins/catalog:
+    get:
+      operationId: getExtensionManagementCatalog
+      tags:
+        - Extensions
+      security:
+        - BrowserSession: []
+      x-opensphere-owner: C_EXT
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: read-only-no-state-transition
+      description: >-
+        Existing same-origin compatibility route, owner-admitted by C_API. Requires current actor with
+        console.extension.install, remove or revoke. No query parameters. Each dataset is independently fresh or
+        failed. UI never parses an error response as a successful inventory.
+      responses:
+        '200':
+          description: Live Kubernetes-derived projection
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/catalog
+        '401':
+          description: Owner session authority missing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '403':
+          description: Required permission denied; never treated as optional resource absence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '404':
+          description: >-
+            ResourceNotFound. Only an absent optional CLIDownload API is shown as Not configured; no automatic
+            CRD creation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '503':
+          description: >-
+            Owner unavailable or successful upstream response violates contract; retain old values as stale, not
+            Ready
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+  /api/admin/plugins/registrations:
+    get:
+      operationId: getExtensionManagementRegistrations
+      tags:
+        - Extensions
+      security:
+        - BrowserSession: []
+      x-opensphere-owner: C_EXT
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: read-only-no-state-transition
+      description: >-
+        Existing same-origin compatibility route, owner-admitted by C_API. Requires current actor with
+        console.extension.install, remove or revoke. No query parameters. Each dataset is independently fresh or
+        failed. UI never parses an error response as a successful inventory.
+      responses:
+        '200':
+          description: Live Kubernetes-derived projection
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/registrations
+        '401':
+          description: Owner session authority missing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '403':
+          description: Required permission denied; never treated as optional resource absence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '404':
+          description: >-
+            ResourceNotFound. Only an absent optional CLIDownload API is shown as Not configured; no automatic
+            CRD creation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '503':
+          description: >-
+            Owner unavailable or successful upstream response violates contract; retain old values as stale, not
+            Ready
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+  /api/admin/bindings:
+    get:
+      operationId: getExtensionManagementBindings
+      tags:
+        - Extensions
+      security:
+        - BrowserSession: []
+      x-opensphere-owner: C_EXT
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: read-only-no-state-transition
+      description: >-
+        Existing same-origin compatibility route, owner-admitted by C_API. Requires current actor with
+        console.extension.install, remove or revoke. No query parameters. Each dataset is independently fresh or
+        failed. UI never parses an error response as a successful inventory.
+      responses:
+        '200':
+          description: Live Kubernetes-derived projection
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/bindings
+        '401':
+          description: Owner session authority missing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '403':
+          description: Required permission denied; never treated as optional resource absence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '404':
+          description: >-
+            ResourceNotFound. Only an absent optional CLIDownload API is shown as Not configured; no automatic
+            CRD creation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '503':
+          description: >-
+            Owner unavailable or successful upstream response violates contract; retain old values as stale, not
+            Ready
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+  /api/admin/plugins/registrations/{id}/enable:
+    post:
+      operationId: enableExtensionRegistration
+      tags:
+        - Extensions
+      security:
+        - BrowserSession: []
+      x-opensphere-owner: C_EXT
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        resourceVersion-precondition; retry requires fresh registration observation; correlation is audit
+        linkage, not a replay ledger
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
+        - $ref: '#/components/parameters/CsrfToken'
+      description: >-
+        Existing AAL2 owner-admitted lifecycle route. console.extension.install required. No development MFA
+        waiver here. 202 means desired state accepted, not runtime completion. Observe matching UID and
+        generation; Failed and timeout never succeed. Uninstall completion requires fresh authoritative absence.
+        Rollback is the previous verified release only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/extension-management.schema.json#/$defs/reason
+      responses:
+        '202':
+          description: Accepted desired-state change with registration observation fence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/receipt
+        '401':
+          description: Owner session authority missing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '403':
+          description: Required permission denied; never treated as optional resource absence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '404':
+          description: >-
+            ResourceNotFound. Only an absent optional CLIDownload API is shown as Not configured; no automatic
+            CRD creation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '409':
+          description: Conflict or unavailable previous release; refresh before retry
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '428':
+          description: MFA AAL2 required
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '503':
+          description: >-
+            Owner unavailable or successful upstream response violates contract; retain old values as stale, not
+            Ready
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+  /api/admin/plugins/registrations/{id}/disable:
+    post:
+      operationId: disableExtensionRegistration
+      tags:
+        - Extensions
+      security:
+        - BrowserSession: []
+      x-opensphere-owner: C_EXT
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        resourceVersion-precondition; retry requires fresh registration observation; correlation is audit
+        linkage, not a replay ledger
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
+        - $ref: '#/components/parameters/CsrfToken'
+      description: >-
+        Existing AAL2 owner-admitted lifecycle route. console.extension.remove required. No development MFA
+        waiver here. 202 means desired state accepted, not runtime completion. Observe matching UID and
+        generation; Failed and timeout never succeed. Uninstall completion requires fresh authoritative absence.
+        Rollback is the previous verified release only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/extension-management.schema.json#/$defs/reason
+      responses:
+        '202':
+          description: Accepted desired-state change with registration observation fence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/receipt
+        '401':
+          description: Owner session authority missing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '403':
+          description: Required permission denied; never treated as optional resource absence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '404':
+          description: >-
+            ResourceNotFound. Only an absent optional CLIDownload API is shown as Not configured; no automatic
+            CRD creation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '409':
+          description: Conflict or unavailable previous release; refresh before retry
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '428':
+          description: MFA AAL2 required
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '503':
+          description: >-
+            Owner unavailable or successful upstream response violates contract; retain old values as stale, not
+            Ready
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+  /api/admin/plugins/registrations/{id}/uninstall:
+    post:
+      operationId: uninstallExtensionRegistration
+      tags:
+        - Extensions
+      security:
+        - BrowserSession: []
+      x-opensphere-owner: C_EXT
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        resourceVersion-precondition; retry requires fresh registration observation; correlation is audit
+        linkage, not a replay ledger
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
+        - $ref: '#/components/parameters/CsrfToken'
+      description: >-
+        Existing AAL2 owner-admitted lifecycle route. console.extension.remove required. No development MFA
+        waiver here. 202 means desired state accepted, not runtime completion. Observe matching UID and
+        generation; Failed and timeout never succeed. Uninstall completion requires fresh authoritative absence.
+        Rollback is the previous verified release only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/extension-management.schema.json#/$defs/reason
+      responses:
+        '202':
+          description: Accepted desired-state change with registration observation fence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/receipt
+        '401':
+          description: Owner session authority missing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '403':
+          description: Required permission denied; never treated as optional resource absence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '404':
+          description: >-
+            ResourceNotFound. Only an absent optional CLIDownload API is shown as Not configured; no automatic
+            CRD creation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '409':
+          description: Conflict or unavailable previous release; refresh before retry
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '428':
+          description: MFA AAL2 required
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '503':
+          description: >-
+            Owner unavailable or successful upstream response violates contract; retain old values as stale, not
+            Ready
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+  /api/admin/plugins/registrations/{id}/rollback:
+    post:
+      operationId: rollbackExtensionRegistration
+      tags:
+        - Extensions
+      security:
+        - BrowserSession: []
+      x-opensphere-owner: C_EXT
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        resourceVersion-precondition; retry requires fresh registration observation; correlation is audit
+        linkage, not a replay ledger
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
+        - $ref: '#/components/parameters/CsrfToken'
+      description: >-
+        Existing AAL2 owner-admitted lifecycle route. console.extension.install required. No development MFA
+        waiver here. 202 means desired state accepted, not runtime completion. Observe matching UID and
+        generation; Failed and timeout never succeed. Uninstall completion requires fresh authoritative absence.
+        Rollback is the previous verified release only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/extension-management.schema.json#/$defs/reason
+      responses:
+        '202':
+          description: Accepted desired-state change with registration observation fence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/receipt
+        '401':
+          description: Owner session authority missing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '403':
+          description: Required permission denied; never treated as optional resource absence
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '404':
+          description: >-
+            ResourceNotFound. Only an absent optional CLIDownload API is shown as Not configured; no automatic
+            CRD creation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '409':
+          description: Conflict or unavailable previous release; refresh before retry
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '428':
+          description: MFA AAL2 required
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
+        '503':
+          description: >-
+            Owner unavailable or successful upstream response violates contract; retain old values as stale, not
+            Ready
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/extension-management.schema.json#/$defs/error
   /console-index/content.json:
     get:
       operationId: getConsoleIndexContent

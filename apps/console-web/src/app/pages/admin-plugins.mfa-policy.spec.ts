@@ -1,22 +1,17 @@
-import { test } from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(path.join(here, 'admin-plugins.ts'), 'utf8');
-
-test('Extension 설치 안내는 개발 local edge MFA 예외의 좁은 범위를 설명한다', () => {
-  assert.ok(source.includes('개발용 local edge의 설치·업데이트는 MFA를 생략'));
-  assert.ok(source.includes('다른 환경과 다른 lifecycle 작업은 최근 MFA를 요구'));
-  assert.ok(source.includes('사유는 항상 8자 이상 필요'));
+import {readFileSync} from 'node:fs';
+const read=(name:string)=>readFileSync(new URL(name,import.meta.url),'utf8');
+test('module discovery states the narrow development policy without waiving independent approval',()=>{
+ const html=read('./admin-modules.html');
+ for(const phrase of ['HTTPS localhost · edge · development','다른 lifecycle 작업은 MFA','요청자와 다른 운영자의 승인','8자 이상'])assert.ok(html.includes(phrase));
 });
-test('Extension 설치 버튼은 입력 signal과 요청 진행 상태에 반응한다', () => {
-  assert.ok(source.includes("readonly extensionInstallDescriptorId = signal('')"));
-  assert.ok(source.includes("readonly extensionInstallReason = signal('')"));
-  assert.ok(source.includes('(change)="extensionInstallDescriptorId.set($any($event.target).value)"'));
-  assert.ok(source.includes('(input)="extensionInstallReason.set($any($event.target).value)"'));
-  assert.ok(source.includes('[disabled]="installing() || !extensionInstallDescriptorId() || !installCatalogReady()'));
-  assert.ok(!source.includes('extensionInstallImage'));
+test('Cluster Manager installation enters the protected change request workflow, not the old duplicate form',()=>{
+ const modules=read('./admin-modules.ts');const changes=read('./admin-change-control.ts');const plugins=read('./admin-plugins.ts');
+ assert.ok(modules.includes('console-cluster-manager-install'));
+ assert.ok(modules.includes('/manage/extensions/audit'));
+ assert.ok(changes.includes('draft().reason.trim().length < 8'));
+ assert.ok(changes.includes('!current.managementReady'));
+ assert.ok(changes.includes('templateId: this.requestedTemplate()!.id'));
+ assert.ok(!plugins.includes('async installModule('));
 });

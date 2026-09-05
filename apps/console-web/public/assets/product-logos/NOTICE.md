@@ -2,7 +2,11 @@
 
 These SVG files are vendored from the OpenPlatform Labs logo catalog at repository revision
 `89e97084a386142facbfc020c9a1ee20647c47dc` and are used only to identify the corresponding
-third-party products in OpenSphere Console documentation.
+third-party products in OpenSphere Console documentation and management screens.
+
+Catalog source: https://logos.opl.io.kr . Preserve proportions and original colors;
+pair a logo with the product name, never with an unrelated module. Functional
+illustrations use the separately attributed https://pictograms.opl.io.kr assets.
 
 | File | Pinned source SHA-256 | Vendored SHA-256 |
 | --- | --- | --- |

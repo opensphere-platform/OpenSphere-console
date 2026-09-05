@@ -11,7 +11,7 @@ export const PLATFORM_MODULES: readonly ModuleDefinition[] = Object.freeze([
 ]);
 export interface ModuleCandidate {
   id: string; class: string; displayName: string;
-  release: { version?: string; imageDigest?: string };
+  release: { version?: string; artifactVersion?:string; compatibilityVersion?:string; channel?:string; imageDigest?: string };
   installation: { mode: string; eligible: boolean };
 }
 export interface ModuleRegistration {

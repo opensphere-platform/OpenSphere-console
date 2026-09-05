@@ -1,5 +1,6 @@
 import { extensionStaticContractSha256 } from './extension-release.mjs';
 import { exactExtensionPackageScope } from './extension-package-scope.mjs';
+import { validHostCompatibility } from '../../../packages/registry-client/host-compatibility.mjs';
 
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/u;
@@ -142,6 +143,7 @@ function projectRegistration(registration, namespace) {
     ? { requestedBy: safeText(registration.spec.approval.requestedBy, 128), reason: safeText(registration.spec.approval.reason, 500) } : null;
   return Object.freeze({
     name: current.name,
+    identity: { uid: current.uid, generation: current.generation, resourceVersion: current.resourceVersion },
     desiredState: registration.spec.desiredState,
     ...(installation ? { installation } : {}),
     status,
@@ -153,7 +155,7 @@ function projectPackage(pkg, registration, preference, namespace) {
   const current = packageIdentity(pkg, String(pkg?.metadata?.name || ''), namespace);
   const spec = pkg?.spec || {};
   if (!['plugin', 'subShell'].includes(spec.kind) || !DNS_LABEL.test(String(spec.hostRef || ''))
-      || !COMPATIBILITY_VERSION.test(String(spec.hostCompat || ''))
+      || !validHostCompatibility(spec.hostCompat)
       || !DIGEST.test(String(spec.image?.digest || '')) || spec.resolution?.resolvedDigest !== spec.image.digest) {
     throw fault('UIPluginPackage contract is invalid', 'AuthorityContractViolation');
   }
@@ -292,14 +294,17 @@ export function createKubernetesExtensionManagementAuthority({
     } catch {
       throw fault('Kubernetes management authority is unavailable', 'AuthorityUnavailable', 503, sideEffect, true);
     }
-    const value = await boundedJson(response, maximumResponseBytes);
     if (!accepted.includes(response.status)) {
+      // Kubernetes discovery 404 may be text/plain. Preserve status before JSON
+      // validation; do not misclassify missing optional APIs as malformed data.
+      await response.body?.cancel();
       const code = response.status === 404 ? 'ResourceNotFound'
         : response.status === 409 ? 'WriteConflict' : response.status >= 500 ? 'AuthorityUnavailable' : 'OwnerRejected';
       throw fault(`Kubernetes management request failed with HTTP ${response.status}`, code,
         response.status === 404 ? 404 : response.status === 409 ? 409 : response.status >= 500 ? 503 : 403,
         sideEffect, response.status === 409 || response.status >= 500);
     }
+    const value = await boundedJson(response, maximumResponseBytes);
     return value;
   }
   async function inventories() {
@@ -361,7 +366,7 @@ export function createKubernetesExtensionManagementAuthority({
           || observed.resourceVersion === current.resourceVersion) {
         throw fault('Kubernetes returned mismatched desired-state evidence', 'AuthorityContractViolation', 503, 'present');
       }
-      return Object.freeze({ id, desiredState, registrationResourceVersionBefore: current.resourceVersion, registrationResourceVersion: observed.resourceVersion });
+      return Object.freeze({ id, desiredState, registrationUid: observed.uid, registrationGeneration: observed.generation, registrationResourceVersionBefore: current.resourceVersion, registrationResourceVersion: observed.resourceVersion });
     },
     async rollback({ id, actorRef, reason }) {
       if (!DNS_LABEL.test(String(id || '')) || !exactMutationText(actorRef, 1, 128)
@@ -437,7 +442,7 @@ export function createKubernetesExtensionManagementAuthority({
       return Object.freeze({
         id, desiredState: 'Enabled', digest: previous.digest, artifactVersion: previous.artifactVersion,
         packageResourceVersionBefore: packageMetadata.resourceVersion, packageResourceVersion: appliedPackage.resourceVersion,
-        registrationResourceVersionBefore: current.resourceVersion, registrationResourceVersion: observed.resourceVersion,
+        registrationUid: observed.uid, registrationGeneration: observed.generation, registrationResourceVersionBefore: current.resourceVersion, registrationResourceVersion: observed.resourceVersion,
       });
     },
     async setBindingEnabled({ name, enabled }) {

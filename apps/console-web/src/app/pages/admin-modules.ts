@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import {releaseLabel} from '../core/release-display';
+import { ChangeDetectionStrategy, Component, Input, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink, ActivatedRoute, Router } from '@angular/router';
 import { ClarityModule } from '@clr/angular';
 import { HttpService } from '../core/http.service';
@@ -17,6 +18,11 @@ interface Receipt extends OperationReceipt { planRevision?: string; actorRef?: s
   templateUrl: './admin-modules.html', styleUrl: './admin-modules.scss',
 })
 export class AdminModules implements OnInit, OnDestroy {
+  @Input() embedded=false;
+  readonly releaseLabel=releaseLabel;
+  readonly search=signal('');
+  readonly visibleModules=computed(()=>this.modules.filter(m=>(m.name+' '+m.description).toLowerCase().includes(this.search().toLowerCase())));
+  readonly pictogram=(id:string)=>'/assets/pictograms/'+({ 'cluster-manager':'cloud-infrastructure-management',foundation:'microservices',workspace:'connected-ecosystem',developer:'developer-tools',pulse:'systems','ai-workbench':'intelligence' } as Record<string,string>)[id]+'.svg';
   private readonly http = inject(HttpService);
   private readonly control = inject(PluginControlClient);
   private readonly extensions = inject(ExtensionHostService);
@@ -118,6 +124,10 @@ export class AdminModules implements OnInit, OnDestroy {
   async install() {
     const candidate = this.candidate();
     if (!candidate || this.busy() || !this.fresh() || this.reason().trim().length < 8) return;
+    if(this.selected()==='cluster-manager') {
+      await this.router.navigate(['/manage/extensions/audit'],{queryParams:{template:'console-cluster-manager-install'}});
+      return;
+    }
     this.busy.set(true); this.error.set('');
     this.submittedBody ||= JSON.stringify({descriptorId: candidate.descriptorId, catalogRevision: candidate.catalogRevision, reason: this.reason().trim()});
     try {

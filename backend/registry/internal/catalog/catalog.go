@@ -30,8 +30,11 @@ type Source struct {
 }
 
 type Release struct {
-	Version     string `json:"version,omitempty"`
-	ImageDigest string `json:"imageDigest,omitempty"`
+	ArtifactVersion      string `json:"artifactVersion,omitempty"`
+	CompatibilityVersion string `json:"compatibilityVersion,omitempty"`
+	Channel              string `json:"channel,omitempty"`
+	Version              string `json:"version,omitempty"`
+	ImageDigest          string `json:"imageDigest,omitempty"`
 }
 
 type Installation struct {

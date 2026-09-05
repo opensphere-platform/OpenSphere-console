@@ -8,6 +8,8 @@ import {
 } from '../system-plugins/system-plugin-lazy-recovery.ts';
 
 const source = fs.readFileSync(new URL('./admin-plugins.ts', import.meta.url), 'utf8');
+const navigation = fs.readFileSync(new URL('./extensions-workspace-nav.ts', import.meta.url), 'utf8');
+const modules = fs.readFileSync(new URL('./admin-modules.html', import.meta.url), 'utf8');
 const client = fs.readFileSync(new URL('../core/plugin-control-client.service.ts', import.meta.url), 'utf8');
 const projectionStore = fs.readFileSync(new URL('../core/extension-projection.store.ts', import.meta.url), 'utf8');
 const routes = fs.readFileSync(new URL('../app.routes.ts', import.meta.url), 'utf8');
@@ -56,8 +58,6 @@ test('Enabled registrations never present Enable as their primary lifecycle acti
 
 test('an unavailable control projection is unknown or stale, never a false zero', () => {
   assert.match(source, /return '—'/);
-  assert.match(source, /SubShells <span class="view-count">\{\{ subShellMetric\(\) \}\}<\/span>/);
-  assert.match(source, /Plugins <span class="view-count">\{\{ pluginMetric\(\) \}\}<\/span>/);
   assert.match(source, /registrationsLoaded\(\) \? String\(this\.subShellRegistrations\(\)\.length\) : '—'/);
   assert.match(source, /Promise\.allSettled/);
   assert.match(source, /마지막 정상 값을 유지합니다/);
@@ -69,12 +69,12 @@ test('an unavailable control projection is unknown or stale, never a false zero'
 });
 
 test('Extension management separates first-level subShells from host-owned plugins', () => {
-  assert.match(source, /SubShell 관리/);
-  assert.match(source, /Plugin 관리/);
+  assert.match(source, /설치된 기능/);
+  assert.match(source, /하위 기능 관리/);
   assert.match(source, /subShellRegistrations\(\)/);
   assert.match(source, /pluginHostGroups\(\)/);
   assert.match(source, /group\.hostRef/);
-  assert.match(source, /plugin은 1단 메뉴 객체가 아닙니다/);
+  assert.match(source, /하위 기능은 1단 메뉴 객체가 아닙니다/);
   assert.doesNotMatch(source, /@for \(r of registrations\(\); track r\.name\)/);
 });
 
@@ -83,11 +83,11 @@ test('Plugin management lists Console-owned system plugins separately from Regis
   assert.match(source, /registryPluginCount = computed\(\(\) =>/);
   assert.match(source, /systemPluginCount = computed\(\(\) => this\.systemPluginDescriptors\(\)\.length\)/);
   assert.match(source, /totalPluginCount = computed\(\(\) => this\.registryPluginCount\(\) \+ this\.systemPluginCount\(\)\)/);
-  assert.match(source, /<h3>System Plugins<\/h3>/);
+  assert.match(source, /<h3>Console 내장 기능<\/h3>/);
   assert.match(source, /descriptor\.displayName/);
   assert.match(source, /descriptor\.category/);
-  assert.match(source, /Console exact digest에 결속된 읽기 전용 항목/);
-  assert.match(source, /<h2>Registry Plugins<\/h2>/);
+  assert.match(source, /Console 릴리스에 포함된 읽기 전용 항목/);
+  assert.match(source, /<h2>Registry 기능 기여<\/h2>/);
   assert.match(systemPluginRegistry, /validateConsoleComposition\(CONSOLE_COMPOSITION_MANIFEST\)/);
   assert.match(compositionManifest, /systemPlugins:\s*Object\.freeze\(\[OS_SHELL_SYSTEM_PLUGIN, R2D2_SYSTEM_PLUGIN\]\)/);
   assert.match(osShellDescriptor, /displayName:\s*'OS Shell'/);
@@ -100,7 +100,7 @@ test('Plugin management lists Console-owned system plugins separately from Regis
   assert.match(r2d2Route, /loadComponent/);
   assert.match(r2d2Route, /catch\(\(error: unknown\) =>/);
   assert.match(r2d2Route, /return SystemPluginUnavailable/);
-  const systemSection = source.slice(source.indexOf('aria-label="System Plugins"'), source.indexOf('<h2>Registry Plugins<\/h2>'));
+  const systemSection = source.slice(source.indexOf('aria-label="Console 내장 기능"'), source.indexOf('<h2>Registry 기능 기여<\/h2>'));
   assert.doesNotMatch(systemSection, /run\('(?:enable|disable|uninstall)'/);
 });
 
@@ -136,16 +136,16 @@ test('Topology includes Console-owned system plugins without treating them as in
   assert.match(source, /SystemPluginRegistryService/);
   assert.match(source, /this\.systemPlugins\.list\(\)/);
   assert.match(source, /id: 'system-plugins'/);
-  assert.match(source, /label: 'System Plugins'/);
+  assert.match(source, /label: '기본 제공 기능'/);
   assert.match(source, /label: descriptor\.displayName/);
   assert.match(source, /descriptor\.category/);
   assert.match(source, /type: 'systemPlugin'/);
-  assert.match(source, /Console release-bound/);
+  assert.match(source, /Console 릴리스에 포함/);
   assert.match(source, /actionable: false/);
   assert.match(systemPluginRegistry, /list\(\): readonly SystemPluginDescriptor\[\]/);
   assert.match(systemPluginRegistry, /Object\.freeze\(\[\.\.\.this\.descriptors\.values\(\)\]\)/);
   assert.match(source, /id: 'core-surfaces'/);
-  assert.match(source, /label: 'Core Surfaces'/);
+  assert.match(source, /label: '기본 화면'/);
   assert.match(source, /type: 'core'/);
   assert.match(compositionManifest, /MANUAL_CORE_SURFACE/);
   assert.match(compositionManifest, /kind:\s*'coreSurface'/);
@@ -209,17 +209,17 @@ test('inactive routes are healthy on-demand lifecycle states, not UI or Host fai
 test('every Extension management tab has a reloadable canonical route', () => {
   assert.match(routes, /path: 'extensions', redirectTo: 'extensions\/subshells'/);
   assert.match(routes, /path: 'extensions\/:view', component: AdminPlugins/);
-  assert.match(source, /\[routerLink\]="'\/manage\/extensions\/' \+ view\.id"/);
+  assert.match(navigation, /\[routerLink\]="'\/manage\/extensions\/'\+item\.id"/);
   for (const view of ['subshells', 'plugins', 'topology', 'catalog', 'registry-connections', 'trust', 'audit', 'bindings']) {
-    assert.ok(source.includes("id: '" + view + "'"));
+    assert.ok(new RegExp("id:\\s*'" + view + "'").test(source));
   }
   assert.match(source, /activeView\(\) === 'registry-connections'/);
   assert.match(source, /activeView\(\) === 'trust'/);
 });
 
 test('Registry delivery and trust have explicit no-secret controls and impact previews', () => {
-  assert.match(source, /Registry Connections/);
-  assert.match(source, /Trust & Revocation/);
+  assert.match(source, /Registry 연결/);
+  assert.match(source, /신뢰·회수/);
   assert.match(client, /\/registry-connections\/opensphere-ghcr\/verify/);
   assert.match(source, /registryDependentPackages/);
   assert.match(source, /revocationImpact/);
@@ -244,7 +244,7 @@ test('Catalog separates common Registry descriptors from Console Extension packa
   assert.match(source, /\/api\/v1\/registry/);
   assert.match(source, /body\.schema !== 'opensphere\.registry-catalog\/v1'/);
   assert.match(source, /body\.stale/);
-  assert.match(source, /Object\.values\(body\.sources \|\| \{\}\)\.every\(\(source\) => source\.ready\)/);
+  assert.match(source, /moduleCatalogFresh\(body\)/);
   assert.match(source, /snapshot\.catalog\.moduleDescriptors/);
   assert.match(source, /snapshot\.inventory\.coverage/);
   assert.match(source, /registryDescriptorClasses/);
@@ -256,8 +256,8 @@ test('Catalog separates common Registry descriptors from Console Extension packa
 
 test('Foundation module Catalog does not configure or create service instances', () => {
   const catalogSection = source.slice(source.indexOf('id="foundation-catalog-title"'), source.indexOf('id="extension-package-catalog-title"'));
-  assert.match(catalogSection, /PostgreSQL 인스턴스 생성과 운영 설정은 설치된 PFSS/);
-  assert.match(catalogSection, /\/pfss\/postgres/);
+  assert.match(modules, /관리 화면 열기/);
+  assert.ok(source.includes('<os-admin-modules [embedded]="true"'));
   assert.doesNotMatch(catalogSection, /create-postgres-cluster|operations\/plan|postgresVersion|Instance name|Available/);
   assert.doesNotMatch(source, /createOscePostgresPlan|selectedFoundationPlan|oscePlan/);
 });

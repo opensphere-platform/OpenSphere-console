@@ -48,6 +48,42 @@ func TestBuildIsDeterministicAndCompatible(t *testing.T) {
 	}
 }
 
+func TestReleaseDisplayIsBoundToInstalledImageAndSource(t *testing.T) {
+	input := fixtureInput()
+	c := input.ReleaseLock.Components["registry"]
+	makeDisplay := func(image, revision, version string) string {
+		b, _ := json.Marshal(map[string]interface{}{"schema": "opensphere.release-display/v1", "components": map[string]interface{}{"registry": map[string]interface{}{"image": image, "sourceRevision": revision, "artifactVersion": version}}})
+		return string(b)
+	}
+	applyReleaseDisplay(&input.ReleaseLock, makeDisplay("wrong", c.SourceRevision, "202609051810"))
+	if input.ReleaseLock.Components["registry"].ArtifactVersion != "" {
+		t.Fatal("mismatched image label accepted")
+	}
+	applyReleaseDisplay(&input.ReleaseLock, makeDisplay(c.Image, "wrong", "202609051810"))
+	if input.ReleaseLock.Components["registry"].ArtifactVersion != "" {
+		t.Fatal("mismatched source label accepted")
+	}
+	applyReleaseDisplay(&input.ReleaseLock, makeDisplay(c.Image, c.SourceRevision, "202699051810"))
+	if input.ReleaseLock.Components["registry"].ArtifactVersion != "" {
+		t.Fatal("invalid build label accepted")
+	}
+	applyReleaseDisplay(&input.ReleaseLock, makeDisplay(c.Image, c.SourceRevision, "202609051810"))
+	if input.ReleaseLock.Components["registry"].ArtifactVersion != "202609051810" {
+		t.Fatal("exact publication metadata missing")
+	}
+	response, err := Build(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range response.Inventory.Descriptors {
+		if descriptor.Class == "coreService" {
+			if descriptor.Release.Version != "" || descriptor.Release.ArtifactVersion != "202609051810" || descriptor.Release.ImageDigest != imageDigest(c.Image) {
+				t.Fatal("human display changed execution identity or reused source SHA as version")
+			}
+		}
+	}
+}
+
 func TestExecutionIdentityPatternsAcceptOnlyCanonicalValues(t *testing.T) {
 	if !repositoryRE.MatchString("ghcr.io/opensphere-platform/opensphere-plugin-postgres") {
 		t.Fatal("canonical OpenSphere repository was rejected")

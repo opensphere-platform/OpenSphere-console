@@ -82,7 +82,15 @@
     "listCliDevices",
     "revokeCliDevice",
     "beginRegistryOAuth",
-    "getConsoleIndexContent"
+    "getConsoleIndexContent",
+    "getExtensionManagementCatalog",
+    "getExtensionManagementRegistrations",
+    "getExtensionManagementBindings",
+    "enableExtensionRegistration",
+    "disableExtensionRegistration",
+    "uninstallExtensionRegistration",
+    "rollbackExtensionRegistration",
+    "getRegistryInventory"
   ],
   "requiredActionPolicies": [
     "console.platform.change.propose@1.0",
@@ -169,7 +177,8 @@
     "registry-oauth-request.schema.json",
     "registry-oauth-response.schema.json",
     "console-index-content.schema.json",
-    "console-index-envelope.schema.json"
+    "console-index-envelope.schema.json",
+    "extension-management.schema.json"
   ],
   "releaseProfiles": {
     "bootstrap-core": {
