@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "schemaVersion": "1.0",
-  "policyRevision": "console-operation-policy-2026-09-02.1",
+  "policyRevision": "console-operation-policy-2026-09-05.1",
   "actions": [
     {
       "actionId": "console.platform.change.propose",
@@ -49,6 +49,7 @@
     },
     {
       "actionId": "console.extension.install",
+      "requesterConfirmedTargetPattern": "^ghcr\\.io/opensphere-platform/opensphere-shell-cluster-manager@sha256:[a-f0-9]{64}$",
       "actionVersion": "1.0",
       "requirement": "CON-FR-007",
       "permission": "console.extension.install",

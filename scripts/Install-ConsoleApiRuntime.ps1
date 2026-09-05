@@ -648,17 +648,18 @@ if ($ledger.Count -ne 1 -or $ledger[0] -ne $expectedLedger) {
 }
 # The database exception is disabled by default and cannot be enabled by C_API.
 # Only this installation owner copies the verified local context; missing or
-# non-development configuration removes the exception without changing history.
+# non-localhost or non-edge configuration removes the exception without changing history.
 $moduleConfigRaw = (Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'configmap', 'opensphere-installation-lock', '--ignore-not-found', '-o', 'json') | Out-String).Trim()
 $moduleConfig = if ($moduleConfigRaw) { ($moduleConfigRaw | ConvertFrom-Json).data.'config.json' | ConvertFrom-Json } else { $null }
 $moduleUri = [uri]$ConsoleUrl
-$moduleLocal = $KubeContext -eq 'docker-desktop' -and $moduleConfig -and $moduleConfig.channel -eq 'edge' -and
-  $moduleConfig.authEnvironment -eq 'development' -and $moduleConfig.consoleUrl -eq $ConsoleUrl -and
+$moduleLocal = $moduleConfig -and $moduleConfig.channel -eq 'edge' -and $moduleConfig.consoleUrl -eq $ConsoleUrl -and
   $moduleUri.Scheme -eq 'https' -and $moduleUri.Host -in @('localhost','127.0.0.1','[::1]') -and
   -not $moduleUri.UserInfo -and $moduleUri.AbsolutePath -eq '/' -and -not $moduleUri.Query -and -not $moduleUri.Fragment
 if ($moduleLocal) {
   $moduleOrigin = $moduleUri.GetLeftPart([UriPartial]::Authority).Replace("'", "''")
-  Invoke-OwnerSql "INSERT INTO console_operation.module_installation_environment(singleton,channel,auth_environment,kube_context,console_origin) VALUES(true,'edge','development','docker-desktop','$moduleOrigin') ON CONFLICT(singleton) DO UPDATE SET console_origin=EXCLUDED.console_origin,updated_at=statement_timestamp();" | Out-Null
+  $moduleEnvironment = ([string]$moduleConfig.authEnvironment).Replace("'", "''")
+  $moduleContext = $KubeContext.Replace("'", "''")
+  Invoke-OwnerSql "INSERT INTO console_operation.module_installation_environment(singleton,channel,auth_environment,kube_context,console_origin) VALUES(true,'edge','$moduleEnvironment','$moduleContext','$moduleOrigin') ON CONFLICT(singleton) DO UPDATE SET auth_environment=EXCLUDED.auth_environment,kube_context=EXCLUDED.kube_context,console_origin=EXCLUDED.console_origin,updated_at=statement_timestamp();" | Out-Null
 } else {
   Invoke-OwnerSql 'DELETE FROM console_operation.module_installation_environment;' | Out-Null
 }

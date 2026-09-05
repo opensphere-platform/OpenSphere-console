@@ -231,7 +231,7 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
   };
   const operations = createPlatformChangeOperations(dependencies);
   return {
-    operations, order, accepted, proposed, approvals, proposalBindings, mergeBindings,
+    operations, order, accepted, proposed, approvals, proposalBindings, mergeBindings, seedHistoricalRecord(value) { operationRecord = value; },
     setPostMergeOwnerReady(value) { ownerReady = value === true; },
   };
 }
@@ -258,33 +258,23 @@ function nativeRequest() {
     reason:'Install the reviewed Cluster Manager module',desiredState:{contract:'opensphere.console.git-reviewed-module/v1',descriptorId:'extension.cluster-manager',
     catalogRevision:'sha256:'+'a'.repeat(64),image:'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@sha256:'+'b'.repeat(64)}};
 }
-test('native Git path preserves one C_EXT action, independent approval and immutable declaration before merge',async()=>{
-  const f=fixture({native:true});const nativeSession={...session,permissions:[...session.permissions,'console.extension.install']};
-  const proposed=await f.operations.propose({session:nativeSession,body:nativeRequest(),idempotencyKey:'native-git-propose',correlationId:'native-git-correlation'});
-  assert.equal(proposed.operation.actionId,'console.extension.install');assert.equal(proposed.operation.ownerRef,'C_EXT');
-  assert.equal(proposed.operation.state,'Planned');assert.equal(f.accepted.length,1);assert.equal(f.accepted[0].declarationBinding.target,'extension.cluster-manager');
-  assert.equal(f.accepted[0].executionPlan.authority,'OpenSphereRegistry');assert.equal(f.proposed[0].submittedAt,proposed.operation.createdAt);
-  const merged=await f.operations.approve({session:approverSession,operationId,body:{reason:'Independent review of module and exact image'},idempotencyKey:'native-git-approve',correlationId:'native-git-correlation'});
-  assert.equal(merged.merged,true);assert.equal(f.accepted.length,1);assert.equal(f.approvals.length,1);
-  assert.ok(f.order.indexOf('approval')<f.order.indexOf('gitea-merge'));
-  assert.ok(f.order.indexOf('gitea-merge')<f.order.indexOf('merge-binding'));
+test('retired Cluster Manager Git intake directs users to the Drawer without writes', async () => {
+ const f=fixture({native:true});
+ await assert.rejects(f.operations.propose({session,body:nativeRequest(),idempotencyKey:'retired-module-install',correlationId:'retired-module-install'}),{code:'PolicyRejected',status:422,sideEffect:'none'});
+ assert.equal(f.accepted.length,0);assert.equal(f.proposed.length,0);assert.equal(f.approvals.length,0);
 });
 test('native path rejects unsupported consumer before creating intent even while owner is healthy',async()=>{
  const f=fixture({native:true});await assert.rejects(f.operations.propose({session,body:request(),idempotencyKey:'unsupported-consumer',correlationId:'unsupported-consumer'}),{code:'PolicyRejected'});
  assert.equal(f.accepted.length,0);assert.equal(f.proposed.length,0);
 });
 
-test('native proposal resume preserves operation identity and forbids another requester', async () => {
-  const f = fixture({ native: true });
-  const nativeSession = { ...session, permissions: [...session.permissions, 'console.extension.install'] };
-  await f.operations.propose({ session: nativeSession, body: nativeRequest(), idempotencyKey: 'native-resume-initial', correlationId: 'native-resume-correlation' });
-  const replay = await f.operations.propose({ session: nativeSession, body: { operationId }, idempotencyKey: 'native-resume-retry', correlationId: 'native-resume-correlation' });
-  assert.equal(replay.requestId, operationId); assert.equal(replay.duplicate, true);
-  assert.equal(f.accepted.length, 1); assert.deepEqual(f.proposed[0], f.proposed[1]);
-  await assert.rejects(f.operations.propose({ session: { ...approverSession, permissions: ['console.git.change'] }, body: { operationId }, correlationId: 'native-resume-other' }), { code: 'PermissionDenied' });
-  assert.equal(f.proposed.length, 2);
+test('historical Cluster Manager Git requests are preserved but cannot resume or request another approver',async()=>{
+ const f=fixture({native:true});
+ f.seedHistoricalRecord({operation_id:operationId,actor_ref:session.subjectId,state:'Planned',declaration_binding:{templateId:'console-cluster-manager-install'}});
+ await assert.rejects(f.operations.propose({session,body:{operationId},correlationId:'retired-module-resume'}),{code:'PolicyRejected',status:422,sideEffect:'none'});
+ await assert.rejects(f.operations.approve({session,operationId,body:{reason:'no longer required'},correlationId:'retired-module-approve'}),{code:'PolicyRejected',status:422,sideEffect:'none'});
+ assert.equal(f.accepted.length,0);assert.equal(f.proposed.length,0);assert.equal(f.approvals.length,0);
 });
-
 test('Gitea status is current-session permission gated and keeps owner readiness false', async () => {
   const { operations, order } = fixture();
   await assert.rejects(operations.status({ session: { ...session, permissions: [] } }), {

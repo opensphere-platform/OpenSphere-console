@@ -216,7 +216,11 @@ export function createOperationService({ store, policyCatalog, clock = () => new
         risk: policy.risk,
         reason: validated.reason,
         planRevision: policy.policyRevision,
-        approvalRequired: Boolean(policy.approvalRequired),
+        // User-approved Cluster Manager installation only; unrelated actions and Git protection are unchanged.
+        // This is independent of MFA, which authorizeOperation above still enforces outside localhost AND edge.
+        approvalRequired: Boolean(policy.approvalRequired) && !(declarationBinding === null
+          && validated.actionId === 'console.extension.install' && policy.requesterConfirmedTargetPattern
+          && new RegExp(policy.requesterConfirmedTargetPattern).test(validated.targetRef)),
         idempotencyKey: key,
         correlationId: correlation,
         sourceRevision: null,

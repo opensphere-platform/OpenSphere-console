@@ -320,10 +320,16 @@ export function createPlatformChangeOperations({
     },
 
     async propose({ session, body, idempotencyKey, correlationId }) {
+      if (body?.templateId === 'console-cluster-manager-install' || body?.target === 'extension.cluster-manager') {
+        throw Object.assign(new Error('Cluster Manager 설치는 Extensions 기능 찾기의 설치 Drawer에서 진행하세요. 별도 Git 요청·다른 운영자 승인은 폐기되었습니다.'), {code:'PolicyRejected',status:422,sideEffect:'none'});
+      }
       if (moduleOwner && body && Object.keys(body).length === 1 && Object.hasOwn(body, 'operationId')) {
         assertStatusAuthority(session);
         const operationId = text(body.operationId, 'operationId', 36, 36);
         const record = await projectionStore.get({ sessionId: session.sessionId, actorRef: session.subjectId, operationId });
+        if (record?.declaration_binding?.templateId === 'console-cluster-manager-install') {
+          throw Object.assign(new Error('이전 Git 설치 요청은 이력으로 보존됩니다. 기능 찾기에서 현재 배포본을 설치하세요.'), {code:'PolicyRejected',status:422,sideEffect:'none'});
+        }
         if (!record?.declaration_binding || record.actor_ref !== session.subjectId || !['Planned', 'Authorized'].includes(record.state)) {
           throw Object.assign(new Error('요청자 본인의 병합 전 설치 선언만 재개할 수 있습니다.'), { code: 'PermissionDenied', status: 403, sideEffect: 'none' });
         }
@@ -520,6 +526,13 @@ export function createPlatformChangeOperations({
     },
 
     async approve({ session, operationId, body, idempotencyKey, correlationId }) {
+      if (moduleOwner) {
+        assertStatusAuthority(session);
+        const existing = await projectionStore.get({sessionId:session.sessionId,actorRef:session.subjectId,operationId});
+        if (existing?.declaration_binding?.templateId === 'console-cluster-manager-install') {
+          throw Object.assign(new Error('기존 Cluster Manager Git 설치 요청은 이력으로 보존됩니다. 다른 운영자 승인 대신 기능 찾기의 설치 Drawer를 사용하세요.'), {code:'PolicyRejected',status:422,sideEffect:'none'});
+        }
+      }
       const approval = validateApproval(body);
       const authority = moduleOwner
         ? await operationService.assertGiteaModuleApprovalAuthority({ session, reason: approval.reason, operationId })

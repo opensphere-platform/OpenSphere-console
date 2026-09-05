@@ -4,10 +4,13 @@ export function localDevelopmentModuleInstall(config, publicOrigin, action, targ
   const exactInstall = action === 'console.extension.install'
     && /^ghcr\.io\/opensphere-platform\/opensphere-shell-cluster-manager@sha256:[a-f0-9]{64}$/.test(target || '');
   const intakeOnly = action === 'console.extension.inspect' && target === 'extension.cluster-manager';
-  if ((!exactInstall && !intakeOnly) || config?.channel !== 'edge' || config?.authEnvironment !== 'development') return false;
+  if (!exactInstall && !intakeOnly) return false;
   try {
     const url = new URL(config.consoleUrl);
-    return url.protocol === 'https:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    // User instruction: MFA is required, except when BOTH localhost AND edge hold.
+    // An edge channel on an external host remains false. The installation origin is server-owned.
+    return config.channel === 'edge' && url.protocol === 'https:'
+      && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
       && !url.username && !url.password && url.origin === publicOrigin && url.pathname === '/' && !url.search && !url.hash;
   } catch { return false; }
 }

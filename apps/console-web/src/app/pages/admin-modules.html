@@ -2,8 +2,9 @@
 
 <section class="module-connection"><div><strong>GHCR · opensphere-platform</strong><span>{{ registryState() }}</span></div><a routerLink="/manage/extensions/registry-connections">Registry 연결 관리</a></section>
 @if (error()) { <clr-alert clrAlertType="danger" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ error() }}</span></clr-alert-item></clr-alert> }
-@if (!fresh()) { <p class="notice" role="status">최신 설치 상태를 확인할 수 없습니다. 연결이 복구되기 전에는 설치할 수 없습니다.</p> }
-<p class="notice">공식 Cluster Manager 설치·승인은 HTTPS localhost · edge · development의 승인된 개발 정책에서만 MFA 예외를 사용합니다. 다른 lifecycle 작업은 MFA가 필요하며, 요청자와 다른 운영자의 승인은 유지됩니다. 요청 사유는 8자 이상 입력합니다.</p>
+@if (!loaded()) { <p role="status">설치 가능한 배포본과 현재 상태를 확인하고 있습니다.</p> }
+@else if (!fresh()) { <p class="notice" role="status">최신 설치 상태를 확인할 수 없습니다. 연결이 복구되기 전에는 설치할 수 없습니다.</p> }
+<p>설치 검토를 누르면 오른쪽에서 제공 기능·권한·진행 절차를 확인할 수 있습니다. 검토만으로 설치되지는 않습니다.</p>
 <div class="module-search"><label for="module-search">기능 검색</label><input id="module-search" type="search" class="clr-input" placeholder="제품 이름 또는 기능" [value]="search()" (input)="search.set($any($event.target).value)" /></div>
 <div class="module-grid">
   @for (module of visibleModules(); track module.id) {
@@ -15,30 +16,66 @@
       @else if (fresh() && !status(module.id).ready) { <p class="module-note">현재 Registry에 검증된 설치 배포본이 없습니다.</p> }
       <footer>
         @if (status(module.id).ready) { <a class="btn btn-primary" [routerLink]="'/p/' + module.id">관리 화면 열기</a> }
-        @else { <button class="btn btn-primary" [disabled]="busy() || operationPending() || !status(module.id).installable" (click)="inspect(module.id)">설치 검토</button> }
+        @else { <button class="btn btn-primary" aria-haspopup="dialog" aria-controls="module-installation-drawer" [disabled]="busy() || operationPending() || !status(module.id).installable" (click)="inspect(module.id)">설치 검토</button> }
         <a class="btn btn-link" routerLink="/manage/extensions/audit">설치·변경 작업</a>
       </footer>
     </article>
   }
 </div>
-@if (candidate(); as plan) {
-  <section class="module-plan" aria-labelledby="module-plan-title"><h2 id="module-plan-title">{{ selectedModule()?.name }} 설치 검토</h2>
-    <p>선택한 배포본을 현재 클러스터의 Console에 설치합니다. 설치 후 제품 화면에서 기초 모듈과 저장소를 설정합니다.</p>
-    <dl><dt>릴리스</dt><dd>{{ releaseLabel(available(selected())?.release || {channel:plan.channel}) }}</dd><dt>호환 기준</dt><dd>{{ plan.compatibilityVersion }}</dd><dt>설치 범위</dt><dd>현재 클러스터 · 제품별 격리 워크로드</dd></dl>
-    <details><summary>검증된 이미지 · 원본 식별자</summary><p class="digest">{{plan.image}}</p><p class="digest">{{plan.sourceRevision}}</p></details>
-    @if(selected()==='cluster-manager'){<p>현재 배포본의 클러스터 조회 범위와 권한을 검토합니다. Ceph 연결 등 후속 운영 기능의 완료를 뜻하지 않습니다.</p>}
-    @if(selected()!=='cluster-manager'){<label for="module-reason">설치 사유</label><input id="module-reason" class="clr-input" [value]="reason()" (input)="reason.set($any($event.target).value)" minlength="8" maxlength="500" />} @else {<p>다음 요청서에서 사유를 입력하고 변경 내용을 검토합니다.</p>}
-    <p>정책에 따라 다른 운영자의 승인이 필요할 수 있습니다. 진행 상황은 아래 작업에 표시됩니다.</p>
-    <button class="btn btn-primary" [disabled]="busy() || !fresh() || reason().trim().length < 8" (click)="install()">{{ busy() ? '처리 중' : selected()==='cluster-manager' ? '설치 요청서 · 승인 단계로' : '이 배포본 설치' }}</button>
-  </section>
-}
-@if (receipt(); as operation) {
-  <section class="module-operation" aria-live="polite"><h2>설치 진행 · {{ operation.state || '조회 중' }}</h2><p class="digest">작업 {{ operation.operationId }}</p>
-    <ol class="steps">@for (stage of stages; track stage; let i = $index) { <li [class.done]="activeStage() > i" [class.active]="activeStage() === i">{{ stage }}</li> }</ol>
-    <dl><dt>설치 대상</dt><dd class="digest">{{ operation.targetRef }}</dd><dt>요청자</dt><dd>{{ operation.actorRef }}</dd><dt>사유</dt><dd>{{ operation.reason }}</dd></dl>
-    @if (operation.state === 'Planned') { <p>설치 계획이 접수되었습니다. 요청자와 다른 사람인 승인 권한자가 이 작업 링크를 열어 검토 후 승인합니다. 개발 MFA 예외가 자기 승인을 허용하지는 않습니다.</p><button class="btn btn-primary" (click)="advance('approvals')" [disabled]="busy()">설치 계획 승인</button> }
-    @if (operation.state === 'Applied') { <button class="btn btn-primary" (click)="advance('verification')" [disabled]="busy()">설치 결과 확인</button> }
-    @if (operation.state === 'Failed' || operation.state === 'Unknown') { <p class="notice">설치가 완료되지 않았습니다. {{ operation.error?.message || operation.error?.code || '작업 상태와 패키지 상세를 확인하세요.' }}</p> }
-    <a routerLink="/manage/extensions/audit">감사 기록</a>
-  </section>
-}
+@if (receipt() || candidate()) { <button class="btn btn-outline" (click)="reviewOpen.set(true)">설치 진행 보기</button> }
+<dialog #installationDrawer id="module-installation-drawer" class="installation-drawer" aria-labelledby="module-review-title" aria-describedby="module-review-purpose" (cancel)="closeReview($event)">
+  <div class="drawer-layout">
+    <div class="drawer-heading">
+      <div><span class="eyebrow">{{ submitted() ? '설치 진행' : '설치 전 확인' }}</span><h2 id="module-review-title">{{ selectedModule()?.name }} 설치</h2></div>
+      <button type="button" class="btn btn-link" aria-label="설치 화면 닫기" (click)="closeReview()" autofocus>닫기 ×</button>
+    </div>
+    <div class="drawer-body">
+      <p id="module-review-purpose">{{ submitted() ? 'OS가 접수한 설치를 진행하고 실제 동작을 확인합니다. 화면을 닫아도 설치는 계속됩니다.' : '제공 기능과 설치 범위를 확인한 뒤 설치를 누르세요. 검토만으로 클러스터가 변경되지는 않습니다.' }}</p>
+      @if (busy()) { <p class="notice" role="status" aria-live="polite">{{ candidate() ? '설치를 접수하고 있습니다…' : '배포본을 확인하고 있습니다…' }}</p> }
+      @if (reviewError()) { <div class="notice" role="alert"><p>{{ reviewError() }}</p>@if (!candidate() && !receipt()) { <button class="btn btn-outline" [disabled]="busy() || !status(selected()).installable" (click)="inspect(selected())">다시 확인</button> }</div> }
+      @if (candidate(); as plan) {
+        <section class="review-block" aria-labelledby="module-release-title">
+          <h3 id="module-release-title">설치할 배포본</h3>
+          <div class="review-release"><img [src]="pictogram(selected())" alt="" width="40" height="40"/><strong>{{ releaseLabel(available(selected())?.release || {channel:plan.channel}) }}</strong></div>
+          <dl><dt>대상</dt><dd>지금 접속한 Console의 Kubernetes 클러스터</dd><dt>설치 위치</dt><dd><code>opensphere-console</code> 안의 모듈 전용 워크로드</dd><dt>호환 기준</dt><dd>{{ plan.compatibilityVersion }}</dd></dl>
+        </section>
+        @if (selected()==='cluster-manager') {
+          <section class="review-block" aria-labelledby="module-scope-title">
+            <h3 id="module-scope-title">설치 후 무엇을 할 수 있나요?</h3>
+            <div class="scope-grid"><div><strong>이번 배포본 · 조회</strong><p>Kubernetes 운영 자원과 기초 모듈·저장소의 현재 상태를 확인합니다. 전용 읽기 권한을 사용합니다.</p></div><div><strong>후속 범위 · 변경 작업</strong><p>기초 모듈 설치, Ceph 연결·설정 변경, 스토리지 생성·삭제는 이번 배포본에서 제공하지 않습니다.</p></div></div>
+            <p>Console 메뉴에 Cluster Manager 화면을 연결합니다. 기존 Ceph 데이터·볼륨을 삭제하거나 클러스터를 재구성하지 않습니다.</p>
+          </section>
+          <section class="review-block" aria-labelledby="module-journey-title">
+            <h3 id="module-journey-title">내가 할 일은 설치 확인입니다</h3>
+            <ol class="install-journey">
+              <li><span class="step-owner">나</span><div><strong>1. 설치 클릭 · 본인 인증</strong><p>이 배포본의 설치를 확인합니다. MFA를 요구하며, 서버 설정이 localhost이면서 edge 채널일 때만 MFA를 생략합니다. 별도 운영자의 승인은 필요하지 않습니다.</p></div></li>
+              <li><span class="step-owner automatic">OS · 자동</span><div><strong>2. 확인한 배포본 설치</strong><p>서명·호환성·현재 배포 목록을 다시 검사하고 GHCR에서 이미지를 받아 워크로드와 화면을 연결합니다.</p></div></li>
+              <li><span class="step-owner automatic">OS · 자동</span><div><strong>3. 실제 동작 검증</strong><p>설치한 이미지, 워크로드 준비 상태, 화면 제공 상태를 확인합니다. 실패하면 완료로 표시하지 않습니다.</p></div></li>
+              <li><span class="step-owner">나</span><div><strong>4. 관리 화면 열기</strong><p>실제 검증이 끝나면 사용할 수 있습니다. 별도의 사유 입력, 승인자 대기, 결과 검증 클릭은 없습니다.</p></div></li>
+            </ol>
+          </section>
+        } @else { <p class="notice">이 모듈의 개별 설치 정책이 적용됩니다. Cluster Manager의 간편 설치 범위와 다를 수 있습니다.</p> }
+        <details class="review-block"><summary>기술 상세 · 원본 식별자</summary><p class="digest">{{plan.image}}</p><p class="digest">{{plan.sourceRevision}}</p><p>위 식별자를 고정해 검토한 이미지와 설치한 이미지가 같은지 확인합니다.</p></details>
+      }
+      @if (receipt(); as operation) {
+        <section class="module-operation" aria-live="polite"><h3>설치 진행</h3>
+          <ol class="steps">@for (stage of stages; track stage; let i = $index) { <li [class.done]="activeStage() > i" [class.active]="activeStage() === i">{{ stage }}</li> }</ol>
+          @if (operation.state === 'Verified') { <p class="notice">OS의 설치 검증이 완료되었습니다. 최신 화면 상태까지 확인되면 관리 화면을 열 수 있습니다.</p> }
+          @else if (operation.state === 'Planned') { <p class="notice">이 작업은 이전 승인 정책으로 접수된 기록입니다. 현재 Cluster Manager 설치는 기능 찾기에서 설치를 눌러 진행합니다.</p> }
+          @else if (operation.state === 'Failed' || operation.state === 'Unknown') { <p class="notice" role="alert">설치가 완료되지 않았습니다. {{ operation.error?.message || operation.error?.code || '감사 기록에서 상세 원인을 확인하세요.' }}</p> }
+          @else { <p>배포와 실제 상태 검증을 OS가 진행 중입니다. 5초마다 상태를 확인합니다.</p> }
+          <details><summary>작업 상세</summary><p>상태: {{ operation.state }}</p><p class="digest">작업 {{ operation.operationId }}</p><p class="digest">{{ operation.targetRef }}</p><p>{{ operation.reason }}</p></details>
+          <a routerLink="/manage/extensions/audit" [queryParams]="{operation:operation.operationId}">감사 기록</a>
+        </section>
+      }
+    </div>
+    <div class="drawer-footer">
+      <p>{{ submitted() ? '접수된 설치는 이 화면을 닫아도 계속됩니다.' : '설치를 누르기 전에는 클러스터를 변경하지 않습니다.' }}</p>
+      <div class="drawer-actions">
+        <button type="button" class="btn btn-outline" (click)="closeReview()">닫기</button>
+        @if (installedReceiptReady()) { <a class="btn btn-primary" [routerLink]="'/p/' + selected()">관리 화면 열기</a> }
+        @else if (candidate()) { <button type="button" class="btn btn-primary" [disabled]="busy() || !fresh() || !runtimeFresh()" (click)="install()">설치</button> }
+      </div>
+    </div>
+  </div>
+</dialog>

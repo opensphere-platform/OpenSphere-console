@@ -2272,8 +2272,11 @@ paths:
         Resolves a signed candidate at the exact Registry revision before durable acceptance.
         AAL2 is the default. Only the official Cluster Manager image pinned by digest may use
         actual AAL1 when both server installation configuration and the DBA-owned database
-        environment permit HTTPS localhost, edge and development on docker-desktop.
-        Current permissions, CSRF, session checks, R2 risk and independent-person approval remain required.
+        environment permit BOTH HTTPS localhost and the edge channel. A non-local edge
+        deployment or a localhost non-edge deployment still requires recent MFA.
+        Direct official Cluster Manager installation uses requester confirmation, not a
+        separate approver or Git proposal. C_EXT automatically verifies exact owner observations.
+        Current permissions, CSRF, session checks, immutable signed image, R2 risk and idempotency remain required.
       tags: [Extensions]
       x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2
@@ -2290,7 +2293,7 @@ paths:
             schema: { $ref: "../schemas/extension-install-request.schema.json" }
       responses:
         "202":
-          description: C_REG-resolved exact-revision install operation durably accepted for independent approval
+          description: Exact-revision operation accepted; direct official Cluster Manager is Authorized for automatic dispatch and owner verification
           content:
             application/json:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }

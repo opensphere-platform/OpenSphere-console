@@ -64,13 +64,5 @@ const inventory=JSON.parse(sql(api(`SELECT console_operation.list_gitea_changes(
 assert.equal(inventory.items[0].operationId,id);assert.equal(inventory.items[0].nativeOwner,'C_EXT');assert.equal(inventory.items[0].sourceRevision,'d'.repeat(40));
 const local={...input,sessionId:'44444444-4444-4444-8444-444444444444',idempotencyKey:'flow-native-local',localDevelopmentModuleInstall:true};
 sql("INSERT INTO console_operation.module_installation_environment VALUES(true,'edge','development','docker-desktop','https://localhost:1114',now());");
-const localOp=JSON.parse(sql(api(accept(local)))).record;
-assert.equal(localOp.aal,'aal1');
-const localGet=`SELECT console_operation.get_gitea_bound_operation_for_approval('77777777-7777-4777-8777-777777777777','55555555-5555-4555-8555-555555555555',3,0,${q(localOp.operation_id)});`;
-assert.equal(JSON.parse(sql(api(localGet))).operation_id,localOp.operation_id);
-console.log('PASS existing exact local module exception preserves actual AAL1 and independent approver');
-rejects('local exception disabled',"DELETE FROM console_operation.module_installation_environment;"+api(localGet),/PermissionDenied/);
-rejects('same natural person under local exception',"UPDATE console_identity.subject_authority SET person_ref='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' WHERE subject_id='55555555-5555-4555-8555-555555555555';"+api(localGet),/SelfApprovalDenied/);
-rejects('AAL1 cannot resume strict operation',api(localGet.replace(localOp.operation_id,id)),/PermissionDenied/);
-console.log(JSON.stringify({status:'passed',checks:18,isolated:true,network:'none'}));
-console.log('PASS immutable merge lineage / same operation / bounded inventory; 18 DB checks passed');
+rejects('retired local Git approval intake cannot create new work',api(accept(local)),/PolicyRejected/);
+console.log(JSON.stringify({status:'passed',isolated:true,network:'none',historicalGitLineagePreserved:true,localGitIntakeRetired:true}));
