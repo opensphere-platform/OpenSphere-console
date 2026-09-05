@@ -486,7 +486,7 @@ const EXTENSION_PRIMARY_VIEWS = [
                   @for (descriptor of systemPluginDescriptors(); track descriptor.id) {
                     <tr>
                       <td>
-                        <strong class="product-identity">@if(productLogo(descriptor.displayName);as logo){<img [src]="logo" alt="" width="32" height="32" (error)="$any($event.target).hidden=true"/>}{{ descriptor.displayName }}</strong>
+                        <strong>{{ descriptor.displayName }}</strong>
                         <div class="state-detail"><code>{{ descriptor.id }}</code></div>
                       </td>
                       <td><span class="label label-info">systemPlugin</span><div class="state-detail">{{ descriptor.category }}</div></td>
@@ -652,7 +652,7 @@ const EXTENSION_PRIMARY_VIEWS = [
                     @for (descriptor of descriptorsByClass(snapshot, className); track descriptor.id) {
                       <article class="foundation-module">
                         <span class="foundation-module-state">{{ descriptor.installation.eligible ? '설치 후보' : '조회 전용' }}</span>
-                        <strong>{{ descriptor.displayName }}</strong>
+                        <strong class="product-identity">@if(productLogo(descriptor.displayName);as logo){<img [src]="logo" alt="" width="32" height="32" (error)="$any($event.target).hidden=true"/>}{{ descriptor.displayName }}</strong>
                         <details><summary>기술 식별자</summary><p class="os-mono">{{ descriptor.id }}</p><p class="os-mono">{{ descriptor.release.imageDigest }}</p><p class="os-mono">{{ descriptor.evidence.sourceRevision }}</p></details>
                         <dl>
                           <dt>Owner</dt><dd>{{ descriptor.owner.id }}</dd>
@@ -1148,6 +1148,7 @@ const EXTENSION_PRIMARY_VIEWS = [
       details>summary{cursor:pointer;padding:.6rem 0;font-weight:600;} .extension-package-catalog{margin-top:1rem;}
       .registry-descriptor-group>header{background:var(--os-surface,#fff);color:var(--os-ink,#161616);height:auto;min-height:0;display:flex;padding:.6rem 0;}
       .registry-descriptor-group>header h3{color:inherit;}
+      .product-identity{display:flex;align-items:center;gap:.5rem}
       .registry-access-form--credentials,.registry-access-form--revocation{max-width:48rem;}
       .registry-access-form input{max-width:100%;min-width:0;}.registry-access-form .clr-form-control{min-width:0;}
 

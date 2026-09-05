@@ -9,7 +9,7 @@ p { line-height:1.7; color:var(--os-muted, #525252); margin:.5rem 0; }
 .module-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr)); gap:1rem; margin:1.5rem 0; }
 .module-card { display:flex; flex-direction:column; padding:1.3rem; border:1px solid var(--os-hairline, #d9d9d9); border-top:3px solid var(--os-hairline, #d9d9d9); background:var(--os-surface, #fff); }
 .module-card.next { border-top-color:#0072a3; }
-.module-card-top { display:flex; justify-content:space-between; gap:.5rem; align-items:center; }
+.module-card-top { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.5rem; align-items:center; }
 .state { font-size:.75rem; border:1px solid var(--os-hairline, #d9d9d9); border-radius:1rem; padding:.15rem .6rem; white-space:nowrap; }
 .state.ready { background:#defbe6; color:#0e6027; border-color:#a7f0ba; }
 .capabilities { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.4rem; margin:1rem 0; }
