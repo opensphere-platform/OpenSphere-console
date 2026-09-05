@@ -6,6 +6,7 @@ import { ExtensionHostService } from '../core/extension-host.service';
 import { PerspectiveService } from '../core/perspective.service';
 import { routeForPlugin } from '../core/perspectives';
 import type { SERVICE_REALIZATION_LAYERS } from '../architecture/service-realization.model';
+import { LandingModuleOverview } from './landing-module-overview';
 import { LandingFoundations } from './landing-foundations';
 import { LandingOsaaDialogueState } from './landing-osaa-dialogue-state';
 import { LandingRegistryCatalog } from './landing-registry-catalog';
@@ -40,7 +41,7 @@ type ArchitecturePageId =
   | 'installation';
 
 /**
- * The horizontal axis is exactly ten Perspectives. Main Shell is not an
+ * The horizontal axis is exactly ten Perspectives. Console is not an
  * eleventh Perspective; it is a Platform Control realization object in L3.
  * A Perspective link becomes actionable only when DUPA publishes its page.
  */
@@ -48,7 +49,7 @@ declare const PERSPECTIVES: PerspectiveDef[];
 
 @Component({
   selector: 'os-landing',
-  imports: [RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, LandingInstallationMilestones, ClarityModule],
+  imports: [RouterLink, LandingModuleOverview, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, LandingInstallationMilestones, ClarityModule],
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `
     <main class="architecture-index">
@@ -128,6 +129,8 @@ declare const PERSPECTIVES: PerspectiveDef[];
           </div>
         </article>
       </section>
+
+      <os-landing-module-overview />
 
       <section class="architecture-capabilities" aria-labelledby="architecture-contract-title">
         <div class="section-heading">

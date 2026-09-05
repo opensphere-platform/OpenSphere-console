@@ -65,12 +65,12 @@ test('Registry and Catalog is a first-class CBSS Core Service page', () => {
   assert.doesNotMatch(registryCatalogSource, /Foundation capability·offering·plan·runtime catalog/);
 });
 
-test('Main Shell is a Platform Control object instead of Perspective zero', () => {
+test('Console is a Platform Control object instead of Perspective zero', () => {
   const platformControl = realizationModel.slice(
     realizationModel.indexOf("name: 'Platform Control Layer'"),
     realizationModel.indexOf("name: 'Console Backbone Layer'"),
   );
-  assert.match(platformControl, /'Main Shell'/);
+  assert.match(platformControl, /'Console'/);
   assert.doesNotMatch(perspectiveModel, /Main Shell/);
 });
 
@@ -130,7 +130,7 @@ test('Perspective navigation remains Registry-derived and phantom-route free', (
 test('main index uses one top-level Clarity tab bar for ten independent architecture pages including installation milestones', () => {
   assert.equal((foundationModel.match(/id: '(?:service-stacks|dupa|control-pillars|control-engine|ai-lifecycle)'/g) || []).length, 5);
   assert.match(source, /import \{ ClarityModule \} from '@clr\/angular'/);
-  assert.match(source, /imports: \[RouterLink, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, LandingInstallationMilestones, ClarityModule\]/);
+  assert.match(source, /imports: \[RouterLink, LandingModuleOverview, LandingFoundations, LandingOsaaDialogueState, LandingRegistryCatalog, LandingPfssDelivery, LandingInstallationMilestones, ClarityModule\]/);
   assert.match(source, /<clr-tabs class="architecture-page-tabs">/);
   assert.equal((source.match(/<clr-tab>/g) || []).length, 10);
   assert.equal((source.match(/<button clrTabLink/g) || []).length, 10);
@@ -181,7 +181,7 @@ test('OSAA dialogue state page defines the researched schema-guided operating co
     'OSDST',
     'OSAA Dialogue State Tracker',
     'CBSS Core Service · Agent Core Engine',
-    'SubShell · Console Plugin · Binding 아님',
+    '별도 설치 모듈·화면 확장이 아닌 Console 내장 기능',
     'Schema-Guided Dialogue State Tracking',
     'Dialogue State',
     'OSCE Capability Schema',
@@ -311,7 +311,7 @@ test('every architecture page explains operational functions with inputs and out
   assert.equal((foundationSource.match(/class="capability-grid(?: capability-grid-six)?"/g) || []).length, 5);
   for (const term of [
     'Stack마다 독립적으로 닫혀야 하는 네 가지 운영 기능',
-    '설치 이후 Main Shell이 실제로 수행하는 네 가지 기능',
+    '설치 이후 Console이 실제로 수행하는 네 가지 기능',
     '네 제어 표면이 나누어 맡는 기능과 공통 완료 기준',
     '모든 제어 채널이 재사용하는 여섯 가지 공통 기능',
     '모델 확보부터 교체까지 끊기지 않아야 하는 운영 기능',
@@ -360,16 +360,16 @@ test('Service Stack documentation defines HISS CBSS PFSS owners and hard boundar
     assert.match(`${foundationModel}\n${foundationSource}`, new RegExp(term));
   }
   assert.match(foundationSource, /왜 관리 도구와 대상 리소스를 완전히 분리하는가/);
-  assert.match(foundationModel, /Main Shell의 직접 kubectl\/SQL 변경/);
+  assert.match(foundationModel, /Console의 직접 kubectl\/SQL 변경/);
   assert.match(foundationModel, /관측 결과를 근거로 한 무승인 자동 변경/);
 });
 
 test('DUPA documentation preserves host ownership and separates Runtime Units from plugins', () => {
   assert.match(foundationSource, /Dynamic UI Plugin Architecture/);
   assert.match(foundationSource, /서명된 신뢰 코드 실행/);
-  assert.match(foundationSource, /hostRef=&lt;subShell&gt;/);
-  assert.match(foundationSource, /기능적 유형/);
-  assert.match(foundationSource, /설치 schema의 새로운 kind가 아닙니다/);
+  assert.match(foundationSource, /대상 모듈에 연결/);
+  assert.match(foundationSource, /모듈에 추가하는 화면·연동 기능/);
+  assert.match(foundationSource, /호환 식별자이며 새 제품 분류가 아닙니다/);
   assert.match(foundationModel, /OpenSphere Agent Runtime/);
   assert.match(foundationModel, /Runtime Unit/);
   assert.match(foundationModel, /Pod \/ KubeVirt Agent Playground/);
@@ -398,15 +398,15 @@ test('Control Engine page defines OSCE as the shared engine without absorbing co
     'OSCE · CBSS Core Service',
     'CBSS Core Service',
     'Platform Control Core Engine',
-    'SubShell · Console Plugin · Binding 아님',
+    '별도 설치 모듈·화면 확장이 아닌 Console 내장 기능',
     'OpenSphere Control Engine',
-    'Main Shell Console',
+    'Console',
     'OpenSphere Shell',
     'OpenSphere CLI',
     'OSAA · R2D2',
     'Component Control Adapter',
-    'SubShell',
-    'Plugin',
+    '제품 모듈',
+    '화면 확장',
     'Service Stack',
   ]) {
     assert.match(foundationModel + foundationSource, new RegExp(term.replace(/[.*+?^()|[\]\\]/g, '\\$&')));

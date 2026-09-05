@@ -7,6 +7,7 @@ Console의 로그인·권한·Registry 기반 메뉴와 Angular/Clarity 화면 �
 | 파일 | 내용 |
 |---|---|
 | `content/architecture.copy.json` | Architecture 탭·공통 설명·접근성 문구 |
+| `content/architecture.copy.json`의 `module-*`, `feature-*`, `naming-*` | 모듈·기능·내장 기능 정의, 7개 제품 설명, 10P·6L과의 관계. `landing-module-overview.ts`에서 기존 Web 이미지 안에 표시 |
 | `content/architecture.models.json` | 10P·6L 설명 모델; 좌표 ID는 고정 |
 | `content/foundations.copy.json`, `foundations.models.json` | Service Stacks·DUPA·Control Pillars·OSCE·AI Lifecycle |
 | `content/registry-catalog.copy.json` | Registry & Catalog 설명 |

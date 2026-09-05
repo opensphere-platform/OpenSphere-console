@@ -89,7 +89,7 @@
         }
       },
       "description": "The renderer requires an exact key set; the shared validator checks its SHA-256 in addition to this structural JSON Schema.",
-      "x-opensphere-copy-keys-sha256": "960d788fe5ef69b4355b5b2e408634321a5609af137eb107b7d52e75302de302"
+      "x-opensphere-copy-keys-sha256": "5b869332da29a63bb805344781d24ff87712bc603be7d89e26fd936c2a0c0c89"
     },
     "models": {
       "type": "object",

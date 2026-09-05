@@ -21,7 +21,7 @@ test('content-only build preserves web sources and produces all ten tabs without
   const before=sha(fs.readFileSync(webFile,'utf8'));
   const original=await fixture();await validateConsoleIndexEnvelope(original);
   assert.equal(Object.keys(original.data.copy).length,6);
-  assert.equal(Object.values(original.data.copy).reduce((n,d)=>n+Object.keys(d).length,0),1301);
+  assert.equal(Object.values(original.data.copy).reduce((n,d)=>n+Object.keys(d).length,0),1349);
   assert.equal(Object.keys(original.data.models).length,21);
   const source=path.join(scratch,'changed','content');fs.cpSync(new URL('../apps/console-index-content/content',import.meta.url),source,{recursive:true});fs.cpSync(new URL('../apps/console-index-content/documents',import.meta.url),path.join(scratch,'changed','documents'),{recursive:true});
   const file=path.join(source,'architecture.copy.json'),copy=JSON.parse(fs.readFileSync(file,'utf8')),key=Object.keys(copy)[0];copy[key]='Independent content update';fs.writeFileSync(file,JSON.stringify(copy));
