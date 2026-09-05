@@ -1,0 +1,631 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opensphere:console:supabase-status:v1",
+  "title": "Supabase Data and Identity operational status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "authority",
+    "observedAt",
+    "freshness",
+    "correlationId",
+    "evidenceRefs",
+    "data"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "authority": {
+      "const": "Supabase"
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "freshness": {
+      "enum": [
+        "fresh",
+        "stale",
+        "unknown",
+        "unavailable"
+      ]
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "required",
+        "components",
+        "inventory",
+        "recovery"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "Ready",
+            "Unknown",
+            "Blocked",
+            "Degraded",
+            "Partial"
+          ]
+        },
+        "required": {
+          "const": true
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "component",
+              "state",
+              "authority",
+              "reasonCode"
+            ],
+            "properties": {
+              "component": {
+                "enum": [
+                  "database",
+                  "auth",
+                  "dataApi",
+                  "storage",
+                  "migration",
+                  "rls",
+                  "backup",
+                  "restore"
+                ]
+              },
+              "state": {
+                "enum": [
+                  "Ready",
+                  "Unknown",
+                  "Blocked",
+                  "Degraded",
+                  "Partial"
+                ]
+              },
+              "authority": {
+                "type": "string"
+              },
+              "reasonCode": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "evidenceRef": {
+                "type": "string"
+              },
+              "baselineRevision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "setDigest": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "migrationCount": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "authorityTables": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "protectedTables": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scope": {
+                "type": "string"
+              },
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "table",
+                    "protection",
+                    "state",
+                    "reasonCode"
+                  ],
+                  "properties": {
+                    "table": {
+                      "type": "string"
+                    },
+                    "protection": {
+                      "enum": [
+                        "Rls",
+                        "OwnerOnly",
+                        "Unclassified"
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "Ready",
+                        "Unknown",
+                        "Blocked",
+                        "Degraded",
+                        "Partial"
+                      ]
+                    },
+                    "reasonCode": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              },
+              "expected": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "baselineRevision",
+                  "setDigest",
+                  "migrationCount"
+                ],
+                "properties": {
+                  "baselineRevision": {
+                    "type": "string"
+                  },
+                  "setDigest": {
+                    "type": "string"
+                  },
+                  "migrationCount": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "component": {
+                      "const": "migration"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "baselineRevision",
+                    "setDigest",
+                    "migrationCount",
+                    "expected"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "component": {
+                      "const": "rls"
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "scope",
+                    "checks",
+                    "authorityTables",
+                    "protectedTables"
+                  ]
+                }
+              }
+            ]
+          },
+          "minItems": 8,
+          "maxItems": 8,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "database"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "auth"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "dataApi"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "storage"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "migration"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "rls"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "backup"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "component": {
+                    "const": "restore"
+                  }
+                },
+                "required": [
+                  "component"
+                ]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
+        },
+        "inventory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operators",
+            "activeSessions",
+            "auditEvents",
+            "roles",
+            "buckets",
+            "accessBindings"
+          ],
+          "properties": {
+            "operators": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "activeSessions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "auditEvents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "roles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "description"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "buckets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "name",
+                  "public",
+                  "fileSizeLimit"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "public": {
+                    "type": "boolean"
+                  },
+                  "fileSizeLimit": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 0
+                  }
+                }
+              }
+            },
+            "accessBindings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "role",
+                  "schema",
+                  "executableFunctions",
+                  "selectableTables"
+                ],
+                "properties": {
+                  "role": {
+                    "type": "string"
+                  },
+                  "schema": {
+                    "type": "string"
+                  },
+                  "executableFunctions": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "selectableTables": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "reasonCode",
+            "observedAt",
+            "generatedAt",
+            "maxAgeSeconds",
+            "domains"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "Ready",
+                "Unknown",
+                "Blocked",
+                "Degraded",
+                "Partial"
+              ]
+            },
+            "reasonCode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "observedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "generatedAt": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "maxAgeSeconds": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 300,
+              "maximum": 2592000
+            },
+            "domains": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "domain",
+                  "backupState",
+                  "restoreState",
+                  "backupVerifiedAt",
+                  "restoreVerifiedAt",
+                  "checksumRecorded",
+                  "checks",
+                  "reasonCode"
+                ],
+                "properties": {
+                  "domain": {
+                    "enum": [
+                      "supabaseDatabase",
+                      "supabaseStorage",
+                      "gitea"
+                    ]
+                  },
+                  "backupState": {
+                    "enum": [
+                      "Ready",
+                      "Unknown",
+                      "Blocked",
+                      "Degraded",
+                      "Partial"
+                    ]
+                  },
+                  "restoreState": {
+                    "enum": [
+                      "Ready",
+                      "Unknown",
+                      "Blocked",
+                      "Degraded",
+                      "Partial"
+                    ]
+                  },
+                  "backupVerifiedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "restoreVerifiedAt": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "date-time"
+                  },
+                  "checksumRecorded": {
+                    "type": "boolean"
+                  },
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "assertion",
+                        "expected",
+                        "observed",
+                        "state"
+                      ],
+                      "properties": {
+                        "assertion": {
+                          "type": "string"
+                        },
+                        "expected": {
+                          "type": "string"
+                        },
+                        "observed": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 0
+                        },
+                        "state": {
+                          "enum": [
+                            "Ready",
+                            "Unknown",
+                            "Blocked",
+                            "Degraded",
+                            "Partial"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "reasonCode": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "maxItems": 3
+            }
+          }
+        }
+      }
+    }
+  }
+}

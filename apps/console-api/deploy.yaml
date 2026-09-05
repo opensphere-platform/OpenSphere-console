@@ -150,6 +150,9 @@ spec:
             - name: CONSOLE_INSTALLATION_RELEASE_PATH
               value: /var/run/opensphere/release/release.json
           volumeMounts:
+            - name: recovery-evidence
+              mountPath: /var/run/opensphere/recovery
+              readOnly: true
             - name: opensphere-shell-credential-authority-tls
               mountPath: /var/run/opensphere-shell-credential-authority-tls
               readOnly: true
@@ -183,6 +186,13 @@ spec:
             capabilities:
               drop: [ALL]
       volumes:
+        - name: recovery-evidence
+          configMap:
+            name: opensphere-platform-recovery-evidence
+            optional: true
+            items:
+              - key: recovery-evidence.json
+                path: recovery-evidence.json
         - name: opensphere-shell-credential-authority-tls
           secret:
             secretName: opensphere-shell-credential-authority-tls

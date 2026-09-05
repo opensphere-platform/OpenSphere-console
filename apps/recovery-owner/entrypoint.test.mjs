@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decryptFile, encryptFile, safeManifestKey } from './entrypoint.mjs';
+import { decryptFile, encryptFile, safeManifestKey, drillEvidence } from './entrypoint.mjs';
+
+test('empty or failed restore checks never write Verified owner evidence', () => {
+  const previous=process.env.RECOVERY_OPERATION_ID;
+  process.env.RECOVERY_OPERATION_ID='11111111-1111-4111-8111-111111111111';
+  try {
+    assert.equal(drillEvidence('supabase',[] )({}).restore.supabase.state,'AttentionRequired');
+    assert.equal(drillEvidence('supabase',[{assertion:'a',verdict:'Failed'}])({}).restore.supabase.state,'AttentionRequired');
+    assert.equal(drillEvidence('supabase',[{assertion:'a',verdict:'Verified'}])({}).restore.supabase.state,'Verified');
+  } finally { if(previous===undefined)delete process.env.RECOVERY_OPERATION_ID;else process.env.RECOVERY_OPERATION_ID=previous; }
+});
 
 test('recovery archive encryption is authenticated and rejects ciphertext tampering', async () => {
   const previous = process.env.RECOVERY_ENCRYPTION_KEY;

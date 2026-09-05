@@ -321,12 +321,17 @@ function verifyRegistryCredentialDeployment(documents) {
     'opensphere-shell-console-api-tls',
   ].includes(volume.name));
   assert(identityVolumes.length === 1 && JSON.stringify(identityVolumes[0].projected) === JSON.stringify(expectedProjection)
-    && pod.volumes.length === 4 && pod.volumes.every(volume => !volume.hostPath)
+    && pod.volumes.length === 5 && pod.volumes.every(volume => !volume.hostPath)
     && JSON.stringify(tlsVolumes) === JSON.stringify([
       {name:'opensphere-shell-credential-authority-tls',secret:{secretName:'opensphere-shell-credential-authority-tls',optional:true}},
       {name:'opensphere-shell-console-api-tls',secret:{secretName:'opensphere-shell-console-api-tls',optional:true}},
     ]),
     'C_API requires one projected Kubernetes identity and only the exact optional OS Shell TLS credentials');
+  assert(JSON.stringify(pod.volumes.filter(volume => volume.name === 'recovery-evidence')) === JSON.stringify([
+    {name:'recovery-evidence',configMap:{name:'opensphere-platform-recovery-evidence',optional:true,items:[{key:'recovery-evidence.json',path:'recovery-evidence.json'}]}},
+  ]) && JSON.stringify(container.volumeMounts.filter(mount => mount.name === 'recovery-evidence')) === JSON.stringify([
+    {name:'recovery-evidence',mountPath:'/var/run/opensphere/recovery',readOnly:true},
+  ]), 'C_API recovery evidence must be exactly one optional read-only ConfigMap projection without subPath');
   assert((container.volumeMounts || []).filter(mount => mount.name === 'registry-kubernetes-identity').length === 1
     && JSON.stringify(container.volumeMounts.find(mount => mount.name === 'registry-kubernetes-identity'))
       === JSON.stringify({name:'registry-kubernetes-identity',mountPath:'/var/run/secrets/kubernetes.io/serviceaccount',readOnly:true}),

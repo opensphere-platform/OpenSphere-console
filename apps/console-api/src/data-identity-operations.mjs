@@ -123,7 +123,7 @@ function mergeLiveStatus(envelope, live, now) {
   const output = structuredClone(envelope);
   const replacements = new Map(live.map((component) => [component.component, component]));
   output.data.components = output.data.components.map((component) => replacements.get(component.component) || component);
-  const runtime = output.data.components.filter((component) => ['database', 'auth', 'dataApi', 'storage', 'rls'].includes(component.component));
+  const runtime = output.data.components.filter((component) => ['database', 'auth', 'dataApi', 'storage', 'migration', 'rls'].includes(component.component));
   output.data.state = runtime.some((component) => component.state === 'Blocked')
     ? 'Blocked'
     : output.data.components.every((component) => component.state === 'Ready') ? 'Ready' : 'Degraded';
@@ -135,7 +135,7 @@ function mergeLiveStatus(envelope, live, now) {
   return output;
 }
 
-export function createDataIdentityOperations({ store, liveProbes = null, now = () => new Date() }) {
+export function createDataIdentityOperations({ store, liveProbes = null, recoveryEvidence = null, expectedMigration = null, now = () => new Date() }) {
   if (!store?.getSupabaseStatus) throw new TypeError('Supabase status projection store is required');
   return Object.freeze({
     async getSupabaseStatus({ session, correlationId }) {
@@ -146,15 +146,39 @@ export function createDataIdentityOperations({ store, liveProbes = null, now = (
           || !Number.isSafeInteger(revokeEpoch) || revokeEpoch < 0) {
         fail('AuthenticationRequired', 'session authority revision is invalid', 401);
       }
-      const baseline = await store.getSupabaseStatus({
+      let baseline = await store.getSupabaseStatus({
         sessionId: session.sessionId,
         actorRef: session.subjectId,
         expectedPermissionRevision: permissionRevision,
         expectedRevokeEpoch: revokeEpoch,
         correlationId,
       });
-      if (!liveProbes) return baseline;
-      return mergeLiveStatus(baseline, await liveProbes.observe(), now);
+      if (expectedMigration) {
+        baseline = structuredClone(baseline);
+        const installed = baseline.data.components.find(c => c.component === 'migration');
+        installed.expected = { baselineRevision: expectedMigration.latestGlobalId,
+          setDigest: expectedMigration.setDigest, migrationCount: expectedMigration.migrationCount };
+        if (installed.baselineRevision !== installed.expected.baselineRevision || installed.setDigest !== installed.expected.setDigest
+          || installed.migrationCount !== installed.expected.migrationCount) {
+          installed.state = 'Blocked'; installed.reasonCode = 'MigrationTargetMismatch';
+        }
+      }
+      if (!liveProbes && !recoveryEvidence && !expectedMigration) return baseline;
+      const migration = baseline.data.components.find(c => c.component === 'migration');
+      const [live, recovery] = await Promise.all([
+        liveProbes ? liveProbes.observe() : [],
+        recoveryEvidence ? recoveryEvidence.observe(migration) : null,
+      ]);
+      if (recovery) {
+        for (const component of ['backup', 'restore']) {
+          const complete = recovery.domains.length === 3 && recovery.domains.every(d => d[component + 'State'] === 'Ready');
+          live.push({ component, state: complete ? 'Ready' : 'Unknown', authority: 'RecoveryOwner', observedAt: recovery.observedAt,
+            reasonCode: complete ? null : recovery.reasonCode || (component === 'backup' ? 'BackupUnverified' : 'RestoreUnverified') });
+        }
+      }
+      const result = mergeLiveStatus(baseline, live, now);
+      if (recovery) result.data.recovery = recovery;
+      return result;
     },
   });
 }

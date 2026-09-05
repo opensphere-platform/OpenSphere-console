@@ -9,6 +9,7 @@ COPY apps/console-api/runtime/platform-release-contract.js apps/console-api/runt
 COPY apps/console-api/runtime/foundation-bootstrap-contract.js ./runtime/
 COPY apps/console-api/runtime/package.json ./runtime/
 COPY packages /workspace/packages
+COPY migrations/manifest.json /workspace/migrations/manifest.json
 ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080

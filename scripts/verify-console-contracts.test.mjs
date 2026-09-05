@@ -253,6 +253,15 @@ test('Console API deployment verification rejects credential ownership and legac
   const documents = [];
   yaml.loadAll(deploymentSource, (document) => documents.push(document));
   const missingConfig = structuredClone(documents);
+  for (const mutate of [
+    pod => { pod.volumes.find(v => v.name === 'recovery-evidence').configMap.name = 'another-owner'; },
+    pod => { pod.containers[0].volumeMounts.find(v => v.name === 'recovery-evidence').readOnly = false; },
+    pod => { pod.containers[0].volumeMounts.find(v => v.name === 'recovery-evidence').subPath = 'recovery-evidence.json'; },
+  ]) {
+    const altered = structuredClone(documents);
+    mutate(altered.find(d => d.kind === 'Deployment').spec.template.spec);
+    assert.throws(() => verifyConsoleApiDeployment({documents:altered,nginxSource,targetRouteSource}), /optional read-only ConfigMap/);
+  }
   const releaseVolume = missingConfig.find(d => d.kind === 'Deployment').spec.template.spec.volumes.find(v => v.name === 'installation-release');
   releaseVolume.configMap.items = releaseVolume.configMap.items.filter(item => item.key !== 'config.json');
   assert.throws(() => verifyConsoleApiDeployment({documents: missingConfig, nginxSource, targetRouteSource}), /operator-controlled installation config projection/);

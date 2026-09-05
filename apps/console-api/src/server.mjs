@@ -13,6 +13,7 @@ import { createModuleInstallationPolicy } from './module-installation-policy.mjs
 import { createAuditOperations } from './audit-operations.mjs';
 import { createIdentityOperations } from './identity-operations.mjs';
 import { createDataIdentityOperations, createSupabaseLiveProbes } from './data-identity-operations.mjs';
+import { createRecoveryEvidenceReader } from './data-identity-evidence.mjs';
 import { createPostgresOperationStore } from './postgres-operation-store.mjs';
 import { createRegistryOperations } from './registry-operations.mjs';
 import { createRegistryResolver } from '../../../packages/registry-client/src/registry-resolver-client.mjs';
@@ -94,7 +95,10 @@ const supabaseLiveProbes = createSupabaseLiveProbes({
   timeoutMs: positiveInteger('CONSOLE_SUPABASE_PROBE_TIMEOUT_MS', 1500, 10000),
   maximumResponseBytes: positiveInteger('CONSOLE_SUPABASE_PROBE_MAX_RESPONSE_BYTES', 131072, 1024 * 1024),
 });
-const dataIdentityOperations = createDataIdentityOperations({ store, liveProbes: supabaseLiveProbes });
+const dataIdentityOperations = createDataIdentityOperations({ store, liveProbes: supabaseLiveProbes,
+  recoveryEvidence: createRecoveryEvidenceReader(),
+  expectedMigration: JSON.parse(await readFile(new URL('../../../migrations/manifest.json', import.meta.url), 'utf8')),
+});
 const registryResolver = createRegistryResolver({
   baseUrl: String(process.env.CONSOLE_REGISTRY_URL || 'http://opensphere-registry.opensphere-console.svc.cluster.local:8080'),
   timeoutMs: positiveInteger('CONSOLE_REGISTRY_TIMEOUT_MS', 8000, 30000),

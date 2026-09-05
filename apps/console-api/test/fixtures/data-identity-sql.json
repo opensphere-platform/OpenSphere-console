@@ -1,0 +1,259 @@
+{
+  "data": {
+    "state": "Degraded",
+    "required": true,
+    "inventory": {
+      "roles": [
+        {
+          "name": "console-admins",
+          "description": "Console administrators"
+        },
+        {
+          "name": "console-operators",
+          "description": "Console operations without identity administration or approval"
+        },
+        {
+          "name": "console-viewers",
+          "description": "Console data and audit read access"
+        }
+      ],
+      "buckets": [
+        {
+          "id": "console-uploads",
+          "name": "console-uploads",
+          "public": false,
+          "fileSizeLimit": 163840
+        }
+      ],
+      "operators": 3,
+      "auditEvents": 0,
+      "accessBindings": [
+        {
+          "role": "console_api",
+          "schema": "console_audit",
+          "selectableTables": 0,
+          "executableFunctions": 2
+        },
+        {
+          "role": "console_api",
+          "schema": "console_extension",
+          "selectableTables": 0,
+          "executableFunctions": 4
+        },
+        {
+          "role": "console_api",
+          "schema": "console_identity",
+          "selectableTables": 0,
+          "executableFunctions": 44
+        },
+        {
+          "role": "console_api",
+          "schema": "console_operation",
+          "selectableTables": 0,
+          "executableFunctions": 10
+        },
+        {
+          "role": "console_api",
+          "schema": "console_shell",
+          "selectableTables": 0,
+          "executableFunctions": 11
+        },
+        {
+          "role": "console_extension_controller",
+          "schema": "console_extension",
+          "selectableTables": 0,
+          "executableFunctions": 11
+        },
+        {
+          "role": "console_extension_controller",
+          "schema": "console_operation",
+          "selectableTables": 0,
+          "executableFunctions": 2
+        },
+        {
+          "role": "opensphere_osaa_gateway",
+          "schema": "osaa",
+          "selectableTables": 17,
+          "executableFunctions": 3
+        },
+        {
+          "role": "opensphere_shell_api",
+          "schema": "console_shell",
+          "selectableTables": 0,
+          "executableFunctions": 13
+        }
+      ],
+      "activeSessions": 5
+    },
+    "components": [
+      {
+        "state": "Ready",
+        "authority": "SupabasePostgreSQL",
+        "component": "database",
+        "reasonCode": null
+      },
+      {
+        "state": "Unknown",
+        "authority": "SupabaseAuth",
+        "component": "auth",
+        "reasonCode": "LiveProbeUnavailable"
+      },
+      {
+        "state": "Unknown",
+        "authority": "SupabasePostgREST",
+        "component": "dataApi",
+        "reasonCode": "LiveProbeUnavailable"
+      },
+      {
+        "state": "Unknown",
+        "authority": "SupabaseStorage",
+        "component": "storage",
+        "reasonCode": "LiveProbeUnavailable"
+      },
+      {
+        "state": "Ready",
+        "authority": "ConsoleMigrationLedger",
+        "component": "migration",
+        "setDigest": "sha256:dfa34f9d0070368e761a7df41f1f7ae36e550fada7120df1fc418b3ddde40fe5",
+        "reasonCode": null,
+        "migrationCount": 38,
+        "baselineRevision": "opensphere-console/20260905/0038"
+      },
+      {
+        "scope": "console_identity,console_operation,console_audit,console_extension",
+        "state": "Ready",
+        "checks": [
+          {
+            "state": "Ready",
+            "table": "console_audit.event",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_extension.presentation_preference",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_extension.registry_connection",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_extension.revocation",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_identity.browser_session",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_identity.cli_challenge",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_identity.cli_device",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_identity.cli_enrollment",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_identity.cli_session",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_identity.permission_grant",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_identity.subject_authority",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_operation.approval",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_operation.execution_receipt",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_operation.module_installation_environment",
+            "protection": "OwnerOnly",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_operation.operation",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_operation.outbox",
+            "protection": "Rls",
+            "reasonCode": null
+          },
+          {
+            "state": "Ready",
+            "table": "console_operation.verification_receipt",
+            "protection": "Rls",
+            "reasonCode": null
+          }
+        ],
+        "authority": "PostgreSQLCatalog",
+        "component": "rls",
+        "reasonCode": null,
+        "authorityTables": 17,
+        "protectedTables": 16
+      },
+      {
+        "state": "Unknown",
+        "authority": "RecoveryOwner",
+        "component": "backup",
+        "reasonCode": "EvidenceUnavailable"
+      },
+      {
+        "state": "Unknown",
+        "authority": "RecoveryOwner",
+        "component": "restore",
+        "reasonCode": "EvidenceUnavailable"
+      }
+    ]
+  },
+  "authority": "Supabase",
+  "freshness": "fresh",
+  "observedAt": "2026-09-05T06:20:26.64319+00:00",
+  "evidenceRefs": [
+    "supabase-postgresql:connected",
+    "migration-ledger:opensphere-console/20260905/0038@sha256:dfa34f9d0070368e761a7df41f1f7ae36e550fada7120df1fc418b3ddde40fe5",
+    "rls:16/17"
+  ],
+  "correlationId": "identity-regression-test",
+  "schemaVersion": "1.0"
+}

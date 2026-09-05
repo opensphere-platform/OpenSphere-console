@@ -1,9 +1,12 @@
-FROM docker.io/library/postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+FROM docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
 
 # This image is intentionally separate from Console application images.  It
 # holds the PostgreSQL client/server tools used by an isolated drill, the S3
 # client and a tiny AES-GCM evidence writer; it is never mounted by a Console
 # request-serving workload.
+USER root
+# Match the release-owned Supabase PostgreSQL runtime, including vector and
+# installed extensions. A generic PostgreSQL image cannot restore this dump.
 RUN apk add --no-cache \
       aws-cli \
       ca-certificates \

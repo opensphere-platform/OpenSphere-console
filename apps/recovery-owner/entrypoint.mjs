@@ -251,7 +251,7 @@ function drillEvidence(component, checks) {
     const next = structuredClone(current && typeof current === 'object' ? current : {});
     next.policy = next.policy || { maxEvidenceAgeSeconds: 86400, targetMode: 'isolated-non-destructive-drill' };
     next.restore = next.restore || {};
-    const restored = { state: 'Verified', verifiedAt: isoNow(), operationId: recoveryOperationId(),
+    const restored = { state: checks.length > 0 && checks.every(c => c.verdict === 'Verified') ? 'Verified' : 'AttentionRequired', verifiedAt: isoNow(), operationId: recoveryOperationId(),
       assertions: checks.map((item) => item.assertion), checks };
     if (component === 'supabase') {
       next.restore.supabase = restored;
@@ -342,19 +342,26 @@ async function restoreDatabase(dump, profile, archivedRoles) {
     await ensureRoles([...requiredRoles, ...(archivedRoles || [])], connection);
     await shell('pg_restore', ['--exit-on-error', '--no-owner', '--no-privileges', '--host', connection.host, '--port', connection.port, '--username', connection.user, '--dbname', 'postgres', dump]);
     if (profile === 'supabase') {
-      const [users, operators, events] = await Promise.all([
+      const [users, subjects, events, protectedTables, migrationJson] = await Promise.all([
         psqlScalar('SELECT count(*) FROM auth.users;', connection),
-        psqlScalar('SELECT count(*) FROM console.operator;', connection),
-        psqlScalar('SELECT count(*) FROM audit.event;', connection)
+        psqlScalar('SELECT count(*) FROM console_identity.subject_authority;', connection),
+        psqlScalar('SELECT count(*) FROM console_audit.event;', connection),
+        psqlScalar("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid IN (to_regclass('console_identity.subject_authority'),to_regclass('console_identity.browser_session'),to_regclass('console_identity.permission_grant'),to_regclass('console_identity.cli_challenge'),to_regclass('console_identity.cli_device'),to_regclass('console_identity.cli_enrollment'),to_regclass('console_identity.cli_session'),to_regclass('console_operation.operation'),to_regclass('console_operation.outbox'),to_regclass('console_operation.approval'),to_regclass('console_operation.verification_receipt'),to_regclass('console_operation.execution_receipt'),to_regclass('console_extension.registry_connection'),to_regclass('console_extension.revocation'),to_regclass('console_extension.presentation_preference'),to_regclass('console_audit.event')) AND c.relkind IN ('r','p') AND c.relrowsecurity AND c.relforcerowsecurity;", connection),
+        psqlScalar("WITH chain AS (SELECT *,row_number() OVER(ORDER BY applied_sequence) AS ordinal,lag(global_id) OVER(ORDER BY applied_sequence) AS prior FROM console_migration.applied_migration), summary AS (SELECT count(*) AS count,bool_and((ordinal=1 AND predecessor_global_id IS NULL) OR (ordinal>1 AND predecessor_global_id=prior)) AS valid FROM chain) SELECT json_build_object('globalId',c.global_id,'setDigest',c.migration_set_digest,'count',s.count,'valid',s.valid AND c.migration_set_size=s.count) FROM chain c CROSS JOIN summary s ORDER BY c.applied_sequence DESC LIMIT 1;", connection)
       ]);
-      return [numberCheck('auth.users restored', users), numberCheck('console operators restored', operators), numberCheck('audit events restored', events, '>=0')];
+      const migration = JSON.parse(migrationJson);
+      if (migration?.valid !== true) throw new Error('Restored Console migration lineage is invalid');
+      return { checks: [numberCheck('auth.users restored', users), numberCheck('console authority subjects restored', subjects),
+        numberCheck('console audit events restored', events, '>=0'), numberCheck('migration ledger restored', migration.count),
+        numberCheck('console RLS tables restored', protectedTables, '>=16')],
+        migration: { globalId: migration.globalId, setDigest: migration.setDigest, count: migration.count } };
     }
     const [users, repositories, issues] = await Promise.all([
       psqlScalar('SELECT count(*) FROM "user";', connection),
       psqlScalar('SELECT count(*) FROM repository;', connection),
       psqlScalar('SELECT count(*) FROM issue;', connection)
     ]);
-    return [numberCheck('gitea users restored', users), numberCheck('gitea repositories restored', repositories), numberCheck('gitea issues restored', issues, '>=0')];
+    return { checks: [numberCheck('gitea users restored', users), numberCheck('gitea repositories restored', repositories), numberCheck('gitea issues restored', issues, '>=0')] };
   });
 }
 
@@ -445,7 +452,8 @@ async function drillSupabase() {
   const loaded = await loadDrill(await recoveryManifestKey('supabase'), 'supabase');
   try {
     const archivedRoles = JSON.parse(await readFile(join(loaded.root, 'supabase-roles.json'), 'utf8')).roles;
-    const databaseChecks = await restoreDatabase(join(loaded.root, 'supabase.pg.dump'), 'supabase', archivedRoles);
+    const database = await restoreDatabase(join(loaded.root, 'supabase.pg.dump'), 'supabase', archivedRoles);
+    const databaseChecks = database.checks;
     const storage = join(loaded.root, 'storage');
     await mkdir(storage, { recursive: true });
     await shell('tar', ['-C', storage, '-xzf', join(loaded.root, 'supabase-storage.tgz')]);
@@ -453,6 +461,7 @@ async function drillSupabase() {
     const storageChecks = [numberCheck('restored object files', count)];
     await publishEvidence((current) => {
       const next = drillEvidence('supabase', databaseChecks)(current);
+      next.restore.supabase.migration = database.migration;
       next.restore.storage = { state: storageChecks.every((item) => item.verdict === 'Verified') ? 'Verified' : 'AttentionRequired',
         verifiedAt: isoNow(), operationId: recoveryOperationId(), assertions: storageChecks.map((item) => item.assertion), checks: storageChecks };
       return next;
@@ -465,7 +474,7 @@ async function drillGitea() {
   const loaded = await loadDrill(await recoveryManifestKey('gitea'), 'gitea');
   try {
     const archivedRoles = JSON.parse(await readFile(join(loaded.root, 'gitea-roles.json'), 'utf8')).roles;
-    const databaseChecks = await restoreDatabase(join(loaded.root, 'gitea.pg.dump'), 'gitea', archivedRoles);
+    const databaseChecks = (await restoreDatabase(join(loaded.root, 'gitea.pg.dump'), 'gitea', archivedRoles)).checks;
     const gitea = join(loaded.root, 'gitea');
     const config = join(loaded.root, 'config');
     await mkdir(gitea, { recursive: true });
@@ -508,4 +517,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   });
 }
 
-export { decryptFile, encryptFile, safeManifestKey };
+export { decryptFile, encryptFile, safeManifestKey, drillEvidence };

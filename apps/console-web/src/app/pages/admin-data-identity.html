@@ -1,0 +1,77 @@
+<div class="os-page control-detail-page data-identity-page">
+  <os-page-header title="Data & Identity" tag="Console 데이터·인증 기반" />
+  <div class="page-lead">
+    <p>Console의 로그인·권한·운영 기록·파일 저장이 정상인지 확인하는 곳입니다. DB 구조와 보호 정책, 백업·복원 근거를 함께 확인하고 필요한 관리 작업으로 이동합니다.</p>
+    <div class="page-meta"><span>15초마다 확인</span><button type="button" class="btn btn-sm" [disabled]="busy()" (click)="refresh()" aria-label="Supabase 상태 새로고침"><os-cicon [icon]="icons.renew" [size]="16" /> {{ busy() ? '조회 중' : '새로고침' }}</button></div>
+  </div>
+  @if (error()) { <div role="alert" class="notice">{{ error() }} @if(status()){<span> 아래 값은 이전 관측입니다. 현재 정상으로 판정하지 않습니다.</span>}</div> }
+  @if (!status() && !error()) { <p role="status" class="notice">인증·데이터 기반 상태를 조회하고 있습니다.</p> }
+  @if (status(); as s) {
+    @if(!fresh() && !error()){<p role="status" class="notice">관측이 오래됐거나 시각을 검증할 수 없습니다. 새로고침하여 현재 상태를 확인하세요.</p>}
+    <section class="status-rail" aria-label="Console 데이터·인증 상태 요약">
+      <div class="rail-cell"><span>현재 운영 기반</span><strong [class]="runtimeReady()?'ok':'warn'">{{ runtimeReady()?'사용 가능':'확인 필요' }}</strong><small>DB·인증·API·저장·migration·보호</small></div>
+      <div class="rail-cell"><span>검증 항목</span><strong>{{ healthyCount() }} / 8</strong><small>백업·복원 포함</small></div>
+      <div class="rail-cell"><span>등록 운영자</span><strong>{{ s.data.inventory.operators }}</strong><small>Console 권한 원장</small></div>
+      <div class="rail-cell"><span>Storage 버킷</span><strong>{{ s.data.inventory.buckets.length }}</strong><small>버킷 정책 메타데이터</small></div>
+      <div class="rail-cell"><span>백업·복원 보장</span><strong [class]="tone(fresh()?s.data.recovery.state:'Unknown')">{{ fresh()&&s.data.recovery.state==='Ready'?'검증됨':'미검증' }}</strong><small>서비스 기동과 별도 판정</small></div>
+      <div class="rail-cell"><span>마지막 관측</span><strong class="mono">{{ date(s.observedAt) }}</strong><small>{{ fresh()?'현재 관측':'과거·미확인 관측' }}</small></div>
+    </section>
+    <nav class="workspace-tabs" role="tablist" aria-label="Data & Identity 작업영역">
+      @for(tab of tabs; track tab.id; let index=$index){
+        <button type="button" role="tab" [id]="'di-tab-'+tab.id" [attr.aria-controls]="'di-panel-'+tab.id" [attr.aria-selected]="activeTab()===tab.id" [attr.tabindex]="activeTab()===tab.id?0:-1" [class.active]="activeTab()===tab.id" (click)="activeTab.set(tab.id)" (keydown)="tabKey($event)"><span>0{{ index+1 }}</span>{{ tab.label }}<small>{{ tab.help }}</small></button>
+      }
+    </nav>
+    @for(tab of tabs; track tab.id){
+      @if(activeTab()===tab.id){
+        <section role="tabpanel" [id]="'di-panel-'+tab.id" [attr.aria-labelledby]="'di-tab-'+tab.id" tabindex="0" class="domain-workspace">
+        @switch(tab.id){
+          @case('overview'){
+            <div class="panel"><h2>지금 무엇을 확인해야 하나요?</h2><p class="help">운영 기반이 사용 가능해도 백업·복원이 미검증이면 복구까지 보장된 상태는 아닙니다. 아래에서 실패한 항목과 원인을 확인하세요.</p>
+              <div class="scroll"><table><caption>8개 필수 상태와 판정 근거</caption><thead><tr><th scope="col">항목</th><th scope="col">상태</th><th scope="col">판정 근거</th><th scope="col">확인 주체</th></tr></thead><tbody>
+              @for(c of s.data.components;track c.component){<tr><th scope="row">{{ name(c.component) }}</th><td [class]="tone(state(c))">{{ label(state(c)) }} · {{ state(c) }}</td><td>{{ reason(c.reasonCode) }}<small>{{ c.reasonCode || '관측 성공' }}</small></td><td>{{ c.authority }}</td></tr>}
+              </tbody></table></div>
+              <div class="actions"><a routerLink="/manage/console-admins">사용자·역할 관리</a><a routerLink="/manage/state-changes">선언형 상태 변경</a><a routerLink="/manage/platform-control">운영·복구 준비 상태</a></div>
+            </div>
+            <p class="help">이 화면은 Console 자신의 기반을 점검합니다. Ceph/디스크 관리, 업무용 DB 생성 또는 범용 SQL 편집은 이 화면의 기능이 아닙니다.</p>
+          }
+          @case('database'){
+            <div class="two"><section class="panel"><h2>현재 DB 구조</h2><dl><dt>Migration 상태</dt><dd [class]="tone(state(component('migration')))">{{ label(state(component('migration'))) }}</dd><dt>최신 적용 ID</dt><dd class="mono">{{ component('migration').baselineRevision || '기록 없음' }}</dd><dt>적용 건수</dt><dd>{{ component('migration').migrationCount }}</dd><dt>집합 digest</dt><dd class="mono">{{ component('migration').setDigest || '기록 없음' }}</dd><dt>이 API의 목표 수</dt><dd>{{ component('migration').expected?.migrationCount }}</dd><dt>목표 최신 ID</dt><dd class="mono">{{ component('migration').expected?.baselineRevision }}</dd><dt>목표 set digest</dt><dd class="mono">{{ component('migration').expected?.setDigest }}</dd></dl><p class="help">원장 순서와 필수 객체를 검사합니다. 이 값만으로 모든 지원 버전의 업그레이드·클린 설치 재현을 보장하지 않습니다.</p></section>
+            <section class="panel"><h2>데이터 접근 보호</h2><dl><dt>판정</dt><dd [class]="tone(state(component('rls')))">{{ label(state(component('rls'))) }}</dd><dt>관측 테이블</dt><dd>{{ component('rls').authorityTables }}</dd><dt>RLS + FORCE RLS</dt><dd>{{ component('rls').protectedTables }}</dd><dt>점검 범위</dt><dd class="mono">{{ component('rls').scope }}</dd></dl><p class="help">일반 권한 테이블은 행 단위 보호를, 설치 관리자 전용 환경 테이블은 runtime 직접 접근 금지를 검증합니다. 분류되지 않은 테이블은 차단합니다.</p></section></div>
+            <div class="scroll panel"><table><caption>테이블별 보호 방식과 검사 결과</caption><thead><tr><th scope="col">테이블</th><th scope="col">보호 방식</th><th scope="col">상태</th><th scope="col">근거</th></tr></thead><tbody>@for(c of component('rls').checks;track c.table){<tr><th scope="row" class="mono">{{ c.table }}</th><td>{{ c.protection==='OwnerOnly'?'설치 관리자 전용':c.protection==='Rls'?'RLS + FORCE RLS':'미분류' }}</td><td [class]="tone(fresh()?c.state:'Unknown')">{{ label(fresh()?c.state:'Unknown') }}</td><td>{{ reason(c.reasonCode) }}</td></tr>}</tbody></table></div>
+          }
+          @case('auth'){
+            <section class="panel"><h2>운영자 인증과 접근 권한</h2><dl><dt>Supabase Auth</dt><dd [class]="tone(state(component('auth')))">{{ label(state(component('auth'))) }}</dd><dt>등록 운영자</dt><dd>{{ s.data.inventory.operators }}</dd><dt>DB 기준 유효 세션</dt><dd>{{ s.data.inventory.activeSessions }}</dd><dt>접근 권한</dt><dd>매 요청에서 현재 permission grant · permission revision · revoke epoch 재검사</dd></dl><p class="help">브라우저는 HttpOnly Console 세션 쿠키를 사용합니다. 비밀번호·서비스 역할 키·세션 토큰은 이 화면에 표시하지 않습니다. 세션 수는 DB 유효기간·철회·권한 revision 기준이며 실제 로그인 시험 결과는 아닙니다.</p>
+              <table><caption>현재 역할 계약</caption><thead><tr><th scope="col">역할</th><th scope="col">범위</th></tr></thead><tbody>@for(r of s.data.inventory.roles;track r.name){<tr><th scope="row">{{ r.name }}</th><td>{{ r.description }}</td></tr>}</tbody></table><div class="actions"><a routerLink="/manage/console-admins">사용자와 역할 설정으로 이동</a><a routerLink="/me">내 세션·계정 확인</a></div>
+            </section>
+          }
+          @case('api'){
+            <section class="panel"><h2>상태를 어디에서 가져오나요?</h2><dl><dt>조회 API</dt><dd class="mono">GET /api/identity/supabase/status</dd><dt>조회 권한</dt><dd class="mono">console.data_identity.read</dd><dt>PostgREST 연결</dt><dd [class]="tone(state(component('dataApi')))">{{ label(state(component('dataApi'))) }} · {{ reason(component('dataApi').reasonCode) }}</dd><dt>관측 시각</dt><dd>{{ date(s.observedAt) }}</dd><dt>상관관계 ID</dt><dd class="mono">{{ s.correlationId }}</dd></dl><p class="help">Console API가 현재 사용자 권한을 재확인한 후 Auth·PostgREST·Storage를 제한 시간 안에 점검합니다. 상태 조회는 설치·수정·삭제를 실행하지 않습니다.</p>
+              <h3>증거 참조</h3><ul>@for(ref of s.evidenceRefs;track ref){<li class="mono">{{ ref }}</li>}</ul><div class="actions"><a routerLink="/manage/apis">API 계약 목록</a><a routerLink="/manage/state-changes">변경 요청·승인·실행</a></div>
+            </section>
+          }
+          @case('storage'){
+            <section class="panel"><h2>Console 파일 저장</h2><p [class]="tone(state(component('storage')))">Storage 서비스: {{ label(state(component('storage'))) }} · {{ reason(component('storage').reasonCode) }}</p><p class="help">버킷의 공개 정책과 업로드 한도만 조회합니다. 파일 내용·사용자 객체 이름·저장소 자격 증명은 표시하지 않습니다.</p>
+              @if(s.data.inventory.buckets.length){<div class="scroll"><table><caption>실제 Storage 버킷 정책</caption><thead><tr><th scope="col">버킷</th><th scope="col">공개 정책</th><th scope="col">파일 한도</th></tr></thead><tbody>@for(b of s.data.inventory.buckets;track b.id){<tr><th scope="row">{{ b.name }}</th><td>{{ b.public?'공개':'비공개' }}</td><td>{{ size(b.fileSizeLimit) }}</td></tr>}</tbody></table></div>}@else{<p class="empty">현재 등록된 Storage 버킷이 없습니다. 로딩 중 상태가 아닙니다.</p>}
+              <p class="help">서비스 응답과 버킷 존재만으로 파일 업로드·복원 시험을 통과한 것은 아닙니다.</p><div class="actions"><button type="button" class="btn btn-sm" (click)="activeTab.set('security')">백업·복원 근거 확인</button></div>
+            </section>
+          }
+          @case('security'){
+            <section class="panel"><h2>장애 뒤 복구할 수 있나요?</h2><p [class]="tone(fresh()?s.data.recovery.state:'Unknown')">{{ fresh()&&s.data.recovery.state==='Ready'?'유효한 백업·격리 복원 증거를 확인했습니다.':'복구를 보장할 근거가 아직 충분하지 않습니다.' }}</p><p>{{ reason(s.data.recovery.reasonCode) }}</p><dl><dt>증거 생성 시각</dt><dd>{{ date(s.data.recovery.generatedAt) }}</dd><dt>증거 유효기간</dt><dd>{{ s.data.recovery.maxAgeSeconds===null?'정책 미확인':s.data.recovery.maxAgeSeconds+'초' }}</dd></dl>
+              @if(!s.data.recovery.domains.length){<p class="notice">Recovery Owner의 증거가 없거나 유효하지 않습니다. 백업 대상을 구성하고 승인된 격리 복원 시험을 완료해야 합니다. 이 화면은 실행 버튼 없이 증거만 조회합니다.</p>}
+              <div class="domains">@for(d of s.data.recovery.domains;track d.domain){<section class="panel"><h3>{{ name(d.domain) }}</h3><p [class]="tone(fresh()?d.backupState:'Unknown')">백업: {{ label(fresh()?d.backupState:'Unknown') }}</p><p class="state-note">{{ date(d.backupVerifiedAt) }}</p><p [class]="tone(fresh()?d.restoreState:'Unknown')">복원: {{ label(fresh()?d.restoreState:'Unknown') }}</p><p class="state-note">{{ date(d.restoreVerifiedAt) }}</p><p class="help">{{ reason(d.reasonCode) }}</p></section>}</div>
+              @for(d of s.data.recovery.domains;track d.domain){<div class="scroll"><table class="checks"><caption>{{ name(d.domain) }} 복원 검사</caption><thead><tr><th scope="col">필수 검사</th><th scope="col">기준</th><th scope="col">관측</th><th scope="col">판정</th></tr></thead><tbody>@for(c of d.checks;track c.assertion){<tr><th scope="row">{{ c.assertion }}</th><td>{{ c.expected }}</td><td>{{ c.observed===null?'근거 없음':c.observed }}</td><td [class]="tone(fresh()?c.state:'Unknown')">{{ label(fresh()?c.state:'Unknown') }}</td></tr>}</tbody></table></div>}
+              <p class="help">오래된 증거·빈 assertion·다른 migration의 복원은 통과 처리하지 않습니다. 백업 위치·checksum 원문·복구 키는 브라우저에 전달하지 않습니다.</p><div class="actions"><a routerLink="/manage/platform-control">복구 준비 상태·담당 기능 확인</a><a routerLink="/manage/state-changes">승인된 변경 작업 확인</a></div>
+            </section>
+          }
+          @case('integrations'){
+            <section class="panel"><h2>어떤 실행 주체가 DB를 사용할 수 있나요?</h2><p class="help">현재 PostgreSQL의 schema 접근 및 함수 실행·테이블 조회 권한을 집계합니다. 실제 요청 성공·소비자 활성화·HISS telemetry 연결을 뜻하지 않습니다. OSAA 등은 아래 접근 목록에 포함되지만 Database 탭의 RLS 검사 범위와는 구분됩니다.</p>
+              @if(s.data.inventory.accessBindings.length){<div class="scroll"><table><caption>현재 DB 권한 기반 연결</caption><thead><tr><th scope="col">실행 역할</th><th scope="col">스키마</th><th scope="col">실행 가능 함수</th><th scope="col">조회 가능 테이블</th></tr></thead><tbody>@for(b of s.data.inventory.accessBindings;track b.role+':'+b.schema){<tr><th scope="row" class="mono">{{ b.role }}</th><td>{{ b.schema }}</td><td>{{ b.executableFunctions }}</td><td>{{ b.selectableTables }}</td></tr>}</tbody></table></div>}@else{<p class="empty">점검 범위에서 접근 권한 연결을 찾지 못했습니다.</p>}
+              <p class="notice">HISS Binding과 실제 사용량은 이 조회에서 관측하지 않습니다. 권한 목록으로 Bound 또는 정상 트래픽을 추정하지 않습니다.</p><div class="actions"><a routerLink="/manage/extensions">확장 기능 등록·활성화 상태</a><a routerLink="/manage/infrastructure-monitoring">인프라 관측</a></div>
+            </section>
+          }
+        }
+        </section>
+      }
+    }
+  }
+</div>
