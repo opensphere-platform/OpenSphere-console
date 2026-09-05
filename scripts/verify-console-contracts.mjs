@@ -406,6 +406,7 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
   const expectedIngressApps = [
     'opensphere-console',
     'opensphere-console-osaa-gateway',
+    'opensphere-osdst',
     'opensphere-extension-controller',
     'opensphere-notification-dispatcher',
     'opensphere-external-channel-executor',

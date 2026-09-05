@@ -65,6 +65,7 @@ function createOsdstClient() {
     heartbeatTurn: (actor, turn) => request('/v1/turns/heartbeat', actor, { method: 'POST', body: { turn } }),
     dialogueContext: (actor, id) => request(`/v1/conversations/${encodeURIComponent(id)}/projection`, actor),
     status: () => request('/v1/status', null, { timeoutMs: 5000 }),
+    maintenanceReadiness: () => request('/readyz', null, { timeoutMs: 5000 }),
   };
 }
 

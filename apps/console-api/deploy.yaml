@@ -258,6 +258,9 @@ spec:
     - from:
         - podSelector:
             matchLabels:
+              app: opensphere-osdst
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/name: opensphere-extension-controller
         - podSelector:
             matchLabels:

@@ -6897,14 +6897,9 @@ async function backendGet(path, actor) {
 }
 
 async function requireDialogueMaintenanceCapability(actor) {
-  let response;
+  let readiness;
   try {
-    response = await fetch(`${CONSOLE_IDENTITY_URL}/readyz`, {
-      headers: actor?.bearerToken
-        ? { authorization: `Bearer ${actor.bearerToken}`, accept: 'application/json' }
-        : { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
+    readiness = await getConversationStore().maintenanceReadiness();
   } catch {
     throw {
       code: 503,
@@ -6912,9 +6907,8 @@ async function requireDialogueMaintenanceCapability(actor) {
       msg: 'OSDST maintenance capability is unreachable',
     };
   }
-  const readiness = await response.json().catch(() => ({}));
   const dialogueMaintenance = readiness?.maintenance;
-  if (!response.ok || dialogueMaintenance?.ready !== true) {
+  if (readiness?.service !== 'opensphere-osdst' || readiness?.ready !== true || dialogueMaintenance?.ready !== true) {
     throw {
       code: 503,
       errorCode: 'conversation_turn_maintenance_unavailable',

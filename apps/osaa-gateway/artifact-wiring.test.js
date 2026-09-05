@@ -7,6 +7,16 @@ const test = require('node:test');
 const root = join(__dirname, '..', '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 
+test('OSDST can revalidate the current caller at C_API without widening namespace access', () => {
+  const yaml = require('js-yaml');
+  const policy = yaml.loadAll(read('apps','console-api','deploy.yaml'))
+    .find(d=>d.kind==='NetworkPolicy' && d.metadata.name==='opensphere-console-api');
+  const ingress = policy.spec.ingress.find(rule=>rule.from.some(peer=>peer.podSelector?.matchLabels?.app==='opensphere-osdst'));
+  assert.ok(ingress);
+  assert.deepEqual(ingress.ports, [{protocol:'TCP',port:8080}]);
+  assert.ok(ingress.from.every(peer=>!peer.namespaceSelector && Object.keys(peer.podSelector.matchLabels).length===1));
+});
+
 test('C_AI manifest uses the canonical OSAA gateway release artifact', () => {
   const manifest = read('apps', 'osaa-gateway', 'deploy.yaml');
   const dockerfile = read('apps', 'osaa-gateway', 'Dockerfile');
