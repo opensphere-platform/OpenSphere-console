@@ -444,8 +444,14 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
   assert(egressRules.filter(rule => JSON.stringify(rule) === JSON.stringify(providerRule)).length === 1,
     'C_API provider egress must be limited to TCP/443');
   const internalRules = egressRules.filter(rule => JSON.stringify(rule) !== JSON.stringify(providerRule));
+  const ownerStatusRule = { to: [
+    { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-registry' } } },
+    { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-extension-controller' } } },
+  ], ports: [{ protocol: 'TCP', port: 8080 }] };
+  assert(internalRules.filter(rule => JSON.stringify(rule) === JSON.stringify(ownerStatusRule)).length === 1,
+    'C_API owner status requires exactly Registry and C_EXT in the same namespace on TCP/8080');
   assert(internalRules.length === 6 && internalRules.every(rule =>
-    Array.isArray(rule.to) && rule.to.length === 1 && rule.to.every(peer =>
+    Array.isArray(rule.to) && (rule.to.length === 1 || JSON.stringify(rule) === JSON.stringify(ownerStatusRule)) && rule.to.every(peer =>
       peer.ipBlock === undefined && peer.podSelector && Object.keys(peer.podSelector).length > 0)
     && Array.isArray(rule.ports) && rule.ports.length > 0
     && rule.ports.every(port => Number.isInteger(port.port) && !port.endPort)),
