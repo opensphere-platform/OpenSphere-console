@@ -1,0 +1,39 @@
+<header class="module-header"><div><span class="eyebrow">OPENSPHERE · 다음 단계</span><h1>모듈 설치</h1><p>Console에서 필요한 모듈을 선택하고 설치부터 운영까지 이어갑니다.</p></div><button class="btn btn-outline" (click)="refresh()" [disabled]="busy()">새로고침</button></header>
+<section class="module-connection"><div><strong>GHCR · opensphere-platform</strong><span>{{ registryState() }}</span></div><a routerLink="/manage/extensions/registry-connections">Registry 연결 관리</a></section>
+@if (error()) { <clr-alert clrAlertType="danger" [clrAlertClosable]="false"><clr-alert-item><span class="alert-text">{{ error() }}</span></clr-alert-item></clr-alert> }
+@if (!fresh()) { <p class="notice" role="status">최신 설치 상태를 확인할 수 없습니다. 연결이 복구되기 전에는 설치할 수 없습니다.</p> }
+<div class="module-grid">
+  @for (module of modules; track module.id) {
+    <article class="module-card" [class.next]="module.id === 'cluster-manager'" [attr.id]="module.id">
+      <div class="module-card-top"><span class="eyebrow">{{ module.stage }}</span><span class="state" [class.ready]="status(module.id).ready">{{ status(module.id).label }}</span></div>
+      <h2>{{ module.name }}</h2><p>{{ module.description }}</p>
+      <div class="capabilities">@for (capability of module.capabilities; track capability) { <span>{{ capability }}</span> }</div>
+      @if (available(module.id); as release) { <dl><dt>제공 버전</dt><dd>{{ release.release.version }}</dd><dt>배포 채널</dt><dd>edge · localhost</dd></dl> }
+      @else if (fresh() && !status(module.id).ready) { <p class="module-note">현재 Registry에 검증된 설치 배포본이 없습니다.</p> }
+      <footer>
+        @if (status(module.id).ready) { <a class="btn btn-primary" [routerLink]="'/p/' + module.id">관리 화면 열기</a> }
+        @else { <button class="btn btn-primary" [disabled]="busy() || operationPending() || !status(module.id).installable" (click)="inspect(module.id)">설치 검토</button> }
+        <a class="btn btn-link" routerLink="/manage/extensions/catalog">패키지 상세</a>
+      </footer>
+    </article>
+  }
+</div>
+@if (candidate(); as plan) {
+  <section class="module-plan" aria-labelledby="module-plan-title"><h2 id="module-plan-title">{{ selectedModule()?.name }} 설치 검토</h2>
+    <p>선택한 배포본을 현재 클러스터의 Console에 설치합니다. 설치 후 제품 화면에서 기초 모듈과 저장소를 설정합니다.</p>
+    <dl><dt>채널</dt><dd>{{ plan.channel }}</dd><dt>호환 버전</dt><dd>{{ plan.compatibilityVersion }}</dd><dt>설치 이미지</dt><dd class="digest">{{ plan.image }}</dd><dt>원본 revision</dt><dd class="digest">{{ plan.sourceRevision }}</dd></dl>
+    <label for="module-reason">설치 사유</label><input id="module-reason" class="clr-input" [value]="reason()" (input)="reason.set($any($event.target).value)" minlength="8" maxlength="500" />
+    <p>정책에 따라 다른 운영자의 승인이 필요할 수 있습니다. 진행 상황은 아래 작업에 표시됩니다.</p>
+    <button class="btn btn-primary" [disabled]="busy() || !fresh() || reason().trim().length < 8" (click)="install()">{{ busy() ? '설치 요청 중' : '이 배포본 설치' }}</button>
+  </section>
+}
+@if (receipt(); as operation) {
+  <section class="module-operation" aria-live="polite"><h2>설치 진행 · {{ operation.state || '조회 중' }}</h2><p class="digest">작업 {{ operation.operationId }}</p>
+    <ol class="steps">@for (stage of stages; track stage; let i = $index) { <li [class.done]="activeStage() > i" [class.active]="activeStage() === i">{{ stage }}</li> }</ol>
+    <dl><dt>설치 대상</dt><dd class="digest">{{ operation.targetRef }}</dd><dt>요청자</dt><dd>{{ operation.actorRef }}</dd><dt>사유</dt><dd>{{ operation.reason }}</dd></dl>
+    @if (operation.state === 'Planned') { <p>설치 계획이 접수되었습니다. 요청자와 다른 사람인 승인 권한자가 이 작업 링크를 열어 검토 후 승인합니다. 개발 MFA 예외가 자기 승인을 허용하지는 않습니다.</p><button class="btn btn-primary" (click)="advance('approvals')" [disabled]="busy()">설치 계획 승인</button> }
+    @if (operation.state === 'Applied') { <button class="btn btn-primary" (click)="advance('verification')" [disabled]="busy()">설치 결과 확인</button> }
+    @if (operation.state === 'Failed' || operation.state === 'Unknown') { <p class="notice">설치가 완료되지 않았습니다. {{ operation.error?.message || operation.error?.code || '작업 상태와 패키지 상세를 확인하세요.' }}</p> }
+    <a routerLink="/manage/extensions/audit">감사 기록</a>
+  </section>
+}

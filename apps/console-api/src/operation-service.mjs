@@ -124,13 +124,18 @@ function receipt(record) {
   });
 }
 
-export function createOperationService({ store, policyCatalog, clock = () => new Date() }) {
+export function createOperationService({ store, policyCatalog, clock = () => new Date(), moduleInstallationPolicy = async () => false }) {
   if (!store?.accept || !store?.approve || !store?.verify || !store?.get) {
     throw new TypeError('operation store accept/approve/verify/get is required');
   }
   const policies = indexActionPolicies(policyCatalog);
 
   return Object.freeze({
+    async assertExtensionInstallIntake({ session, descriptorId }) {
+      if (session.aal !== 'aal2' && !(await moduleInstallationPolicy('console.extension.inspect', descriptorId))) {
+        fail('StepUpRequired', 'recent aal2 is required', 428);
+      }
+    },
     assertApprovalAuthority({ session, reason }) {
       const approvalReason = text(reason, 'reason', 3, 500);
       const authorization = authorizeOperation({
@@ -160,9 +165,12 @@ export function createOperationService({ store, policyCatalog, clock = () => new
         fail('PolicyRejected', 'target is outside the registered action boundary', 422);
       }
 
+      const localDevelopmentModuleInstall = await moduleInstallationPolicy(validated.actionId, validated.targetRef);
+
       const authorization = authorizeOperation({
         session,
         permission: policy.permission,
+        localDevelopmentModuleInstall,
         risk: policy.risk,
         reason: validated.reason,
         now: clock(),
@@ -181,6 +189,7 @@ export function createOperationService({ store, policyCatalog, clock = () => new
       }
 
       const accepted = await store.accept({
+        localDevelopmentModuleInstall,
         sessionId: session.sessionId,
         actorRef: authorization.actorRef,
         expectedPermissionRevision: permissionRevision,
@@ -206,7 +215,14 @@ export function createOperationService({ store, policyCatalog, clock = () => new
 
     async approve({ session, operationId, request, idempotencyKey, correlationId }) {
       const validated = validateApprovalRequest(request);
+      let localDevelopmentModuleInstall = false;
+      if (session?.aal !== 'aal2') {
+        const existing = await store.get({ sessionId: session.sessionId, actorRef: session.subjectId, operationId });
+        localDevelopmentModuleInstall = existing?.local_development_module_install === true
+          && await moduleInstallationPolicy(existing.action_id, existing.target_ref);
+      }
       const authorization = authorizeOperation({
+        localDevelopmentModuleInstall,
         session,
         permission: 'console.operation.approve',
         risk: 'R2',
@@ -221,6 +237,7 @@ export function createOperationService({ store, policyCatalog, clock = () => new
         fail('AuthenticationRequired', 'session authority revision is invalid', 401);
       }
       const approved = await store.approve({
+        localDevelopmentModuleInstall,
         sessionId: session.sessionId,
         actorRef: authorization.actorRef,
         expectedPermissionRevision: permissionRevision,

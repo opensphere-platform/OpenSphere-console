@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
+import { MODULE_REPOSITORIES, verifyModulePackage } from './module-release.mjs';
 
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const IMAGE_REPOSITORY = /^ghcr[.]io\/opensphere-platform\/[a-z0-9][a-z0-9._-]{0,127}$/u;
@@ -101,6 +102,11 @@ function packageContract(pkg, namespace) {
   const security = runtime.security || {};
   const availability = runtime.availability || {};
   const permissionProfile = String(spec.permissionProfile || 'none');
+  if (keyId === 'opensphere-module-local-v1'
+      && (name !== 'cluster-manager' || repository !== MODULE_REPOSITORIES['cluster-manager']
+        || spec.kind !== 'subShell' || permissionProfile !== 'cluster-read')) {
+    throw fault('Module signing key is restricted to the official Cluster Manager', 'ModuleReleaseInvalid');
+  }
   const port = runtime.port == null ? 8080 : Number(runtime.port);
   const replicas = availability.replicas == null ? 2 : Number(availability.replicas);
   const minAvailable = availability.minAvailable == null ? 1 : Number(availability.minAvailable);
@@ -135,7 +141,9 @@ function packageContract(pkg, namespace) {
       || !/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/u.test(healthPath)) {
     throw fault('UIPluginPackage lacks exact immutable runtime coordinates');
   }
-  if (permissionProfile !== 'none') {
+  if (permissionProfile !== 'none' && !(permissionProfile === 'cluster-read'
+      && name === 'cluster-manager' && spec.kind === 'subShell' && spec.hostRef === 'main'
+      && repository === MODULE_REPOSITORIES['cluster-manager'])) {
     throw fault('target C_EXT does not materialize cluster permission profiles', 'UnsupportedPermissionProfile');
   }
   if (security.runAsNonRoot === false || security.readOnlyRootFilesystem === false
@@ -153,7 +161,7 @@ function packageContract(pkg, namespace) {
     resolvedAt: resolution.resolvedAt, artifactVersion: resolution.artifactVersion,
     buildAuthority: resolution.buildAuthority, source: resolution.source,
     registryCredentialsRequired: resolution.registryCredentialsRequired, evidenceRefs,
-    port, replicas, minAvailable, healthPath, permissions, env: safeEnv(pkg), namespace,
+    port, replicas, minAvailable, healthPath, permissions, permissionProfile, env: safeEnv(pkg), namespace,
   });
 }
 
@@ -199,13 +207,17 @@ function revisionName(name, token) {
   return `${prefix}-r-${token}`;
 }
 
-export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-console' } = {}) {
+export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-console', trustedKeys = {} } = {}) {
   if (!DNS_LABEL.test(namespace)) throw new TypeError('Extension namespace must be a DNS label');
   const contract = packageContract(pkg, namespace);
+  const clusterRead = contract.permissionProfile === 'cluster-read';
+  // The signed envelope binds the executable digest and the complete privilege contract.
+  // Expiry blocks new discovery; it must not terminate an already admitted installation.
+  if (clusterRead) verifyModulePackage(pkg, trustedKeys, { requireFresh: false });
   const staticContractSha256 = staticContractDigest(pkg, contract);
   const revision = hash(Buffer.from(`${contract.name}\n${contract.imageDigest}\n${contract.manifestSha256}`, 'utf8')).slice(0, 20);
   const revisionResourceName = revisionName(contract.name, revision);
-  const serviceAccountName = revisionName(`uip-${contract.name}`, revision.slice(0, 12));
+  const serviceAccountName = clusterRead ? 'opensphere-cluster-manager' : revisionName(`uip-${contract.name}`, revision.slice(0, 12));
   const labels = {
     'app.kubernetes.io/name': contract.name,
     'app.kubernetes.io/managed-by': MANAGED_BY,
@@ -222,14 +234,14 @@ export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-consol
   }];
   const selector = { [EXTENSION_LABEL]: contract.name, [REVISION_LABEL]: revision };
   const resources = Object.freeze([
-    Object.freeze({
+    ...(!clusterRead ? [Object.freeze({
       basePath: `/api/v1/namespaces/${namespace}/serviceaccounts`,
       manifest: {
         apiVersion: 'v1', kind: 'ServiceAccount',
         metadata: { name: serviceAccountName, namespace, labels, annotations, ownerReferences },
         automountServiceAccountToken: false,
       },
-    }),
+    })] : []),
     Object.freeze({
       basePath: `/apis/apps/v1/namespaces/${namespace}/deployments`,
       manifest: {
@@ -243,6 +255,9 @@ export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-consol
             metadata: { labels: { ...labels, ...selector }, annotations },
             spec: {
               serviceAccountName, automountServiceAccountToken: false,
+              // The Console-owned pull credential is rotated by the Registry broker.
+              // Packages cannot select another Secret or expose credentials to the container.
+              imagePullSecrets: contract.registryCredentialsRequired ? [{ name: 'opensphere-ghcr-pull' }] : [],
               securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: { type: 'RuntimeDefault' } },
               containers: [{
                 name: 'extension', image: `${contract.repository}@${contract.imageDigest}`,
@@ -259,9 +274,14 @@ export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-consol
                   limits: { cpu: String(pkg.spec.runtime?.resources?.cpuLimit || '200m'), memory: String(pkg.spec.runtime?.resources?.memoryLimit || '128Mi') },
                 },
                 securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ['ALL'] } },
-                volumeMounts: [{ name: 'runtime-tmp', mountPath: '/tmp' }],
+                volumeMounts: [{ name: 'runtime-tmp', mountPath: '/tmp' },
+                  ...(clusterRead ? [{ name: 'cluster-identity', mountPath: '/var/run/secrets/kubernetes.io/serviceaccount', readOnly: true }] : [])],
               }],
-              volumes: [{ name: 'runtime-tmp', emptyDir: { sizeLimit: '32Mi' } }],
+              volumes: [{ name: 'runtime-tmp', emptyDir: { sizeLimit: '32Mi' } },
+                ...(clusterRead ? [{ name: 'cluster-identity', projected: { defaultMode: 420, sources: [
+                  { serviceAccountToken: { path: 'token', expirationSeconds: 3600 } },
+                  { configMap: { name: 'kube-root-ca.crt', items: [{ key: 'ca.crt', path: 'ca.crt' }] } },
+                ] } }] : [])],
             },
           },
         },

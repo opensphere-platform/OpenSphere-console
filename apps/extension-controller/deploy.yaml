@@ -1,6 +1,63 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
+  name: opensphere-cluster-manager
+  namespace: opensphere-console
+  labels:
+    app.kubernetes.io/part-of: opensphere-console
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opensphere-cluster-manager-read
+rules:
+  - apiGroups: ['']
+    resources: [nodes, namespaces, pods, persistentvolumes, persistentvolumeclaims]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+  - apiGroups: [ceph.rook.io]
+    resources: [cephclusters]
+    verbs: [get, list]
+  - nonResourceURLs: [/version]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opensphere-cluster-manager-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opensphere-cluster-manager-read
+subjects:
+  - kind: ServiceAccount
+    name: opensphere-cluster-manager
+    namespace: opensphere-console
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opensphere-cluster-manager-ingress
+  namespace: opensphere-console
+spec:
+  podSelector:
+    matchLabels:
+      opensphere.io/extension-id: cluster-manager
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opensphere-extension-controller
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
   name: opensphere-extension-controller
   namespace: opensphere-console
   labels:
@@ -17,7 +74,7 @@ metadata:
 rules:
   - apiGroups: [plugins.opensphere.io]
     resources: [uipluginpackages]
-    verbs: [get, list, patch]
+    verbs: [get, list, create, update, patch]
   - apiGroups: [plugins.opensphere.io]
     resources: [uipluginregistrations]
     verbs: [get, list, create, patch, delete]
@@ -141,6 +198,9 @@ spec:
         - name: controller
           image: __OPENSPHERE_EXTENSION_CONTROLLER_IMAGE__
           imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - { name: module-registry, mountPath: /var/run/opensphere/module-registry, readOnly: true }
+            - { name: module-trust, mountPath: /var/run/opensphere/module-trust, readOnly: true }
           env:
             - name: CONSOLE_EXTENSION_DATABASE_URL
               valueFrom:
@@ -180,6 +240,14 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+      volumes:
+        - name: module-registry
+          secret:
+            secretName: opensphere-ghcr-pull
+            defaultMode: 292
+        - name: module-trust
+          configMap:
+            name: opensphere-extension-trusted-keys
 ---
 apiVersion: v1
 kind: Service

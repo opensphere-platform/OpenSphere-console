@@ -14,8 +14,8 @@ test('foundational Console contracts are internally complete and self-contained'
     schemas: 77,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 56,
-    browserApiPatterns: 118,
+    consoleApiDatabaseFunctions: 58,
+    browserApiPatterns: 121,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: true,
@@ -191,6 +191,20 @@ test('Extension Controller deployment keeps its exact image, database secret, pr
     .find((entry) => entry.name === 'CONSOLE_EXTENSION_LIFECYCLE_ENABLED').value = 'false';
   assert.throws(() => verifyExtensionControllerDeployment({ documents: disabled }),
     /target lifecycle must be enabled/);
+});
+
+test('Cluster Manager read admission rejects broader verbs, resources and identities', async () => {
+  const source = await readFile(new URL('../apps/extension-controller/deploy.yaml', import.meta.url), 'utf8');
+  const documents = yaml.loadAll(source).filter(Boolean);
+  for (const mutate of [
+    docs => docs.find(d=>d.kind==='ClusterRole'&&d.metadata.name==='opensphere-cluster-manager-read').rules[0].verbs.push('patch'),
+    docs => docs.find(d=>d.kind==='ClusterRole'&&d.metadata.name==='opensphere-cluster-manager-read').rules[0].resources.push('secrets'),
+    docs => docs.find(d=>d.kind==='ClusterRoleBinding'&&d.metadata.name==='opensphere-cluster-manager-read').subjects[0].name='default',
+    docs => docs.find(d=>d.kind==='ClusterRole'&&d.metadata.name==='opensphere-cluster-manager-read').rules[3].nonResourceURLs.push('/*'),
+  ]) {
+    const changed=structuredClone(documents); mutate(changed);
+    assert.throws(()=>verifyExtensionControllerDeployment({documents:changed}),/Cluster Manager/);
+  }
 });
 
 test('Console API authority verification rejects missing grants and direct table mutation', async () => {

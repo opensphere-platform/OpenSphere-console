@@ -7,6 +7,29 @@ import {
   verifyExtensionRelease,
 } from '../src/extension-release.mjs';
 import { artifactFetch, makeReleaseFixture } from './extension-release-fixture.mjs';
+import { moduleFixture } from './module-release-fixture.mjs';
+
+test('only the signed official Cluster Manager can mount the fixed read-only identity', () => {
+  const signed = moduleFixture();
+  const pkg = makeReleaseFixture().pkg;
+  pkg.metadata.name = 'cluster-manager';
+  Object.assign(pkg.spec, signed.release.spec);
+  pkg.spec.resolution = { ...makeReleaseFixture().pkg.spec.resolution, ...signed.release.spec.resolution };
+  signed.release.spec = pkg.spec;
+  pkg.metadata.annotations = { 'opensphere.io/module-release': signed.seal() };
+  const plan = buildExtensionWorkloadPlan(pkg, { trustedKeys: signed.trustedKeys });
+  assert.equal(plan.serviceAccountName, 'opensphere-cluster-manager');
+  assert.ok(plan.resources.every(r => r.manifest.kind !== 'ServiceAccount'));
+  const pod = plan.resources.find(r => r.manifest.kind === 'Deployment').manifest.spec.template.spec;
+  assert.equal(pod.automountServiceAccountToken, false);
+  assert.equal(pod.volumes.find(v => v.projected).projected.sources[0].serviceAccountToken.expirationSeconds, 3600);
+  assert.ok(pod.volumes.every(v => !v.secret));
+  assert.throws(() => buildExtensionWorkloadPlan(pkg), { code: 'ModuleReleaseInvalid' });
+  const tampered = structuredClone(pkg); tampered.spec.env = [{ name: 'UNAPPROVED', value: 'true' }];
+  assert.throws(() => buildExtensionWorkloadPlan(tampered, { trustedKeys: signed.trustedKeys }), { code: 'ModuleReleaseInvalid' });
+  tampered.metadata.name = 'other';
+  assert.throws(() => buildExtensionWorkloadPlan(tampered, { trustedKeys: signed.trustedKeys }), { code: 'UnsupportedPermissionProfile' });
+});
 
 function copy(value) {
   return structuredClone(value);
@@ -56,6 +79,18 @@ test('release verifier accepts only approved raw manifest, signature, and entry 
   assert.equal(result.signature, 'Verified');
   assert.equal(result.manifestSha256, fixture.pkg.spec.manifest.sha256);
   assert.equal(result.entrySha256, fixture.manifest.entrySha256);
+});
+
+test('private GHCR packages use only the Console pull Secret without mounting credentials', () => {
+  const { pkg } = makeReleaseFixture();
+  for (const required of [true, false]) {
+    pkg.spec.resolution.registryCredentialsRequired = required;
+    pkg.spec.imagePullSecrets = [{ name: 'untrusted-package-selected-secret' }];
+    const pod = buildExtensionWorkloadPlan(pkg).resources.find(r => r.manifest.kind === 'Deployment').manifest.spec.template.spec;
+    assert.deepEqual(pod.imagePullSecrets, required ? [{ name: 'opensphere-ghcr-pull' }] : []);
+    assert.ok(pod.volumes.every(volume => !volume.secret));
+    assert.equal(pod.automountServiceAccountToken, false);
+  }
 });
 
 test('semantically equal manifest byte drift is rejected before signature interpretation', async () => {

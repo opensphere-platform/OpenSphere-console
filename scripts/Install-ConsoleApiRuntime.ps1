@@ -646,6 +646,22 @@ $ledger = Invoke-OwnerSql $ledgerSql
 if ($ledger.Count -ne 1 -or $ledger[0] -ne $expectedLedger) {
   throw 'Console API runtime provisioning requires the exact fresh migration prefix'
 }
+# The database exception is disabled by default and cannot be enabled by C_API.
+# Only this installation owner copies the verified local context; missing or
+# non-development configuration removes the exception without changing history.
+$moduleConfigRaw = (Invoke-Kubectl @('-n', $RuntimeNamespace, 'get', 'configmap', 'opensphere-installation-lock', '--ignore-not-found', '-o', 'json') | Out-String).Trim()
+$moduleConfig = if ($moduleConfigRaw) { ($moduleConfigRaw | ConvertFrom-Json).data.'config.json' | ConvertFrom-Json } else { $null }
+$moduleUri = [uri]$ConsoleUrl
+$moduleLocal = $KubeContext -eq 'docker-desktop' -and $moduleConfig -and $moduleConfig.channel -eq 'edge' -and
+  $moduleConfig.authEnvironment -eq 'development' -and $moduleConfig.consoleUrl -eq $ConsoleUrl -and
+  $moduleUri.Scheme -eq 'https' -and $moduleUri.Host -in @('localhost','127.0.0.1','[::1]') -and
+  -not $moduleUri.UserInfo -and $moduleUri.AbsolutePath -eq '/' -and -not $moduleUri.Query -and -not $moduleUri.Fragment
+if ($moduleLocal) {
+  $moduleOrigin = $moduleUri.GetLeftPart([UriPartial]::Authority).Replace("'", "''")
+  Invoke-OwnerSql "INSERT INTO console_operation.module_installation_environment(singleton,channel,auth_environment,kube_context,console_origin) VALUES(true,'edge','development','docker-desktop','$moduleOrigin') ON CONFLICT(singleton) DO UPDATE SET console_origin=EXCLUDED.console_origin,updated_at=statement_timestamp();" | Out-Null
+} else {
+  Invoke-OwnerSql 'DELETE FROM console_operation.module_installation_environment;' | Out-Null
+}
 Complete-InstallStage
 Start-InstallStage 7 'Supabase REST 준비 (최대 10분)'
 Invoke-Kubectl @('-n', $DataNamespace, 'rollout', 'status', 'deployment/opensphere-supabase-rest', '--timeout=10m') | Out-Null

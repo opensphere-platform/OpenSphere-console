@@ -13,7 +13,7 @@ const FILE_PATH = /^\/plugins\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 const MAX_REGISTRATIONS = 256;
 const TERMINAL_VERIFICATION = new Set([
-  'PackageContractViolation', 'UnsupportedPermissionProfile', 'UnsafeRuntimeContract',
+  'PackageContractViolation', 'UnsupportedPermissionProfile', 'UnsafeRuntimeContract', 'ModuleReleaseInvalid',
   'ManifestDigestMismatch', 'ManifestInvalid', 'UntrustedKey', 'ManifestSignatureInvalid',
   'ManifestContractMismatch', 'ApiNamespaceViolation', 'EntryDigestMismatch',
   'NonClosedModuleArtifact', 'AssetContractInvalid', 'AssetDigestMismatch', 'ArtifactTooLarge',
@@ -422,7 +422,9 @@ export function createKubernetesExtensionLifecycle({
       let plan;
       try {
         pkg = (await request('GET', `${packages}/${current.name}`)).value;
-        plan = buildExtensionWorkloadPlan(pkg, { namespace });
+        plan = buildExtensionWorkloadPlan(pkg, { namespace,
+          trustedKeys: pkg.spec?.permissionProfile === 'cluster-read' ? await loadTrustedKeys() : {},
+        });
       } catch (error) {
         return markFailure(registration, error);
       }

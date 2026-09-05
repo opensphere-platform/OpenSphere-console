@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "repository": "OpenSphere-Console",
-  "latestGlobalId": "opensphere-console/20260905/0035",
-  "migrationCount": 35,
-  "setDigest": "sha256:07f76261bfaac0e9ed897e1156af6cf3417ac2140cd0b88a47cc739fb2b3de73",
+  "latestGlobalId": "opensphere-console/20260905/0036",
+  "migrationCount": 36,
+  "setDigest": "sha256:6767504ad25cae80e8055321daf3d47a6cf37cef81a5b1517673a6ab8ede6fa1",
   "migrations": [
     {
       "globalId": "opensphere-console/20260902/0001",
@@ -354,6 +354,16 @@
       "sourceRevision": "676e7c75e9135c49b3041e96019f3b5c197ad9a8",
       "setSize": 35,
       "setDigest": "sha256:07f76261bfaac0e9ed897e1156af6cf3417ac2140cd0b88a47cc739fb2b3de73"
+    },
+    {
+      "globalId": "opensphere-console/20260905/0036",
+      "semanticKey": "console.extension.development_module_installation",
+      "predecessorGlobalId": "opensphere-console/20260905/0035",
+      "path": "migrations/versions/0036_development_module_installation.sql",
+      "sha256": "4a5cdaa8c50857f26227fa370c858b3da3e352f2513f30fc3ab4f3e9f0910d74",
+      "sourceRevision": "5610c24520d99ba217ed39c6f199c21da0956e55",
+      "setSize": 36,
+      "setDigest": "sha256:6767504ad25cae80e8055321daf3d47a6cf37cef81a5b1517673a6ab8ede6fa1"
     }
   ]
 }

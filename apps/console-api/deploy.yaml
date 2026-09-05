@@ -261,6 +261,9 @@ spec:
               app.kubernetes.io/name: opensphere-extension-controller
         - podSelector:
             matchLabels:
+              opensphere.io/extension-id: cluster-manager
+        - podSelector:
+            matchLabels:
               app: opensphere-notification-dispatcher
         - podSelector:
             matchLabels:

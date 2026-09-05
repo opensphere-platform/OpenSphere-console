@@ -9,6 +9,7 @@ import {createServer as createTlsServer} from 'node:https';
 import {createShellDelegationBroker,createShellCredentialHandler,createShellConsoleHandler} from './shell-delegation.mjs';
 import pg from 'pg';
 import { createOperationService } from './operation-service.mjs';
+import { createModuleInstallationPolicy } from './module-installation-policy.mjs';
 import { createAuditOperations } from './audit-operations.mjs';
 import { createIdentityOperations } from './identity-operations.mjs';
 import { createDataIdentityOperations, createSupabaseLiveProbes } from './data-identity-operations.mjs';
@@ -57,7 +58,7 @@ const pool = new Pool({
   application_name: 'opensphere-console-api',
 });
 const store = createPostgresOperationStore({ query: pool.query.bind(pool) });
-const operationService = createOperationService({ store, policyCatalog });
+const operationService = createOperationService({ store, policyCatalog, moduleInstallationPolicy: createModuleInstallationPolicy(publicOrigin) });
 const auditOperations = createAuditOperations({ store });
 const identityOperations = createIdentityOperations({ store });
 const supabaseAuthUrl = String(process.env.CONSOLE_SUPABASE_AUTH_URL || 'http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999');

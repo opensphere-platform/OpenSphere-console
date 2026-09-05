@@ -222,7 +222,9 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.revoke_owned_cli_device_with_cli_session',
   'console_identity.rotate_browser_session_credentials',
   'console_identity.touch_browser_session_activity',
+  'console_operation.accept_development_module_install',
   'console_operation.accept_operation',
+  'console_operation.approve_development_module_install',
   'console_operation.approve_operation',
   'console_operation.get_gitea_operation_for_approval',
   'console_operation.get_operation',
@@ -508,10 +510,11 @@ export function verifyExtensionControllerDeployment({ documents }) {
     apiGroups: [...(rule.apiGroups || [])].sort(),
     resources: [...(rule.resources || [])].sort(),
     resourceNames: [...(rule.resourceNames || [])].sort(),
+    nonResourceURLs: [...(rule.nonResourceURLs || [])].sort(),
     verbs: [...(rule.verbs || [])].sort(),
   })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   const namespacedRules = normalizeRules([
-    { apiGroups: ['plugins.opensphere.io'], resources: ['uipluginpackages'], verbs: ['get', 'list', 'patch'] },
+    { apiGroups: ['plugins.opensphere.io'], resources: ['uipluginpackages'], verbs: ['get', 'list', 'create', 'update', 'patch'] },
     { apiGroups: ['plugins.opensphere.io'], resources: ['uipluginregistrations'], verbs: ['get', 'list', 'create', 'patch', 'delete'] },
     { apiGroups: ['plugins.opensphere.io'], resources: ['uipluginregistrations/status'], verbs: ['patch'] },
     { apiGroups: [''], resources: ['configmaps'], resourceNames: ['opensphere-extension-trusted-keys'], verbs: ['get'] },
@@ -540,6 +543,26 @@ export function verifyExtensionControllerDeployment({ documents }) {
   const serializedRules = JSON.stringify([role.rules, egressDiscoveryRole.rules, cliRole.rules]);
   assert(!serializedRules.includes('"*"'), 'C_EXT RBAC must not contain wildcards');
   assert(!serializedRules.includes('"secrets"'), 'C_EXT runtime must not receive Secret API authority');
+
+  const moduleAccount = one('ServiceAccount', 'opensphere-cluster-manager');
+  const moduleRole = one('ClusterRole', 'opensphere-cluster-manager-read');
+  const moduleBinding = one('ClusterRoleBinding', 'opensphere-cluster-manager-read');
+  assert(moduleAccount.metadata?.namespace === 'opensphere-console' && moduleAccount.automountServiceAccountToken === false,
+    'Cluster Manager requires one static account without automatic token mount');
+  assert(JSON.stringify(normalizeRules(moduleRole.rules)) === JSON.stringify(normalizeRules([
+    {apiGroups:[''],resources:['nodes','namespaces','pods','persistentvolumes','persistentvolumeclaims'],verbs:['get','list']},
+    {apiGroups:['storage.k8s.io'],resources:['storageclasses'],verbs:['get','list']},
+    {apiGroups:['ceph.rook.io'],resources:['cephclusters'],verbs:['get','list']},
+    {nonResourceURLs:['/version'],verbs:['get']},
+  ])), 'Cluster Manager RBAC must match the approved read-only inventory');
+  assert(moduleBinding.roleRef?.apiGroup === 'rbac.authorization.k8s.io'
+    && moduleBinding.roleRef?.kind === 'ClusterRole' && moduleBinding.roleRef?.name === 'opensphere-cluster-manager-read'
+    && moduleBinding.subjects?.length === 1 && moduleBinding.subjects[0]?.kind === 'ServiceAccount'
+    && moduleBinding.subjects[0]?.name === 'opensphere-cluster-manager'
+    && moduleBinding.subjects[0]?.namespace === 'opensphere-console', 'Cluster Manager binding escaped its approved identity');
+  assert(documents.filter(document => document?.kind === 'ClusterRole').length === 2
+    && documents.filter(document => document?.kind === 'ClusterRoleBinding').length === 2,
+  'C_EXT deployment contains an unreviewed cluster authority');
 
   const pod = deployment.spec?.template?.spec;
   const container = pod?.containers?.find(({ name }) => name === 'controller');

@@ -237,10 +237,12 @@ export function createRegistryOperations({ operationService, policyRevision, pro
 
     async installCandidate({ session, body, idempotencyKey, correlationId }) {
       requirePermission(session, 'console.extension.install');
-      if (session.aal !== 'aal2') {
+      const request = catalogRequest(body, true);
+      if (operationService.assertExtensionInstallIntake) {
+        await operationService.assertExtensionInstallIntake({ session, descriptorId: request.descriptorId });
+      } else if (session.aal !== 'aal2') {
         throw Object.assign(new Error('recent aal2 is required'), { code: 'StepUpRequired', status: 428 });
       }
-      const request = catalogRequest(body, true);
       if (!registryResolver?.resolveExtension) throw Object.assign(
         new Error('Registry resolution authority is unavailable'),
         { code: 'AuthorityUnavailable', status: 503 },

@@ -94,6 +94,15 @@ export function createPluginProxy({
       'x-os-permissions': JSON.stringify(actor.permissions),
       ...(correlationId ? { 'x-os-correlation-id': correlationId } : {}),
     });
+    if (target.ownerCredentialForwarding === 'cluster-manager-v1'
+        && target.packageId === 'cluster-manager' && /^cluster-manager(?:-r-[a-f0-9]{20})?$/.test(target.serviceId)
+        && target.servingMode === 'Current') {
+      const authorization = String(headers.authorization || '');
+      if (!/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(authorization)
+          || authorization.length > 16384) fault(401, 'verified owner credential is required');
+      upstreamHeaders.authorization = authorization;
+      upstreamHeaders['x-os-owner-admission'] = 'extension-controller-v1';
+    }
     const upstreamUrl = `http://${target.serviceId}.${targetNamespace}.svc.cluster.local:8080${route.upstreamPath}${route.search}`;
     let response;
     try {

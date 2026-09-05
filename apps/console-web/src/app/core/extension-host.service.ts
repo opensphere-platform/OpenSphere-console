@@ -442,7 +442,10 @@ export class ExtensionHostService {
         throw new Error(`hostCompat '${e.hostCompat}'이 Host API ${hostApiVersion}과 비호환`);
       }
       await this.deactivate(e.id);
-      const spki = trustedKeys[e.keyId];
+        const spki = trustedKeys[e.keyId];
+        if (e.keyId === 'opensphere-module-local-v1' && (e.id !== 'cluster-manager' || componentKind !== 'subShell' || hostRef !== 'main')) {
+          throw new Error('Module signing key is restricted to the official Cluster Manager');
+        }
       if (!spki) throw new Error(`신뢰 키 '${e.keyId}' 없음`);
       // Manifest and detached signature are independent immutable artifacts.
       // Fetch them together and retain the cryptographic checks below.

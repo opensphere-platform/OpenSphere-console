@@ -1507,6 +1507,12 @@ paths:
       - $ref: "#/components/parameters/OperationId"
     post:
       operationId: approveOperation
+      description: >-
+        Requires current permission, session authority and approval by a different person.
+        AAL2 is the default. The installation-owner-enabled HTTPS localhost/edge/development
+        exception accepts actual AAL1 only for an existing official Cluster Manager install
+        marked local_development_module_install by the dedicated database acceptance function.
+        Neither browser input nor C_API can enable this exception. R3 and other operations remain strict.
       tags: [Operations]
       x-opensphere-requirement: CON-FR-010
       x-opensphere-risk: R2-or-R3
@@ -1759,6 +1765,12 @@ paths:
   /api/admin/extensions/install:
     post:
       operationId: installExtensionCandidate
+      description: >-
+        Resolves a signed candidate at the exact Registry revision before durable acceptance.
+        AAL2 is the default. Only the official Cluster Manager image pinned by digest may use
+        actual AAL1 when both server installation configuration and the DBA-owned database
+        environment permit HTTPS localhost, edge and development on docker-desktop.
+        Current permissions, CSRF, session checks, R2 risk and independent-person approval remain required.
       tags: [Extensions]
       x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2

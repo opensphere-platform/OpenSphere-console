@@ -232,6 +232,8 @@ export function createKubernetesRegistrationWriter({
         servingMode: serving.phase,
         digest: String(serving.digest),
         manifestSha256: String(serving.manifestSha256),
+        ...(packageId === 'cluster-manager' && serving.phase === 'Current'
+          ? { modulePackage: pkg } : {}),
       });
     },
 

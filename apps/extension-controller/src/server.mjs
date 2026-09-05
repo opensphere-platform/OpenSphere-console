@@ -17,6 +17,9 @@ import { createConsoleOwnerAdmission } from './owner-admission.mjs';
 import { createPluginProxy } from './plugin-proxy.mjs';
 import { createExtensionPostgresStore } from './postgres-store.mjs';
 import { extensionControllerReady } from './readiness.mjs';
+import { createGhcrModuleDiscovery } from './ghcr-module-discovery.mjs';
+import { verifyModulePackage } from './module-release.mjs';
+import { parseTrustedExtensionKeys } from './extension-release.mjs';
 
 const { Pool } = pg;
 function integer(name, fallback, minimum, maximum) {
@@ -59,6 +62,13 @@ const kubernetesBaseUrl = String(process.env.KUBERNETES_API_URL
   || 'https://' + (process.env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc') + ':' + (process.env.KUBERNETES_SERVICE_PORT_HTTPS || '443'));
 const kubernetesTimeoutMs = integer('CONSOLE_KUBERNETES_TIMEOUT_MS', 8000, 100, 30000);
 const kubernetesMaximumResponseBytes = integer('CONSOLE_KUBERNETES_MAX_RESPONSE_BYTES', 131072, 4096, 4 * 1024 * 1024);
+const loadModuleKeys = async () => parseTrustedExtensionKeys(await readFile('/var/run/opensphere/module-trust/trusted-keys.json', 'utf8'));
+const moduleDiscovery = createGhcrModuleDiscovery({
+  kubernetesBaseUrl, namespace: extensionNamespace,
+  loadKubernetesToken: async () => (await readFile(serviceAccountDirectory + '/token', 'utf8')).trim(),
+  loadDockerConfig: async () => JSON.parse(await readFile('/var/run/opensphere/module-registry/.dockerconfigjson', 'utf8')),
+  loadTrustedKeys: loadModuleKeys,
+});
 const registrationWriter = kubernetesToken ? createKubernetesRegistrationWriter({
   baseUrl: kubernetesBaseUrl,
   token: kubernetesToken,
@@ -121,7 +131,12 @@ const pluginProxy = createPluginProxy({
     if (!registrationWriter) {
       throw Object.assign(new Error('Kubernetes registration authority is unavailable'), { status: 503 });
     }
-    return registrationWriter.resolvePluginProxyTarget(input);
+    const target = await registrationWriter.resolvePluginProxyTarget(input);
+    if (target.modulePackage) {
+      verifyModulePackage(target.modulePackage, await loadModuleKeys(), { requireFresh: false });
+      return { ...target, ownerCredentialForwarding: 'cluster-manager-v1' };
+    }
+    return target;
   },
 });
 const pluginRequestMaximumBytes = integer('CONSOLE_PLUGIN_REQUEST_MAX_BYTES', 1048576, 1024, 16 * 1024 * 1024);
@@ -174,6 +189,13 @@ let timer;
 async function cycle() {
   if (stopping) return;
   try {
+    try {
+      const discovery = await moduleDiscovery.reconcileOnce();
+      if (discovery.state !== 'Idle') process.stdout.write(JSON.stringify({ event: 'module-discovery', ...discovery }) + '\n');
+    } catch (error) {
+      // Registry outages block new discovery, not the already running Console.
+      process.stderr.write(JSON.stringify({ event: 'module-discovery-unavailable', code: error?.code || 'AuthorityUnavailable' }) + '\n');
+    }
     if (kubernetesApiEgressReconciler) {
       try {
         const egress = await kubernetesApiEgressReconciler.reconcileOnce();

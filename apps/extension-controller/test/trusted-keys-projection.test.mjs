@@ -24,13 +24,14 @@ test('target trust ConfigMap preserves every reviewed SPKI byte under its existi
   assert.doesNotMatch(target, /dupa/iu);
   const targetKeys = embeddedTrust(target);
   const historicalKeys = embeddedTrust(historical);
-  assert.deepEqual(targetKeys, historicalKeys);
+  for (const [id, bytes] of Object.entries(historicalKeys)) assert.equal(targetKeys[id], bytes);
   assert.deepEqual(Object.keys(targetKeys), [
     'opensphere-plugins-v1',
     'opensphere-plugins-v2',
     'opensphere-plugins-v3',
     'opensphere-plugins-v4',
     'opensphere-plugins-v5',
+    'opensphere-module-local-v1',
   ]);
   assert.deepEqual(parseTrustedExtensionKeys({ trustedKeys: targetKeys }), targetKeys);
   assert.match(lifecycle, /trustedKeysConfigMap = 'opensphere-extension-trusted-keys'/u);

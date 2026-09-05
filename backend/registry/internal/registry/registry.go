@@ -326,6 +326,11 @@ func installableExtensionFromPackage(pkg unstructured.Unstructured, trustedKeys 
 	reject := func(code, message string) (ExtensionCandidate, *catalog.Rejected) {
 		return ExtensionCandidate{}, &catalog.Rejected{Kind: "extension", ID: "extension." + id, Code: code, Message: message}
 	}
+	if id == "cluster-manager" || keyID == "opensphere-module-local-v1" || nestedString(pkg.Object, "spec", "permissionProfile") == "cluster-read" {
+		if err := verifyOfficialModule(pkg, trustedKeys, time.Now()); err != nil {
+			return reject("ModuleReleaseInvalid", err.Error())
+		}
+	}
 	if !extensionIDRE.MatchString(id) || canonicalExtensionRepository(kind, id) == "" || repository != canonicalExtensionRepository(kind, id) {
 		return reject("ExecutionIdentityInvalid", "installable package lacks its canonical OpenSphere repository identity")
 	}
@@ -378,6 +383,9 @@ func pluginFrom(pkg, reg unstructured.Unstructured, nav map[string]interface{}, 
 	digest := nestedString(reg.Object, "status", "currentDigest")
 	manifestDigest := nestedString(reg.Object, "status", "currentManifestSha256")
 	keyID := nestedString(pkg.Object, "spec", "trust", "keyId")
+	if keyID == "opensphere-module-local-v1" && (id != "cluster-manager" || nestedString(pkg.Object, "spec", "image", "repository") != "ghcr.io/opensphere-platform/opensphere-shell-cluster-manager") {
+		return Plugin{}, &catalog.Rejected{Kind: "extension", ID: id, Code: "KeyScopeViolation", Message: "module key is restricted to Cluster Manager"}
+	}
 	if !digestRE.MatchString(digest) {
 		return Plugin{}, &catalog.Rejected{Kind: "extension", ID: id, Code: "InvalidDigest", Message: "verified exact image digest is missing"}
 	}

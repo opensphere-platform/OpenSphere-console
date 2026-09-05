@@ -1042,7 +1042,8 @@ export function createPostgresOperationStore({ query }) {
 
     async accept(input) {
       try {
-        const result = await query(ACCEPT_SQL, [
+        const result = await query(input.localDevelopmentModuleInstall === true
+          ? ACCEPT_SQL.replace('console_operation.accept_operation(', 'console_operation.accept_development_module_install(') : ACCEPT_SQL, [
           input.sessionId,
           input.actorRef,
           input.expectedPermissionRevision,
@@ -1073,7 +1074,8 @@ export function createPostgresOperationStore({ query }) {
 
     async approve(input) {
       try {
-        const result = await query(APPROVE_SQL, [
+        const result = await query(input.localDevelopmentModuleInstall === true
+          ? APPROVE_SQL.replace('console_operation.approve_operation(', 'console_operation.approve_development_module_install(') : APPROVE_SQL, [
           input.sessionId,
           input.actorRef,
           input.expectedPermissionRevision,

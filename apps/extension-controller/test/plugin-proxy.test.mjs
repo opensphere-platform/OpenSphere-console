@@ -8,6 +8,21 @@ const actor = Object.freeze({
   permissionRevision: 7, revokeEpoch: 4, assurance: 'aal2', permissions: ['console.role.viewer'],
 });
 
+test('owner bearer is forwarded only to the cryptographically admitted current Cluster Manager', async () => {
+  for (const [serviceId, mode, forwarded] of [['cluster-manager', 'Current', true], ['other', 'Current', false], ['cluster-manager', 'LastKnownGood', false]]) {
+    let actual;
+    const proxy = createPluginProxy({
+      resolveTarget: async () => ({ serviceId, packageId: serviceId, servingMode: mode, ownerCredentialForwarding: 'cluster-manager-v1' }),
+      fetchImpl: async (_, options) => { actual = options.headers; return new Response('{}'); },
+    });
+    await proxy({ method: 'GET', url: new URL('http://owner/api/plugins/' + serviceId + '/overview'), actor,
+      headers: { authorization: 'Bearer test.owner.token', cookie: 'browser=secret' } });
+    assert.equal(actual.authorization, forwarded ? 'Bearer test.owner.token' : undefined);
+    assert.equal(actual['x-os-owner-admission'], forwarded ? 'extension-controller-v1' : undefined);
+    assert.equal(actual.cookie, undefined);
+  }
+});
+
 test('C_EXT proxy resolves an exact governed service and never forwards browser or Owner credentials', async () => {
   const calls = [];
   const proxy = createPluginProxy({

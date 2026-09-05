@@ -192,6 +192,7 @@ export class AdminLayout {
       label: '플랫폼 제어',
       icon: Layers16,
       items: [
+        { label: '모듈 설치', route: '/manage/modules' },
         { label: 'Control Plane', route: '/manage/platform-control' },
         { label: 'Platform Release', route: '/manage/platform-release' },
       ],
