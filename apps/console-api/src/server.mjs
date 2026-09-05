@@ -10,6 +10,7 @@ import {createShellDelegationBroker,createShellCredentialHandler,createShellCons
 import pg from 'pg';
 import { createOperationService } from './operation-service.mjs';
 import { createModuleInstallationPolicy } from './module-installation-policy.mjs';
+import { createGiteaModuleOwner } from './gitea-module-contract.mjs';
 import { createAuditOperations } from './audit-operations.mjs';
 import { createIdentityOperations } from './identity-operations.mjs';
 import { createDataIdentityOperations, createSupabaseLiveProbes } from './data-identity-operations.mjs';
@@ -141,18 +142,20 @@ const giteaChangeClient = createGiteaChangeClient({
   timeoutMs: positiveInteger('CONSOLE_GITEA_TIMEOUT_MS', 5000, 30000),
   maximumResponseBytes: positiveInteger('CONSOLE_GITEA_MAX_RESPONSE_BYTES', 262144, 1048576),
 });
+const giteaModuleOwner = createGiteaModuleOwner({ registryResolver });
 const platformChangeOperations = createPlatformChangeOperations({
   operationService,
   policyRevision: policyCatalog.policyRevision,
   projectionStore: store,
   giteaClient: giteaChangeClient,
+  moduleOwner: giteaModuleOwner,
 });
 const platformReleaseOperations = createPlatformReleaseOperations({
   releaseStore: createFileInstallationReleaseStore({
     path: String(process.env.CONSOLE_INSTALLATION_RELEASE_PATH || '/var/run/opensphere/release/release.json'),
   }),
 });
-const platformChangeTemplateOperations = createPlatformChangeTemplateOperations();
+const platformChangeTemplateOperations = createPlatformChangeTemplateOperations({ moduleOwner: giteaModuleOwner });
 const baselineMonitoringOperations = createBaselineMonitoringOperations({
   baseUrl: String(process.env.CONSOLE_BESZEL_URL || ''),
   email: String(process.env.CONSOLE_BESZEL_READER_EMAIL || ''),

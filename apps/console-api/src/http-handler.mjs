@@ -568,7 +568,7 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           throw Object.assign(new Error('Platform change template authority is unavailable'), { code: 'AuthorityUnavailable', status: 503, sideEffect: 'none' });
         }
         const session = await resolveSession(request, { requireCsrf: false, correlationId });
-        return send(response, 200, platformChangeTemplateOperations.get({
+        return send(response, 200, await platformChangeTemplateOperations.get({
           session,
           templateId: platformChangeTemplateMatch[1],
           correlationId,

@@ -7,8 +7,8 @@
   "currentSessionAuthority": "console_identity.browser_session",
   "targetSessionAuthority": "console_identity.browser_session",
   "inventory": {
-    "routePatternCount": 121,
-    "setDigest": "sha256:37d3a0b5390450b2d90d6ac45ca8386a804973ad7835476feda554d960d5f57f"
+    "routePatternCount": 122,
+    "setDigest": "sha256:4f56c1119449df725621894666022382a3e5ac3468bc75b419fb64829ce513f8"
   },
   "targetSessionCapabilities": [
     {

@@ -1,4 +1,5 @@
 import foundationBootstrapContract from '../runtime/foundation-bootstrap-contract.js';
+import { MODULE_TEMPLATE } from './gitea-module-contract.mjs';
 
 const { FOUNDATION_BOOTSTRAP_TEMPLATE } = foundationBootstrapContract;
 
@@ -60,10 +61,11 @@ function assertAuthority(session) {
   }
 }
 
-export function createPlatformChangeTemplateOperations() {
+export function createPlatformChangeTemplateOperations({ moduleOwner } = {}) {
   return Object.freeze({
-    get({ session, templateId }) {
+    get({ session, templateId, correlationId }) {
       assertAuthority(session);
+      if (templateId === MODULE_TEMPLATE && moduleOwner) return moduleOwner.template(correlationId);
       const template = TEMPLATES.get(String(templateId || ''));
       if (!template) denied('change template not found', 'NotFound', 404);
       return structuredClone(template);

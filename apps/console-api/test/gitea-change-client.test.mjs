@@ -12,12 +12,14 @@ const desiredRevision = 'a'.repeat(40);
 const mergeRevision = 'b'.repeat(40);
 
 async function withGitea(run, {
-  protectedBranch = true, privateRepository = true, omitDesiredRevision = false, argocdState = 'missing',
+  protectedBranch = true, privateRepository = true, omitDesiredRevision = false, argocdState = 'missing', tamperDeclaration = false, extraFile = false, changedHead = false,
 } = {}) {
   const calls = [];
   let branchExists = false;
   let pullExists = false;
   let merged = false;
+  let declarationContent;
+  let declarationPath;
   const server = createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -66,7 +68,15 @@ async function withGitea(run, {
     }
     if (['POST', 'PUT'].includes(request.method) && request.url?.includes('/contents/')) {
       branchExists = true;
+      declarationContent = body.content;
+      declarationPath = request.url.split('/contents/')[1];
       return send(201, { commit: { sha: omitDesiredRevision ? null : desiredRevision } });
+    }
+    if (request.method === 'GET' && request.url?.includes('/contents/') && declarationContent) {
+      return send(200, { content: tamperDeclaration ? Buffer.from('{"tampered":true}').toString('base64') : declarationContent });
+    }
+    if (request.method === 'GET' && request.url?.includes('/pulls/17/files?')) {
+      return send(200, [{ filename: declarationPath, status: 'added' }, ...(extraFile ? [{ filename: 'unapproved.json', status: 'added' }] : [])]);
     }
     if (request.method === 'POST' && request.url === '/api/v1/repos/opensphere/platform-declarations/pulls') {
       pullExists = true;
@@ -74,7 +84,7 @@ async function withGitea(run, {
     }
     if (request.method === 'GET' && request.url === '/api/v1/repos/opensphere/platform-declarations/pulls/17') {
       return send(200, {
-        number: 17, head: { ref: `control/${operationId}` }, base: { ref: 'main' },
+        number: 17, head: { ref: `control/${operationId}`, sha: changedHead ? 'c'.repeat(40) : desiredRevision }, base: { ref: 'main' },
         state: merged ? 'closed' : 'open', merged, merge_commit_sha: merged ? mergeRevision : null,
       });
     }
@@ -301,3 +311,25 @@ test('Fixed Argo CD verification bootstrap refuses a configurable repository sub
     code: 'AuthorityUnavailable', status: 503, sideEffect: 'none',
   });
 });
+
+test('native module merge binds reviewed head, sole changed file and canonical declaration at head and merge', async () => {
+  await withGitea(async ({client,calls}) => {
+    const declaration=proposalInput(); await client.ensureProposal(declaration);
+    const result=await client.approveAndMerge({operationId,branch:`control/${operationId}`,pullNumber:17,
+      approverRef:'55555555-5555-4555-8555-555555555555',reason:'Independent exact module approval',expectedRevision:desiredRevision,declaration});
+    assert.equal(result.mergeRevision,mergeRevision);
+    const merge=calls.find(x=>x.url.endsWith('/merge'));
+    assert.equal(merge.body.head_commit_id,desiredRevision);
+    assert.ok(calls.some(x=>x.url.includes('ref='+mergeRevision)));
+  });
+});
+for(const [name,options,code] of [['changed head',{changedHead:true},'StaleRevision'],['extra file',{extraFile:true},'ClaimBindingMismatch'],['tampered declaration',{tamperDeclaration:true},'ClaimBindingMismatch']]) {
+  test('native module merge rejects '+name+' before any review/merge write',async()=>{
+    await withGitea(async ({client,calls})=>{
+      const declaration=proposalInput();await client.ensureProposal(declaration);
+      await assert.rejects(client.approveAndMerge({operationId,branch:`control/${operationId}`,pullNumber:17,
+        approverRef:'55555555-5555-4555-8555-555555555555',reason:'Independent exact module approval',expectedRevision:desiredRevision,declaration}),{code});
+      assert.equal(calls.filter(x=>x.url.endsWith('/reviews')||x.url.endsWith('/merge')).length,0);
+    },options);
+  });
+}

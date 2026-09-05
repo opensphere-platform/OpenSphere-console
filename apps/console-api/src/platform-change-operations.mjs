@@ -134,7 +134,11 @@ function changeProjection(item, observedAt) {
   const outbox = item.outbox || null;
   const activeClaim = Boolean(outbox?.claimedAt && outbox?.leaseExpiresAt
     && Date.parse(outbox.leaseExpiresAt) > Date.parse(observedAt));
-  const reconcilerStatus = status === 'intent' ? 'AwaitingApproval'
+  const ownerObserved = (item.ownerReceipts || []).some((receipt) => receipt.postcondition === 'InstallReady' && receipt.phase === 'Verified');
+  const reconcilerStatus = item.state === 'Verified' ? 'Verified'
+    : item.nativeOwner && ownerObserved ? 'ReadyForVerification'
+    : item.nativeOwner && ['Applied', 'Reconciling', 'Submitted'].includes(item.state) ? 'Applying'
+    : status === 'intent' ? 'AwaitingApproval'
     : status === 'authorized' ? 'AwaitingMerge'
       : status === 'committed' ? 'AwaitingConsumer' : status;
   return Object.freeze({
@@ -148,17 +152,19 @@ function changeProjection(item, observedAt) {
     git_repo: item.repository,
     git_ref: proposal?.branch || null,
     git_commit_sha: item.sourceRevision || null,
-    k8s_operation_id: null,
+    k8s_operation_id: ownerObserved ? item.operationId : null,
+    state_version: Number(item.stateVersion || 0),
     created_at: item.createdAt,
     completed_at: completed,
     approvalPolicy: 'cross-operator',
+    approval_assurance: item.localDevelopmentModuleInstall === true ? 'local-development' : 'recent-aal2',
     execution: Object.freeze({
       branch: proposal?.branch || '',
       pull_number: proposal?.pullNumber ?? null,
       pull_url: null,
       desired_revision: proposal?.desiredRevision || null,
       merge_revision: item.sourceRevision || null,
-      reconciler: 'NotConfigured',
+      reconciler: item.nativeOwner || 'NotConfigured',
       reconciler_status: reconcilerStatus,
       drift_status: 'Unknown',
       attempt_count: Number(outbox?.attemptCount || 0),
@@ -182,7 +188,7 @@ function changeProjection(item, observedAt) {
   });
 }
 
-function statusProjection(status, inventory, giteaClient) {
+function statusProjection(status, inventory, giteaClient, ownerReady = false) {
   const repository = status.repositoryMetadata ? [status.repositoryMetadata] : [];
   const changes = Object.freeze(inventory.items.map((item) => changeProjection(item, inventory.observedAt)));
   const byStatus = { intent: 0, authorized: 0, committed: 0, applied: 0, failed: 0, unknown: 0 };
@@ -201,14 +207,29 @@ function statusProjection(status, inventory, giteaClient) {
     version: String(status.version || ''),
     repositoryCount: repository.length || null,
     repositories: Object.freeze(repository),
-    contracts: Object.freeze([]),
-    receipts: Object.freeze([]),
+    contracts: Object.freeze([
+      { consumer_id: 'console-modules', display_name: 'Cluster Manager 설치', owner_kind: 'Console native owner',
+        supabase_schemas: ['console_operation'], storage_buckets: [], gitea_repository: giteaClient.repository,
+        gitea_path: 'console-modules/requests', reconciler: 'C_EXT', status: ownerReady ? 'Ready' : 'Unavailable',
+        desired_revision: null, applied_revision: null, observability: null },
+      ...[['foundation-bootstrap', 'Foundation 기초 모듈'], ['ceph-prerequisites', 'Ceph 선행요소']].map(([id, name]) => ({
+        consumer_id: id, display_name: name, owner_kind: 'Module owner not deployed', supabase_schemas: [], storage_buckets: [],
+        gitea_repository: giteaClient.repository, gitea_path: `${id}/requests`, reconciler: 'NotConfigured',
+        status: 'NotConfigured', desired_revision: null, applied_revision: null, observability: null,
+      })),
+    ]),
+    receipts: Object.freeze(inventory.items.flatMap((item) => (item.ownerReceipts || []).map((receipt) => ({
+      delivery_id: receipt.id, event_type: receipt.postcondition || receipt.phase,
+      repository: item.repository, request_id: item.operationId, signature_valid: null,
+      disposition: receipt.phase, error_code: null, received_at: receipt.createdAt,
+      authority: receipt.owner, evidence_digest: receipt.digest,
+    }))).slice(-100)),
     changes,
     byStatus: Object.freeze(byStatus),
-    reason: status.ready
+    reason: status.ready && ownerReady ? 'Cluster Manager 설치: Git 검토·보호 병합 이후 Extension Controller 적용 및 실측 검증을 사용합니다. Foundation·Ceph 실행기는 아직 연결되지 않았습니다.' : status.ready
       ? 'Gitea proposal and protected merge are ready; post-merge owner reconciliation is not configured'
       : String(status.reason || 'Gitea status is unavailable'),
-    managementReady: false,
+    managementReady: status.ready === true && ownerReady,
     supplyChain: policyObserved ? Object.freeze({
       repository: status.repository,
       defaultBranch: status.defaultBranch,
@@ -222,7 +243,8 @@ function statusProjection(status, inventory, giteaClient) {
 }
 
 function approvalPlan(record, giteaClient) {
-  const plan = record?.execution_plan;
+  const plan = record?.declaration_binding
+    ? { ...record.declaration_binding, submittedAt: new Date(record.created_at).toISOString() } : record?.execution_plan;
   if (!plan || plan.schemaVersion !== '1.0' || plan.authority !== 'Gitea'
       || plan.repository !== giteaClient.repository || plan.defaultBranch !== giteaClient.defaultBranch
       || !CONSUMER.test(String(plan.consumerId || '')) || !ACTIONS.has(String(plan.action || ''))
@@ -267,6 +289,7 @@ export function createPlatformChangeOperations({
   projectionStore,
   giteaClient,
   postMergeOwnerReady = () => false,
+  moduleOwner = null,
   clock = () => new Date(),
 }) {
   if (!operationService?.accept || !operationService?.approve || !operationService?.assertApprovalAuthority) {
@@ -293,20 +316,41 @@ export function createPlatformChangeOperations({
         expectedPermissionRevision: Number(session.permissionRevision),
         expectedRevokeEpoch: Number(session.revokeEpoch),
       });
-      return statusProjection(await giteaClient.supplyChainStatus(), inventory, giteaClient);
+      return statusProjection(await giteaClient.supplyChainStatus(), inventory, giteaClient, moduleOwner ? await moduleOwner.ready() : false);
     },
 
     async propose({ session, body, idempotencyKey, correlationId }) {
+      if (moduleOwner && body && Object.keys(body).length === 1 && Object.hasOwn(body, 'operationId')) {
+        assertStatusAuthority(session);
+        const operationId = text(body.operationId, 'operationId', 36, 36);
+        const record = await projectionStore.get({ sessionId: session.sessionId, actorRef: session.subjectId, operationId });
+        if (!record?.declaration_binding || record.actor_ref !== session.subjectId || !['Planned', 'Authorized'].includes(record.state)) {
+          throw Object.assign(new Error('요청자 본인의 병합 전 설치 선언만 재개할 수 있습니다.'), { code: 'PermissionDenied', status: 403, sideEffect: 'none' });
+        }
+        const plan = approvalPlan(record, giteaClient);
+        await moduleOwner.validate(plan, correlationId);
+        const ready = await moduleOwner.ready();
+        assertPostMergeOwnerReady(() => ready);
+        const git = await ensurePlanProposal(giteaClient, plan, { operationId, reason: record.reason });
+        await projectionStore.recordGiteaProposal({ operationId, desiredRevision: git.desiredRevision,
+          branch: git.branch, pullNumber: git.pullRequest.number, correlationId });
+        return { accepted: true, duplicate: true, requestId: operationId,
+          operation: await operationService.get({ session, operationId }), status: changeStatus(record.state),
+          branch: git.branch, pullRequest: git.pullRequest, desiredRevision: git.desiredRevision };
+      }
       const proposal = validateProposal(body);
       assertStatusAuthority(session);
-      assertPostMergeOwnerReady(postMergeOwnerReady);
+      const nativePlan = moduleOwner ? await moduleOwner.validate(proposal, correlationId) : null;
+      const moduleReady = moduleOwner ? await moduleOwner.ready() : false;
+      if (moduleOwner) assertPostMergeOwnerReady(() => moduleReady);
+      else assertPostMergeOwnerReady(postMergeOwnerReady);
       const supplyChain = await giteaClient.supplyChainStatus();
       if (!supplyChain.ready) {
         throw Object.assign(new Error(supplyChain.reason || 'Gitea change authority is unavailable'), {
           code: 'AuthorityUnavailable', status: 503, sideEffect: 'none', details: { supplyChain },
         });
       }
-      const submittedAt = clock().toISOString();
+      let submittedAt = clock().toISOString();
       const executionPlan = {
         schemaVersion: '1.0',
         authority: 'Gitea',
@@ -323,12 +367,13 @@ export function createPlatformChangeOperations({
         session,
         idempotencyKey,
         correlationId,
-        executionPlan,
+        executionPlan: nativePlan || executionPlan,
+        ...(nativePlan ? { declarationBinding: Object.fromEntries(Object.entries(executionPlan).filter(([key]) => key !== 'submittedAt')) } : {}),
         request: {
           schemaVersion: '1.0',
-          actionId: 'console.platform.change.propose',
+          actionId: nativePlan ? 'console.extension.install' : 'console.platform.change.propose',
           actionVersion: '1.0',
-          targetRef: `gitea-change:${proposal.consumerId}:${proposal.target}`,
+          targetRef: nativePlan ? nativePlan.image : `gitea-change:${proposal.consumerId}:${proposal.target}`,
           payload: {
             consumerId: proposal.consumerId,
             action: proposal.action,
@@ -341,6 +386,7 @@ export function createPlatformChangeOperations({
           planRevision,
         },
       });
+      if (nativePlan) submittedAt = accepted.receipt.createdAt;
       try {
         const git = await giteaClient.ensureProposal({
           operationId: accepted.receipt.operationId,
@@ -370,7 +416,7 @@ export function createPlatformChangeOperations({
           duplicate: Boolean(accepted.replayed || git.replayed || proposalReceipt.replayed),
           requestId: accepted.receipt.operationId,
           operation: accepted.receipt,
-          status: 'authorized',
+          status: nativePlan ? changeStatus(accepted.receipt.state) : 'authorized',
           branch: git.branch,
           pullRequest: git.pullRequest,
           desiredRevision: git.desiredRevision,
@@ -475,8 +521,10 @@ export function createPlatformChangeOperations({
 
     async approve({ session, operationId, body, idempotencyKey, correlationId }) {
       const approval = validateApproval(body);
-      const authority = operationService.assertApprovalAuthority({ session, reason: approval.reason });
-      assertPostMergeOwnerReady(postMergeOwnerReady);
+      const authority = moduleOwner
+        ? await operationService.assertGiteaModuleApprovalAuthority({ session, reason: approval.reason, operationId })
+        : operationService.assertApprovalAuthority({ session, reason: approval.reason });
+      if (!moduleOwner) assertPostMergeOwnerReady(postMergeOwnerReady);
       const record = await projectionStore.getGiteaOperationForApproval({
         sessionId: session.sessionId,
         actorRef: authority.actorRef,
@@ -485,6 +533,12 @@ export function createPlatformChangeOperations({
         operationId: text(operationId, 'operationId', 36, 36),
       });
       const plan = approvalPlan(record, giteaClient);
+      if (moduleOwner) {
+        if (!record.declaration_binding) throw Object.assign(new Error('이 변경 대상의 실행기가 연결되지 않았습니다.'), { code: 'AuthorityUnavailable', status: 503 });
+        await moduleOwner.validate(plan, correlationId);
+        const ready = await moduleOwner.ready();
+        assertPostMergeOwnerReady(() => ready);
+      }
       let approved = null;
       if (record.state === 'Planned') {
         approved = await operationService.approve({
@@ -528,6 +582,8 @@ export function createPlatformChangeOperations({
           pullNumber: proposal.pullRequest.number,
           approverRef: authority.actorRef,
           reason: approval.reason,
+          expectedRevision: proposal.desiredRevision,
+          ...(record.declaration_binding ? { declaration: { ...plan, operationId, reason: record.reason } } : {}),
         });
         let bound;
         try {

@@ -155,7 +155,21 @@ export function createOperationService({ store, policyCatalog, clock = () => new
       return Object.freeze({ actorRef: authorization.actorRef, reason: approvalReason });
     },
 
-    async accept({ session, request, idempotencyKey, correlationId, executionPlan = null }) {
+    async assertGiteaModuleApprovalAuthority({ session, reason, operationId }) {
+      const record = await store.get({ sessionId: session.sessionId, actorRef: session.subjectId, operationId });
+      const localDevelopmentModuleInstall = record?.declaration_binding?.templateId === 'console-cluster-manager-install'
+        && record?.local_development_module_install === true
+        && record.action_id === 'console.extension.install' && record.owner_ref === 'C_EXT'
+        && await moduleInstallationPolicy(record.action_id, record.target_ref);
+      const approvalReason = text(reason, 'reason', 8, 500);
+      const authorization = authorizeOperation({ session, permission: 'console.operation.approve',
+        risk: 'R2', reason: approvalReason, now: clock(), localDevelopmentModuleInstall });
+      if (!session.sessionId || !Number.isSafeInteger(Number(session.permissionRevision))
+          || !Number.isSafeInteger(Number(session.revokeEpoch))) fail('AuthenticationRequired', 'current session authority is required', 401);
+      return Object.freeze({ actorRef: authorization.actorRef, reason: approvalReason });
+    },
+
+    async accept({ session, request, idempotencyKey, correlationId, executionPlan = null, declarationBinding = null }) {
       const validated = validateOperationRequest(request);
       const policy = policies.get(validated.actionId + '@' + validated.actionVersion);
       if (!policy) fail('PolicyRejected', 'operation action is not registered', 422);
@@ -207,8 +221,9 @@ export function createOperationService({ store, policyCatalog, clock = () => new
         correlationId: correlation,
         sourceRevision: null,
         ownerRef: policy.ownerRef,
-        expectedPostcondition: null,
+        expectedPostcondition: declarationBinding ? { declaration: declarationBinding } : null,
         executionPlan,
+        declarationBinding,
       });
       return Object.freeze({ receipt: receipt(accepted.operationRecord), replayed: Boolean(accepted.replayed) });
     },

@@ -44,7 +44,7 @@ const RECORD_GITEA_PROPOSAL_SQL = [
 ].join(' ');
 
 const GET_GITEA_OPERATION_FOR_APPROVAL_SQL = [
-  'SELECT console_operation.get_gitea_operation_for_approval(',
+  'SELECT console_operation.get_gitea_bound_operation_for_approval(',
   '$1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::uuid',
   ') AS operation_record',
 ].join(' ');
@@ -1042,6 +1042,12 @@ export function createPostgresOperationStore({ query }) {
 
     async accept(input) {
       try {
+        if (input.declarationBinding) {
+          const result = await query('SELECT operation_record, replayed FROM console_operation.accept_gitea_module($1::jsonb)', [JSON.stringify(input)]);
+          const row = result?.rows?.[0];
+          if (!row?.operation_record) throw new Error('accept_gitea_module returned no receipt');
+          return { operationRecord: row.operation_record, replayed: row.replayed };
+        }
         const result = await query(input.localDevelopmentModuleInstall === true
           ? ACCEPT_SQL.replace('console_operation.accept_operation(', 'console_operation.accept_development_module_install(') : ACCEPT_SQL, [
           input.sessionId,

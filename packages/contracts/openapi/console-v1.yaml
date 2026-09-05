@@ -1388,12 +1388,18 @@ paths:
   /api/platform/changes:
     post:
       operationId: proposePlatformChange
+      description: >-
+        Accept the closed console-cluster-manager-install template as one existing
+        console.extension.install operation with console.git.change and install permissions.
+        Native dispatch remains blocked until the recorded protected Git merge exists.
+        A body containing only operationId resumes the requester's own pre-merge proposal.
+        Unconfigured Foundation, Ceph and arbitrary declarations are rejected without mutation.
       tags: [Operations]
       x-opensphere-requirement: CON-FR-010
       x-opensphere-risk: R2
       x-opensphere-idempotency: required
-      x-opensphere-authority: SupabaseIntentThenGiteaProposal
-      x-opensphere-action: console.platform.change.propose@1.0
+      x-opensphere-authority: SupabaseIntentThenGiteaProposalThenCExt
+      x-opensphere-action: console.extension.install@1.0
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1425,6 +1431,13 @@ paths:
       - $ref: "#/components/parameters/OperationId"
     post:
       operationId: approvePlatformChange
+      description: >-
+        Validate current approval authority and a distinct natural person, then bind the
+        protected PR head, sole changed declaration and merged content to the same C_EXT
+        operation. The existing localhost HTTPS edge development Cluster Manager MFA
+        exception is evaluated from the stored operation and installation environment;
+        every other case requires recent AAL2. Runtime application is not implied by merge.
+        A failed merge can be resumed without another operation or approval record.
       tags: [Operations]
       x-opensphere-requirement: CON-FR-010
       x-opensphere-risk: R2

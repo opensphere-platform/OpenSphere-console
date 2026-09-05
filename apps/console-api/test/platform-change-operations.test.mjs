@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { createOperationService } from '../src/operation-service.mjs';
 import { createPlatformChangeOperations } from '../src/platform-change-operations.mjs';
+import { assertModuleDeclaration } from '../src/gitea-module-contract.mjs';
 import { createConsoleApiHandler } from '../src/http-handler.mjs';
 import {
   ARGOCD_VERIFICATION_CONFIRMATION,
@@ -57,6 +58,7 @@ function record(input) {
     source_revision: null,
     owner_ref: input.ownerRef,
     execution_plan: input.executionPlan,
+    declaration_binding: input.declarationBinding || null,
     state: 'Planned',
     state_version: 0,
     expected_postcondition: null,
@@ -69,7 +71,7 @@ function record(input) {
 
 function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBinding = false,
   rejectMergeBinding = false, giteaReady = true, argocdReady = false,
-  postMergeOwnerReady = true, wirePostMergeOwner = true } = {}) {
+  postMergeOwnerReady = true, wirePostMergeOwner = true, native = false } = {}) {
   const order = [];
   const accepted = [];
   const proposed = [];
@@ -93,7 +95,7 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
       return { operationRecord, replayed: false };
     },
     async verify() { throw new Error('not used'); },
-    async get() { return null; },
+    async get() { return operationRecord; },
     async getGiteaOperationForApproval() {
       order.push('approval-read');
       return operationRecord;
@@ -220,6 +222,13 @@ function fixture({ rejectIntent = false, rejectGitea = false, rejectProposalBind
     operationService, policyRevision: policyCatalog.policyRevision, projectionStore: store, giteaClient, clock: () => current,
   };
   if (wirePostMergeOwner) dependencies.postMergeOwnerReady = () => ownerReady;
+  if (native) dependencies.moduleOwner = {
+    ready: async () => ownerReady,
+    validate: async (p) => {
+      const d = assertModuleDeclaration(p);
+      return { schemaVersion: '1.0', authority: 'OpenSphereRegistry', descriptorId: d.descriptorId, catalogRevision: d.catalogRevision, image: d.image };
+    },
+  };
   const operations = createPlatformChangeOperations(dependencies);
   return {
     operations, order, accepted, proposed, approvals, proposalBindings, mergeBindings,
@@ -244,6 +253,38 @@ function request() {
   };
 }
 
+function nativeRequest() {
+  return {consumerId:'console-modules',action:'apply',target:'extension.cluster-manager',templateId:'console-cluster-manager-install',
+    reason:'Install the reviewed Cluster Manager module',desiredState:{contract:'opensphere.console.git-reviewed-module/v1',descriptorId:'extension.cluster-manager',
+    catalogRevision:'sha256:'+'a'.repeat(64),image:'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@sha256:'+'b'.repeat(64)}};
+}
+test('native Git path preserves one C_EXT action, independent approval and immutable declaration before merge',async()=>{
+  const f=fixture({native:true});const nativeSession={...session,permissions:[...session.permissions,'console.extension.install']};
+  const proposed=await f.operations.propose({session:nativeSession,body:nativeRequest(),idempotencyKey:'native-git-propose',correlationId:'native-git-correlation'});
+  assert.equal(proposed.operation.actionId,'console.extension.install');assert.equal(proposed.operation.ownerRef,'C_EXT');
+  assert.equal(proposed.operation.state,'Planned');assert.equal(f.accepted.length,1);assert.equal(f.accepted[0].declarationBinding.target,'extension.cluster-manager');
+  assert.equal(f.accepted[0].executionPlan.authority,'OpenSphereRegistry');assert.equal(f.proposed[0].submittedAt,proposed.operation.createdAt);
+  const merged=await f.operations.approve({session:approverSession,operationId,body:{reason:'Independent review of module and exact image'},idempotencyKey:'native-git-approve',correlationId:'native-git-correlation'});
+  assert.equal(merged.merged,true);assert.equal(f.accepted.length,1);assert.equal(f.approvals.length,1);
+  assert.ok(f.order.indexOf('approval')<f.order.indexOf('gitea-merge'));
+  assert.ok(f.order.indexOf('gitea-merge')<f.order.indexOf('merge-binding'));
+});
+test('native path rejects unsupported consumer before creating intent even while owner is healthy',async()=>{
+ const f=fixture({native:true});await assert.rejects(f.operations.propose({session,body:request(),idempotencyKey:'unsupported-consumer',correlationId:'unsupported-consumer'}),{code:'PolicyRejected'});
+ assert.equal(f.accepted.length,0);assert.equal(f.proposed.length,0);
+});
+
+test('native proposal resume preserves operation identity and forbids another requester', async () => {
+  const f = fixture({ native: true });
+  const nativeSession = { ...session, permissions: [...session.permissions, 'console.extension.install'] };
+  await f.operations.propose({ session: nativeSession, body: nativeRequest(), idempotencyKey: 'native-resume-initial', correlationId: 'native-resume-correlation' });
+  const replay = await f.operations.propose({ session: nativeSession, body: { operationId }, idempotencyKey: 'native-resume-retry', correlationId: 'native-resume-correlation' });
+  assert.equal(replay.requestId, operationId); assert.equal(replay.duplicate, true);
+  assert.equal(f.accepted.length, 1); assert.deepEqual(f.proposed[0], f.proposed[1]);
+  await assert.rejects(f.operations.propose({ session: { ...approverSession, permissions: ['console.git.change'] }, body: { operationId }, correlationId: 'native-resume-other' }), { code: 'PermissionDenied' });
+  assert.equal(f.proposed.length, 2);
+});
+
 test('Gitea status is current-session permission gated and keeps owner readiness false', async () => {
   const { operations, order } = fixture();
   await assert.rejects(operations.status({ session: { ...session, permissions: [] } }), {
@@ -257,7 +298,9 @@ test('Gitea status is current-session permission gated and keeps owner readiness
   assert.equal(result.managementReady, false);
   assert.equal(result.repositoryCount, 1);
   assert.equal(result.repositories[0].name, 'platform-declarations');
-  assert.deepEqual(result.contracts, []);
+  assert.deepEqual(result.contracts.map(c => [c.consumer_id, c.status]), [
+    ['console-modules', 'Unavailable'], ['foundation-bootstrap', 'NotConfigured'], ['ceph-prerequisites', 'NotConfigured'],
+  ]);
   assert.match(result.reason, /post-merge owner reconciliation is not configured/u);
 });
 
@@ -721,7 +764,7 @@ test('Change-control UI disables both mutations while management is unavailable 
   const source = await readFile(
     new URL('../../console-web/src/app/pages/admin-change-control.ts', import.meta.url), 'utf8',
   );
-  assert.match(source, /current\.managementReady && change\.status === 'authorized'/u);
+  assert.match(source, /current\.managementReady && change\.execution\?\.reconciler === 'C_EXT' && \['intent', 'authorized'\]\.includes\(change.status\)/u);
   assert.match(source, /async submitChange\(\): Promise<void> \{ if \(!this\.managementReady\(\)\)/u);
   assert.match(source, /async approveSelected\(reason: string\): Promise<void> \{[^\n]+if \(!this\.managementReady\(\)\)/u);
   assert.doesNotMatch(source, /자동 적용|자동 실행/u);

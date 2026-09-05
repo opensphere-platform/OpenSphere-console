@@ -61,3 +61,20 @@ test('HTTP change template route is an authenticated exact-id read with no query
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('HTTP native template awaits Registry resolution and does not resolve for unauthorized callers', async () => {
+  let calls = 0;
+  const operations = createPlatformChangeTemplateOperations({ moduleOwner: {
+    async template() { calls++; await Promise.resolve(); return { id: 'console-cluster-manager-install', desiredState: { image: 'verified-image' } }; },
+  } });
+  assert.throws(() => operations.get({ session: { ...session, permissions: [] }, templateId: 'console-cluster-manager-install' }), { code: 'PermissionDenied' });
+  assert.equal(calls, 0);
+  const server = createServer(createConsoleApiHandler({ resolveSession: async () => session, platformChangeTemplateOperations: operations }));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/platform/change-templates/console-cluster-manager-install`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).desiredState.image, 'verified-image');
+    assert.equal(calls, 1);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});

@@ -4,93 +4,496 @@
   "title": "Gitea Status Response",
   "type": "object",
   "additionalProperties": false,
-  "required": ["meta", "configured", "ready", "version", "repositoryCount", "repositories", "contracts", "receipts", "changes", "byStatus", "reason", "managementReady", "supplyChain"],
+  "required": [
+    "meta",
+    "configured",
+    "ready",
+    "version",
+    "repositoryCount",
+    "repositories",
+    "contracts",
+    "receipts",
+    "changes",
+    "byStatus",
+    "reason",
+    "managementReady",
+    "supplyChain"
+  ],
   "properties": {
     "meta": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source", "checkedAt", "organization", "tokenConfigured"],
+      "required": [
+        "source",
+        "checkedAt",
+        "organization",
+        "tokenConfigured"
+      ],
       "properties": {
-        "source": { "const": "gitea" },
-        "checkedAt": { "type": "string", "format": "date-time" },
-        "organization": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "tokenConfigured": { "type": "boolean" }
+        "source": {
+          "const": "gitea"
+        },
+        "checkedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "organization": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "tokenConfigured": {
+          "type": "boolean"
+        }
       }
     },
-    "configured": { "type": "boolean" },
-    "ready": { "type": "boolean" },
-    "version": { "type": "string", "maxLength": 128 },
-    "repositoryCount": { "type": ["integer", "null"], "minimum": 0, "maximum": 1 },
+    "configured": {
+      "type": "boolean"
+    },
+    "ready": {
+      "type": "boolean"
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "repositoryCount": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
     "repositories": {
       "type": "array",
       "maxItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "private", "archived", "empty", "defaultBranch", "updatedAt", "sizeKiB"],
+        "required": [
+          "name",
+          "private",
+          "archived",
+          "empty",
+          "defaultBranch",
+          "updatedAt",
+          "sizeKiB"
+        ],
         "properties": {
-          "name": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "private": { "type": "boolean" },
-          "archived": { "type": "boolean" },
-          "empty": { "type": "boolean" },
-          "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "updatedAt": { "type": ["string", "null"], "format": "date-time" },
-          "sizeKiB": { "type": "integer", "minimum": 0 }
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "private": {
+            "type": "boolean"
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "empty": {
+            "type": "boolean"
+          },
+          "defaultBranch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sizeKiB": {
+            "type": "integer",
+            "minimum": 0
+          }
         }
       }
     },
-    "contracts": { "type": "array", "maxItems": 0 },
-    "receipts": { "type": "array", "maxItems": 0 },
+    "contracts": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "consumer_id",
+          "display_name",
+          "owner_kind",
+          "supabase_schemas",
+          "storage_buckets",
+          "gitea_repository",
+          "gitea_path",
+          "reconciler",
+          "status",
+          "desired_revision",
+          "applied_revision",
+          "observability"
+        ],
+        "properties": {
+          "consumer_id": {
+            "enum": [
+              "console-modules",
+              "foundation-bootstrap",
+              "ceph-prerequisites"
+            ]
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "owner_kind": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "supabase_schemas": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "const": "console_operation"
+            }
+          },
+          "storage_buckets": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "gitea_repository": {
+            "const": "opensphere/platform-declarations"
+          },
+          "gitea_path": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "reconciler": {
+            "enum": [
+              "C_EXT",
+              "NotConfigured"
+            ]
+          },
+          "status": {
+            "enum": [
+              "Ready",
+              "Unavailable",
+              "NotConfigured"
+            ]
+          },
+          "desired_revision": {
+            "type": "null"
+          },
+          "applied_revision": {
+            "type": "null"
+          },
+          "observability": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "delivery_id",
+          "event_type",
+          "repository",
+          "request_id",
+          "signature_valid",
+          "disposition",
+          "error_code",
+          "received_at",
+          "authority",
+          "evidence_digest"
+        ],
+        "properties": {
+          "delivery_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "event_type": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "repository": {
+            "const": "opensphere/platform-declarations"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "signature_valid": {
+            "type": "null"
+          },
+          "disposition": {
+            "enum": [
+              "Reconciling",
+              "Applied",
+              "Verified",
+              "Failed",
+              "Unknown"
+            ]
+          },
+          "error_code": {
+            "type": "null"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "authority": {
+            "const": "C_EXT"
+          },
+          "evidence_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
     "changes": {
       "type": "array",
       "maxItems": 100,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["request_id", "actor_id", "actor_type", "action", "target", "reason", "status", "git_repo", "git_ref", "git_commit_sha", "k8s_operation_id", "created_at", "completed_at", "approvalPolicy", "execution", "outbox", "approvals"],
+        "required": [
+          "request_id",
+          "actor_id",
+          "actor_type",
+          "action",
+          "target",
+          "reason",
+          "status",
+          "git_repo",
+          "git_ref",
+          "git_commit_sha",
+          "k8s_operation_id",
+          "created_at",
+          "completed_at",
+          "approvalPolicy",
+          "execution",
+          "outbox",
+          "approvals",
+          "state_version",
+          "approval_assurance"
+        ],
         "properties": {
-          "request_id": { "type": "string", "format": "uuid" },
-          "actor_id": { "type": "string", "format": "uuid" },
-          "actor_type": { "const": "supabase-user" },
-          "action": { "enum": ["apply", "configure", "delete", "rollback"] },
-          "target": { "type": "string", "minLength": 1, "maxLength": 300 },
-          "reason": { "type": "string", "minLength": 3, "maxLength": 500 },
-          "status": { "enum": ["intent", "authorized", "committed", "applied", "failed", "unknown"] },
-          "git_repo": { "const": "opensphere/platform-declarations" },
-          "git_ref": { "type": ["string", "null"], "maxLength": 128 },
-          "git_commit_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
-          "k8s_operation_id": { "type": "null" },
-          "created_at": { "type": "string", "format": "date-time" },
-          "completed_at": { "type": ["string", "null"], "format": "date-time" },
-          "approvalPolicy": { "const": "cross-operator" },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_type": {
+            "const": "supabase-user"
+          },
+          "action": {
+            "enum": [
+              "apply",
+              "configure",
+              "delete",
+              "rollback"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500
+          },
+          "status": {
+            "enum": [
+              "intent",
+              "authorized",
+              "committed",
+              "applied",
+              "failed",
+              "unknown"
+            ]
+          },
+          "git_repo": {
+            "const": "opensphere/platform-declarations"
+          },
+          "git_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "git_commit_sha": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{40,64}$"
+          },
+          "k8s_operation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "approvalPolicy": {
+            "const": "cross-operator"
+          },
           "execution": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["branch", "pull_number", "pull_url", "desired_revision", "merge_revision", "reconciler", "reconciler_status", "drift_status", "attempt_count", "last_error", "updated_at"],
+            "required": [
+              "branch",
+              "pull_number",
+              "pull_url",
+              "desired_revision",
+              "merge_revision",
+              "reconciler",
+              "reconciler_status",
+              "drift_status",
+              "attempt_count",
+              "last_error",
+              "updated_at"
+            ],
             "properties": {
-              "branch": { "type": "string", "maxLength": 128 },
-              "pull_number": { "type": ["integer", "null"], "minimum": 1 },
-              "pull_url": { "type": ["string", "null"], "format": "uri", "maxLength": 2048 },
-              "desired_revision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
-              "merge_revision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
-              "reconciler": { "const": "NotConfigured" },
-              "reconciler_status": { "enum": ["AwaitingApproval", "AwaitingMerge", "AwaitingConsumer", "applied", "failed", "unknown"] },
-              "drift_status": { "const": "Unknown" },
-              "attempt_count": { "type": "integer", "minimum": 0 },
-              "last_error": { "type": ["string", "null"], "maxLength": 128 },
-              "updated_at": { "type": "string", "format": "date-time" }
+              "branch": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "pull_number": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "pull_url": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri",
+                "maxLength": 2048
+              },
+              "desired_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "merge_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "reconciler": {
+                "enum": [
+                  "NotConfigured",
+                  "C_EXT"
+                ]
+              },
+              "reconciler_status": {
+                "enum": [
+                  "AwaitingApproval",
+                  "AwaitingMerge",
+                  "AwaitingConsumer",
+                  "applied",
+                  "failed",
+                  "unknown",
+                  "Applying",
+                  "ReadyForVerification",
+                  "Verified"
+                ]
+              },
+              "drift_status": {
+                "const": "Unknown"
+              },
+              "attempt_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "last_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
             }
           },
           "outbox": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "additionalProperties": false,
-            "required": ["status", "attempts", "next_attempt_at", "last_error", "updated_at"],
+            "required": [
+              "status",
+              "attempts",
+              "next_attempt_at",
+              "last_error",
+              "updated_at"
+            ],
             "properties": {
-              "status": { "enum": ["pending", "claimed", "delivered"] },
-              "attempts": { "type": "integer", "minimum": 0 },
-              "next_attempt_at": { "type": ["string", "null"], "format": "date-time" },
-              "last_error": { "type": ["string", "null"], "maxLength": 128 },
-              "updated_at": { "type": "string", "format": "date-time" }
+              "status": {
+                "enum": [
+                  "pending",
+                  "claimed",
+                  "delivered"
+                ]
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "next_attempt_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "last_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 128
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
             }
           },
           "approvals": {
@@ -99,15 +502,44 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["approver_id", "status", "created_at", "completed_at", "error_code"],
+              "required": [
+                "approver_id",
+                "status",
+                "created_at",
+                "completed_at",
+                "error_code"
+              ],
               "properties": {
-                "approver_id": { "type": "string", "format": "uuid" },
-                "status": { "const": "applied" },
-                "created_at": { "type": "string", "format": "date-time" },
-                "completed_at": { "type": "string", "format": "date-time" },
-                "error_code": { "type": "null" }
+                "approver_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "status": {
+                  "const": "applied"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "completed_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "error_code": {
+                  "type": "null"
+                }
               }
             }
+          },
+          "state_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "approval_assurance": {
+            "enum": [
+              "local-development",
+              "recent-aal2"
+            ]
           }
         }
       }
@@ -115,30 +547,96 @@
     "byStatus": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["intent", "authorized", "committed", "applied", "failed", "unknown"],
+      "required": [
+        "intent",
+        "authorized",
+        "committed",
+        "applied",
+        "failed",
+        "unknown"
+      ],
       "properties": {
-        "intent": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "authorized": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "committed": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "applied": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "failed": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "unknown": { "type": "integer", "minimum": 0, "maximum": 100 }
+        "intent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "authorized": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "committed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "applied": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
       }
     },
-    "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
-    "managementReady": { "const": false },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "managementReady": {
+      "type": "boolean"
+    },
     "supplyChain": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["repository", "defaultBranch", "protected", "requiredApprovals", "directPushEnabled", "signedCommitsRequired", "blockRejectedReviews"],
+      "required": [
+        "repository",
+        "defaultBranch",
+        "protected",
+        "requiredApprovals",
+        "directPushEnabled",
+        "signedCommitsRequired",
+        "blockRejectedReviews"
+      ],
       "properties": {
-        "repository": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
-        "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "protected": { "type": "boolean" },
-        "requiredApprovals": { "type": "integer", "minimum": 0 },
-        "directPushEnabled": { "type": "boolean" },
-        "signedCommitsRequired": { "type": "boolean" },
-        "blockRejectedReviews": { "type": "boolean" }
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+        },
+        "defaultBranch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "protected": {
+          "type": "boolean"
+        },
+        "requiredApprovals": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "directPushEnabled": {
+          "type": "boolean"
+        },
+        "signedCommitsRequired": {
+          "type": "boolean"
+        },
+        "blockRejectedReviews": {
+          "type": "boolean"
+        }
       }
     }
   }

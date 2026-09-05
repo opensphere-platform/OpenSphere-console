@@ -223,10 +223,11 @@ const CONSOLE_API_DATABASE_FUNCTIONS = Object.freeze([
   'console_identity.rotate_browser_session_credentials',
   'console_identity.touch_browser_session_activity',
   'console_operation.accept_development_module_install',
+  'console_operation.accept_gitea_module',
   'console_operation.accept_operation',
   'console_operation.approve_development_module_install',
   'console_operation.approve_operation',
-  'console_operation.get_gitea_operation_for_approval',
+  'console_operation.get_gitea_bound_operation_for_approval',
   'console_operation.get_operation',
   'console_operation.list_gitea_changes',
   'console_operation.record_gitea_merge',
@@ -825,7 +826,9 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
     assert(schemas.includes(schema), 'Required schema missing: ' + schema);
     const document = await json(resolve(contractRoot, 'schemas', schema));
     assert(document.$schema?.includes('2020-12'), schema + ' must use JSON Schema 2020-12');
-    assert(document.additionalProperties === false, schema + ' must fail closed on unknown properties');
+    const closedVariants = Array.isArray(document.oneOf) && document.oneOf.length > 0
+      && document.oneOf.every(variant => variant.type === 'object' && variant.additionalProperties === false);
+    assert(document.additionalProperties === false || closedVariants, schema + ' must fail closed on unknown properties');
   }
 
   const componentIds = boundary.components.map((component) => component.id);

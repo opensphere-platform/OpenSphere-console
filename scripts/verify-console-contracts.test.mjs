@@ -14,8 +14,8 @@ test('foundational Console contracts are internally complete and self-contained'
     schemas: 77,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 58,
-    browserApiPatterns: 121,
+    consoleApiDatabaseFunctions: 59,
+    browserApiPatterns: 122,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: true,
@@ -228,7 +228,8 @@ test('Console API authority verification rejects missing grants and direct table
   const managedIdentityLifecycleSource = await readFile(new URL('../migrations/versions/0017_managed_identity_lifecycle.sql', import.meta.url), 'utf8');
   const cliIdentitySource = await readFile(new URL('../migrations/versions/0018_cli_device_identity.sql', import.meta.url), 'utf8');
   const cliBearerManagementSource = await readFile(new URL('../migrations/versions/0019_cli_bearer_device_management.sql', import.meta.url), 'utf8');
-  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource, managedIdentitySource, managedIdentityLifecycleSource, cliIdentitySource, cliBearerManagementSource].join('\n');
+  const giteaModuleSource = await readFile(new URL('../migrations/versions/0039_gitea_module_dispatch.sql', import.meta.url), 'utf8');
+  const verifiedMigrationSet = [baselineSource, credentialSource, mfaSource, refreshSource, activitySource, inventorySource, enrollmentSource, stepUpSource, recentAal2Source, passwordRecoverySource, bootstrapSource, preferenceSource, eventSource, recoveryLinkSource, avatarSource, managedIdentitySource, managedIdentityLifecycleSource, cliIdentitySource, cliBearerManagementSource, giteaModuleSource].join('\n');
   const missingGrant = verifiedMigrationSet.replace(
     /GRANT EXECUTE ON FUNCTION console_audit[.]list_events\((?:.|\n)*?\) TO console_api;/,
     'GRANT EXECUTE ON FUNCTION console_audit.list_events(uuid) TO authenticated;',

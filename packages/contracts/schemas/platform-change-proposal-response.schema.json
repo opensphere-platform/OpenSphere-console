@@ -4,23 +4,71 @@
   "title": "Platform Change Proposal Response",
   "type": "object",
   "additionalProperties": false,
-  "required": ["accepted", "duplicate", "requestId", "operation", "status", "branch", "pullRequest", "desiredRevision"],
+  "required": [
+    "accepted",
+    "duplicate",
+    "requestId",
+    "operation",
+    "status",
+    "branch",
+    "pullRequest",
+    "desiredRevision"
+  ],
   "properties": {
-    "accepted": { "const": true },
-    "duplicate": { "type": "boolean" },
-    "requestId": { "type": "string", "format": "uuid" },
-    "operation": { "$ref": "./operation-receipt.schema.json" },
-    "status": { "const": "authorized" },
-    "branch": { "type": "string", "pattern": "^control/[0-9a-f-]{36}$" },
+    "accepted": {
+      "const": true
+    },
+    "duplicate": {
+      "type": "boolean"
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "operation": {
+      "$ref": "./operation-receipt.schema.json"
+    },
+    "status": {
+      "enum": [
+        "intent",
+        "authorized",
+        "committed",
+        "applied",
+        "failed",
+        "unknown"
+      ]
+    },
+    "branch": {
+      "type": "string",
+      "pattern": "^control/[0-9a-f-]{36}$"
+    },
     "pullRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["number", "url"],
+      "required": [
+        "number",
+        "url"
+      ],
       "properties": {
-        "number": { "type": "integer", "minimum": 1 },
-        "url": { "type": ["string", "null"], "format": "uri" }
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri"
+        }
       }
     },
-    "desiredRevision": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" }
+    "desiredRevision": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{40,64}$"
+    }
   }
 }

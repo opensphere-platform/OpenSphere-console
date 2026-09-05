@@ -2,15 +2,77 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:opensphere:console:platform-change-proposal-request:v1",
   "title": "Platform Change Proposal Request",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["consumerId", "action", "target", "reason", "desiredState"],
-  "properties": {
-    "consumerId": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{1,127}$" },
-    "action": { "enum": ["apply", "configure", "delete", "rollback"] },
-    "target": { "type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\r\\n]+$" },
-    "reason": { "type": "string", "minLength": 8, "maxLength": 500, "pattern": "^[^\\r\\n]+$" },
-    "desiredState": { "type": "object", "additionalProperties": true },
-    "templateId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\r\\n]+$" }
-  }
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumerId",
+        "action",
+        "target",
+        "reason",
+        "desiredState",
+        "templateId"
+      ],
+      "properties": {
+        "consumerId": {
+          "const": "console-modules"
+        },
+        "action": {
+          "const": "apply"
+        },
+        "target": {
+          "const": "extension.cluster-manager"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 500,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        "desiredState": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "contract",
+            "descriptorId",
+            "catalogRevision",
+            "image"
+          ],
+          "properties": {
+            "contract": {
+              "const": "opensphere.console.git-reviewed-module/v1"
+            },
+            "descriptorId": {
+              "const": "extension.cluster-manager"
+            },
+            "catalogRevision": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "image": {
+              "type": "string",
+              "pattern": "^ghcr\\.io/opensphere-platform/opensphere-shell-cluster-manager@sha256:[a-f0-9]{64}$"
+            }
+          }
+        },
+        "templateId": {
+          "const": "console-cluster-manager-install"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operationId"
+      ],
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    }
+  ]
 }

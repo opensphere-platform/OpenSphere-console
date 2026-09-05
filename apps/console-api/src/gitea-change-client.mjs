@@ -5,6 +5,11 @@ import {
 } from './argocd-verification-contract.mjs';
 
 const SHA = /^[0-9a-f]{40,64}$/u;
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
 
 function failure(code, message, status, sideEffect = 'none', details = {}) {
   return Object.assign(new Error(message), { code, status, sideEffect, details });
@@ -93,6 +98,7 @@ export function createGiteaChangeClient({
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
+        redirect: 'error',
       });
     } catch (error) {
       throw failure(
@@ -373,7 +379,7 @@ export function createGiteaChangeClient({
     });
   }
 
-  async function approveAndMerge({ operationId, branch, pullNumber, approverRef, reason }) {
+  async function approveAndMerge({ operationId, branch, pullNumber, approverRef, reason, expectedRevision, declaration }) {
     await requireReady();
     const operation = boundedText(operationId, 'operationId', 36, 36);
     const changeBranch = boundedText(branch, 'branch', 1, 200);
@@ -386,17 +392,40 @@ export function createGiteaChangeClient({
     if (pull?.head?.ref !== changeBranch || pull?.base?.ref !== branchName) {
       throw failure('StaleRevision', 'pull request is outside the bound change branch', 409);
     }
+    async function verifyDeclaration(revision) {
+      if (!declaration) return;
+      const path = `${segment(declaration.consumerId, 'consumerId')}/requests/${operation}.json`;
+      const file = (await request(`${repoPath}/contents/${encodedPath(path)}?ref=${encodeURIComponent(revision)}`)).body;
+      let actual;
+      try { actual = JSON.parse(Buffer.from(String(file?.content || ''), 'base64').toString('utf8')); }
+      catch { throw failure('ClaimBindingMismatch', 'Git declaration is not valid JSON', 409); }
+      const expected = { apiVersion: 'platform.opensphere.io/v1alpha1', kind: 'GovernedChange',
+        metadata: { operationId: operation, consumerId: declaration.consumerId, submittedAt: declaration.submittedAt },
+        spec: { action: declaration.action, target: declaration.target, reason: declaration.reason, desiredState: declaration.desiredState } };
+      if (canonical(actual) !== canonical(expected)) throw failure('ClaimBindingMismatch', 'Git declaration differs from the approved operation', 409);
+    }
+    if (declaration) {
+      if (!SHA.test(expectedRevision || '') || pull.head.sha !== expectedRevision) {
+        throw failure('StaleRevision', 'pull request head differs from the recorded proposal', 409);
+      }
+      const files = (await request(`${repoPath}/pulls/${number}/files?limit=2&page=1`)).body;
+      const path = `${declaration.consumerId}/requests/${operation}.json`;
+      if (!Array.isArray(files) || files.length !== 1 || files[0].filename !== path || files[0].status !== 'added') {
+        throw failure('ClaimBindingMismatch', 'pull request contains changes outside the approved declaration', 409);
+      }
+      await verifyDeclaration(expectedRevision);
+    }
     if (!(pull?.state === 'closed' && pull?.merged === true)) {
       await request(`${repoPath}/pulls/${number}/reviews`, {
         method: 'POST',
         token: reviewToken,
         mutation: true,
-        body: { event: 'APPROVED', body: `Approved by Console operator ${approver}; operation ${operation}. Reason: ${approvalReason}` },
+        body: { event: 'APPROVED', ...(declaration ? { commit_id: expectedRevision } : {}), body: `Approved by Console operator ${approver}; operation ${operation}. Reason: ${approvalReason}` },
       });
       await request(`${repoPath}/pulls/${number}/merge`, {
         method: 'POST',
         mutation: true,
-        body: { Do: 'merge', delete_branch_after_merge: false },
+        body: { Do: 'merge', delete_branch_after_merge: false, ...(declaration ? { head_commit_id: expectedRevision } : {}) },
       });
       pull = (await request(`${repoPath}/pulls/${number}`)).body;
     }
@@ -404,6 +433,7 @@ export function createGiteaChangeClient({
     if (pull?.state !== 'closed' || pull?.merged !== true || !SHA.test(mergeRevision)) {
       throw failure('AuthorityUnavailable', 'Gitea merge is not durably observable', 503, 'unknown');
     }
+    await verifyDeclaration(mergeRevision);
     return Object.freeze({ merged: true, mergeRevision, pullNumber: number, branch: changeBranch });
   }
 
