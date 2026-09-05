@@ -310,10 +310,17 @@ export function createKubernetesExtensionLifecycle({
 
   async function revisionInventories(plan) {
     const byPath = new Map();
+    // A module's revision cleanup must not depend on unrelated Console workload
+    // count/annotation size. Keep the existing response bound and ownership checks.
+    const query = new URLSearchParams({
+      labelSelector: `${extensionReleaseContract.extensionLabel}=${plan.contract.name}`,
+      limit: '64',
+    });
     for (const item of plan.resources) {
       if (byPath.has(item.basePath)) continue;
-      const result = await request('GET', item.basePath);
-      if (!result.value || typeof result.value !== 'object' || !Array.isArray(result.value.items)) {
+      const result = await request('GET', `${item.basePath}?${query}`);
+      if (!result.value || typeof result.value !== 'object' || !Array.isArray(result.value.items)
+          || result.value.metadata?.continue) {
         throw fault('Extension revision inventory response is malformed', 'AuthorityContractViolation');
       }
       byPath.set(item.basePath, Object.freeze({

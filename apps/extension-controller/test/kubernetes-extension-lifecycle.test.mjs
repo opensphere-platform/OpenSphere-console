@@ -109,6 +109,8 @@ test('lifecycle materializes an exact revision and cuts over only after byte ver
     }
 
     if (method === 'GET' && plan.resources.some((item) => item.basePath === parsed.pathname)) {
+      assert.equal(parsed.searchParams.get('labelSelector'), 'opensphere.io/extension-id=workspace');
+      assert.equal(parsed.searchParams.get('limit'), '64');
       const {kind, apiVersion} = plan.resources.find((item) => item.basePath === parsed.pathname).manifest;
       return json(200, {
         apiVersion, kind: `${kind}List`,
@@ -617,7 +619,8 @@ test('repeated identical failure status is idempotent without another Kubernetes
 test('typed inventory never inherits item authority from missing or conflicting List envelopes', async () => {
   const fixture = makeReleaseFixture();
   const plan = buildExtensionWorkloadPlan(fixture.pkg);
-  for (const envelope of [{}, {apiVersion: 'wrong/v1', kind: 'ServiceAccountList'}, {apiVersion: 'v1', kind: 'SecretList'}]) {
+  for (const envelope of [{}, {apiVersion: 'wrong/v1', kind: 'ServiceAccountList'}, {apiVersion: 'v1', kind: 'SecretList'},
+    {apiVersion: 'v1', kind: 'ServiceAccountList', metadata: {continue: 'incomplete-list'}}]) {
     const source = registration();
     let appliedStatus;
     const artifacts = artifactFetch(fixture);
