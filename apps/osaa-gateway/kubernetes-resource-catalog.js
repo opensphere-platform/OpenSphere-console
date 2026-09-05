@@ -272,6 +272,7 @@ function sanitizeKubernetesObject(kind, object = {}) {
       desiredState: spec.desiredState || '', packageRef: spec.packageRef?.name || '', exposeInNavigation: Boolean(spec.exposeInNavigation),
       phase: status.phase || '', reason: status.reason || '', observedGeneration: status.observedGeneration ?? null,
       observedVersion: status.observedVersion || status.currentVersion || '', workloadPhase: status.workload?.phase || '',
+      servingPhase: status.serving?.phase || '',
       channelState: status.channelState || '', currentDigest: status.currentDigest || '', currentRevision: status.currentRevision || '',
       verification: Object.fromEntries(Object.entries(status.verification || {}).map(([key, value]) => [key, String(value || '').slice(0, 80)])),
       integrations: Object.fromEntries(Object.entries(status.integrations || {}).map(([key, value]) => [key, { phase: value?.phase || '', reason: value?.reason || '', retryable: Boolean(value?.retryable) }])),

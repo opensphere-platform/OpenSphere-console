@@ -9,12 +9,12 @@ function requiresConsoleInstallationSummary(query) {
     && /상태|점검|준비|status|readiness|check/iu.test(text);
 }
 
-async function consoleInstallationObservation({ listResources, registrations, now = () => new Date() }) {
+async function consoleInstallationObservation({ listResources, now = () => new Date() }) {
   const result = { schema: 'osaa.console-installation-observation/v1', observedAt: now().toISOString(), readOnly: true };
   const reads = await Promise.allSettled([
     listResources({ kind: 'node', limit: 500 }),
     listResources({ kind: 'deployment', namespace: 'opensphere-console', limit: 500 }),
-    registrations(),
+    listResources({ kind: 'uipluginregistration', namespace: 'opensphere-console', limit: 500 }),
   ]);
   const completeResources = (read, kind, namespace) => read.status === 'fulfilled'
     && read.value?.kind === kind && read.value.namespace === namespace
@@ -36,17 +36,17 @@ async function consoleInstallationObservation({ listResources, registrations, no
     result.console = { ...result.console, state: 'Observed', total: deployments.length,
       ready: deployments.filter(d => d.rolloutReady).length, deployments };
   }
-  result.clusterManager = { state: 'Unknown', source: 'C_API/C_EXT: /api/admin/plugins/registrations', operationState: 'NotQueried' };
+  result.clusterManager = { state: 'Unknown', source: 'C_EXT via Kubernetes: /apis/plugins.opensphere.io/v1alpha1/namespaces/opensphere-console/uipluginregistrations', operationState: 'NotQueried' };
   const registrationRead = reads[2];
-  if (registrationRead.status === 'fulfilled' && registrationRead.value?.projection?.state === 'live'
-      && registrationRead.value.projection.ready === true && Array.isArray(registrationRead.value.items)) {
-    const matches = registrationRead.value.items.filter(r => r.name === 'cluster-manager');
+  if (completeResources(registrationRead, 'UIPluginRegistration', 'opensphere-console')) {
+    const matches = registrationRead.value.resources.filter(r => r.metadata?.name === 'cluster-manager');
     if (matches.length === 0) result.clusterManager.state = 'NotRegistered';
     if (matches.length === 1) {
-      const r = matches[0], s = r.status || {}, v = s.verification || {};
-      const ready = r.desiredState === 'Enabled' && s.phase === 'Activated' && s.serving?.phase === 'Current'
-        && r.health === 'Ready' && v.manifest === 'Verified' && v.signature === 'Verified' && v.entryDigest === 'Verified'
-        && /^sha256:[a-f0-9]{64}$/.test(s.currentDigest || '');
+      const r = matches[0], v = r.verification || {};
+      const ready = !r.metadata.deletionTimestamp && Number.isInteger(r.metadata.generation) && r.observedGeneration >= r.metadata.generation
+        && r.desiredState === 'Enabled' && r.phase === 'Activated' && r.servingPhase === 'Current'
+        && r.workloadPhase === 'Ready' && v.manifest === 'Verified' && v.signature === 'Verified' && v.entryDigest === 'Verified'
+        && v.permissions === 'Approved' && /^sha256:[a-f0-9]{64}$/.test(r.currentDigest || '');
       result.clusterManager.state = ready ? 'Ready' : 'RegisteredNotReady';
     }
   }

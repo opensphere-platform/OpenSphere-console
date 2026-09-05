@@ -8229,7 +8229,6 @@ async function executeAgentTool(name, args, actor, context = {}) {
       requireClosedOwnerInputs(input, []);
       result = await consoleInstallationObservation({
         listResources: (query) => listKubernetesResources(query, actor),
-        registrations: () => backendGet('/api/admin/plugins/registrations', actor),
       });
       break;
     case 'get_environment_snapshot':

@@ -12,12 +12,13 @@ const deployment = (observedGeneration = 2) => sanitizeKubernetesObject('deploym
   spec: { replicas: 2, template: { spec: { containers: [{ name: 'shell', image: 'DO_NOT_SEND', env: [{name: 'TOKEN', value: 'DO_NOT_SEND'}] }] } } },
   status: { readyReplicas: 2, availableReplicas: 2, updatedReplicas: 2, observedGeneration },
 });
-const snapshot = (items = [], state = 'live') => ({ projection: { state, ready: state === 'live' }, items });
+const snapshot = (resources = []) => ({kind: 'UIPluginRegistration', namespace: 'opensphere-console', resources});
 const read = (overrides = {}) => consoleInstallationObservation({
   listResources: async ({kind, namespace}) => kind === 'node'
     ? {kind: 'Node', namespace: null, resources: [node(true), node(false)]}
-    : (assert.equal(namespace, 'opensphere-console'), {kind: 'Deployment', namespace, resources: [deployment()]}),
-  registrations: async () => snapshot(), now: () => new Date('2026-09-05T04:00:00Z'), ...overrides,
+    : (assert.equal(namespace, 'opensphere-console'), kind === 'deployment'
+      ? {kind: 'Deployment', namespace, resources: [deployment()]} : snapshot()),
+  now: () => new Date('2026-09-05T04:00:00Z'), ...overrides,
 });
 
 test('bootstrap view uses actual sanitized resource shapes and sends only approved summary fields', async () => {
@@ -29,26 +30,28 @@ test('bootstrap view uses actual sanitized resource shapes and sends only approv
   assert.match(renderConsoleInstallationObservation(result), /1\/2 Ready/);
   assert.match(renderConsoleInstallationObservation(result), /전체 기능·설치 재현 완료/);
 });
-test('incomplete lists, stale registration and API errors cannot assert absence or readiness', async () => {
+test('incomplete lists, wrong owner shapes and API errors cannot assert absence or readiness', async () => {
   const result = await read({
     listResources: async ({kind, namespace}) => kind === 'node'
       ? {kind: 'Node', namespace: null, resources: [node(true)], continue: 'next'}
-      : {kind: 'Deployment', namespace, resources: [deployment(1)]},
-    registrations: async () => snapshot([], 'stale'),
+      : kind === 'deployment' ? {kind: 'Deployment', namespace, resources: [deployment(1)]} : {items: [], projection: {state: 'live', ready: true}},
   });
   assert.equal(result.nodes.state, 'Unknown'); assert.equal(result.nodes.total, undefined);
   assert.equal(result.console.ready, 0); assert.equal(result.clusterManager.state, 'Unknown');
-  const failed = await read({listResources: async () => {throw new Error('DO_NOT_SEND');}, registrations: async () => {throw new Error('DO_NOT_SEND');}});
+  const failed = await read({listResources: async () => {throw new Error('DO_NOT_SEND');}});
   assert.equal(failed.console.state, 'Unknown'); assert.doesNotMatch(JSON.stringify(failed), /DO_NOT_SEND/);
 });
 test('registration presence alone never means installed; verified current serving is required', async () => {
-  const registration = {name: 'cluster-manager', desiredState: 'Enabled', health: 'Ready', requestedBy: 'DO_NOT_SEND', status: {
-    phase: 'Activated', currentDigest: `sha256:${'a'.repeat(64)}`, serving: {phase: 'Current'}, verification: {manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified'},
+  const registration = {metadata: {name: 'cluster-manager', namespace: 'opensphere-console', generation: 3}, spec: {desiredState: 'Enabled', requestedBy: 'DO_NOT_SEND'}, status: {
+    phase: 'Activated', observedGeneration: 3, workload: {phase: 'Ready'}, currentDigest: `sha256:${'a'.repeat(64)}`, serving: {phase: 'Current'}, verification: {manifest: 'Verified', signature: 'Verified', entryDigest: 'Verified', permissions: 'Approved'},
   }};
-  const healthy = await read({registrations: async () => snapshot([registration])});
+  const project = () => read({listResources: async ({kind}) => kind === 'uipluginregistration' ? snapshot([sanitizeKubernetesObject(kind, registration)]) : {}});
+  const healthy = await project();
   assert.equal(healthy.clusterManager.state, 'Ready'); assert.doesNotMatch(JSON.stringify(healthy), /DO_NOT_SEND/);
   registration.status.verification.signature = 'Failed';
-  assert.equal((await read({registrations: async () => snapshot([registration])})).clusterManager.state, 'RegisteredNotReady');
+  assert.equal((await project()).clusterManager.state, 'RegisteredNotReady');
+  registration.status.verification.signature = 'Verified'; registration.status.observedGeneration = 2;
+  assert.equal((await project()).clusterManager.state, 'RegisteredNotReady');
 });
 test('installation status selects only the bounded read tool and excludes automatic broad context', () => {
   assert.equal(requiresConsoleInstallationSummary('Console 배포 상태와 Cluster Manager 설치 상태를 점검해줘'), true);
