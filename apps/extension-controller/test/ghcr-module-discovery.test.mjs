@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createGhcrModuleDiscovery} from '../src/ghcr-module-discovery.mjs';
 import {moduleFixture} from './module-release-fixture.mjs';
+import {exactExtensionPackageScope} from '../src/extension-package-scope.mjs';
 function harness({existing=null,alterIndex, registryStatus=200}={}) {
   const fixture=moduleFixture(), calls=[]; let saved=existing, now=fixture.now;
   if(alterIndex)alterIndex(fixture.index);
@@ -21,11 +22,23 @@ test('verified GHCR catalog imports package metadata only, never a registration 
   const h=harness();const result=await h.discovery.reconcileOnce();
   assert.equal(result.results[0].state,'Discovered');assert.equal(h.saved.kind,'UIPluginPackage');
   assert.equal(h.saved.metadata.annotations['opensphere.io/discovery-state'],'Verified');
+  assert.deepEqual(exactExtensionPackageScope(h.saved),{scope:'sub-shell',core:false});
   assert.ok(h.calls.every(call=>!/(deployments|registrations|secrets|serviceaccounts)/.test(call.url)));
   assert.ok(!JSON.stringify(h.saved).includes('test-registry-token'));
   assert.equal(h.calls.filter(call=>call.url.startsWith('https://ghcr.io')&&call.init.headers.authorization==='Bearer test-kubernetes-token').length,0);
   assert.ok(h.calls.every(call=>call.init.redirect==='error'));
   const count=h.calls.length;assert.equal((await h.discovery.reconcileOnce()).state,'Idle');assert.equal(h.calls.length,count);
+});
+
+test('already verified discovery repairs missing scope without changing signed spec or unrelated labels',async()=>{
+  const h=harness();await h.discovery.reconcileOnce();const spec=structuredClone(h.saved.spec);
+  delete h.saved.metadata.labels['opensphere.io/scope'];h.saved.metadata.labels['operator.example/retained']='yes';
+  h.saved.metadata.resourceVersion='12';h.tick();
+  assert.equal((await h.discovery.reconcileOnce()).results[0].state,'Discovered');
+  assert.deepEqual(exactExtensionPackageScope(h.saved),{scope:'sub-shell',core:false});
+  assert.deepEqual(h.saved.spec,spec);assert.equal(h.saved.metadata.resourceVersion,'12');
+  assert.equal(h.saved.metadata.labels['operator.example/retained'],'yes');
+  h.tick();assert.equal((await h.discovery.reconcileOnce()).results[0].state,'Current');
 });
 test('tampered executable or signing failure never imports an eligible package',async()=>{
   const h=harness({alterIndex:index=>{index.manifests[0].digest='sha256:'+'b'.repeat(64);}});

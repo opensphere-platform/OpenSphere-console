@@ -62,11 +62,12 @@ export function createGhcrModuleDiscovery({ kubernetesBaseUrl, namespace, loadKu
           const existing = existingResponse.status === 404 ? null : await boundedJson(existingResponse);
           if (existing && existing.metadata.labels?.['app.kubernetes.io/managed-by'] !== MANAGED) throw fault('ModuleCatalogOwnershipConflict');
           if (existing?.metadata.annotations?.[MODULE_RELEASE_ANNOTATION] === envelope
+            && existing.metadata.labels?.['opensphere.io/scope'] === 'sub-shell'
             && existing.metadata.annotations['opensphere.io/discovery-state'] === 'Verified') { results.push({id, state: 'Current'}); continue; }
           const pkg = {apiVersion: 'plugins.opensphere.io/v1alpha1', kind: 'UIPluginPackage',
             metadata: {name: id, namespace,
               ...(existing ? {resourceVersion: existing.metadata.resourceVersion, uid: existing.metadata.uid} : {}),
-              labels: {'app.kubernetes.io/managed-by': MANAGED},
+              labels: {...existing?.metadata.labels, 'app.kubernetes.io/managed-by': MANAGED, 'opensphere.io/scope': 'sub-shell'},
               annotations: {[MODULE_RELEASE_ANNOTATION]: envelope, 'opensphere.io/discovery-state': 'Verified',
                 'opensphere.io/discovery-observed-at': new Date(now()).toISOString()}}, spec: release.spec};
           await boundedJson(await kube(existing ? 'PUT' : 'POST', existing ? '/' + id : '', pkg));
