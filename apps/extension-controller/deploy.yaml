@@ -121,6 +121,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: opensphere-extension-controller
+        # 22 invokes the existing owner API with the current Console user's
+        # bearer token. Network reachability does not grant management rights;
+        # Cluster Manager revalidates identity, permission and MFA per request.
+        - podSelector:
+            matchLabels:
+              app: opensphere-console-osaa-gateway
       ports:
         - { protocol: TCP, port: 8080 }
 ---
