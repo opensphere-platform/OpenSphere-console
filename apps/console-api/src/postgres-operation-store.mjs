@@ -1200,6 +1200,18 @@ export function createPostgresOperationStore({ query }) {
       }
     },
 
+    async getByRequest(input) {
+      try {
+        const result = await query('SELECT console_operation.get_operation_by_request($1::uuid,$2::uuid,$3::text) AS operation_record',
+          [input.sessionId, input.actorRef, input.idempotencyKey]);
+        const row = result?.rows?.[0];
+        if (!row || !Object.hasOwn(row, 'operation_record') || row.operation_record === undefined) {
+          throw new Error('installation request lookup returned no database envelope');
+        }
+        return row.operation_record;
+      } catch (error) { throw databaseError(error); }
+    },
+
     async listRevocations(input) {
       try {
         const result = await query(LIST_REVOCATIONS_SQL, [

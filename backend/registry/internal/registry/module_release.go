@@ -72,7 +72,10 @@ func verifyOfficialModule(pkg unstructured.Unstructured, keys map[string]string,
 	}
 	signedSpec, _ := json.Marshal(release.Spec)
 	actualSpec, _ := json.Marshal(nestedMap(pkg.Object, "spec"))
-	if !bytespkg.Equal(signedSpec, actualSpec) || nestedString(pkg.Object, "spec", "trust", "keyId") != envelope.KeyID || nestedString(pkg.Object, "spec", "permissionProfile") != "cluster-read" || nestedString(pkg.Object, "spec", "hostRef") != "main" {
+	// CON-FR-007: same closed profile set as C_EXT. This admits only metadata
+	// signed for the official Cluster Manager; it does not grant Kubernetes RBAC.
+	profile := nestedString(pkg.Object, "spec", "permissionProfile")
+	if !bytespkg.Equal(signedSpec, actualSpec) || nestedString(pkg.Object, "spec", "trust", "keyId") != envelope.KeyID || (profile != "cluster-read" && profile != "cluster-infrastructure-manager-v1") || nestedString(pkg.Object, "spec", "hostRef") != "main" {
 		return fail
 	}
 	return nil

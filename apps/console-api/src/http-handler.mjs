@@ -692,11 +692,18 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       }
       if (url.pathname === '/api/admin/extensions/inspect' && request.method === 'POST') {
         const session = await resolveSession(request, { requireCsrf: true, correlationId });
-        return send(response, 200, await registryOperations.inspectCandidate({
-          session,
-          body: await jsonBody(request),
-          correlationId,
-        }));
+        return send(response, 200, await registryOperations.inspectCandidate({ session, body: await jsonBody(request), correlationId }));
+      }
+      if (url.pathname === '/api/admin/extensions/catalog' && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('installation catalog does not accept query parameters'), { code: 'ValidationFailed', status: 400 });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        return send(response, 200, await registryOperations.getInstallationCatalog({ session, correlationId }));
+      }
+      const installRequestMatch = url.pathname.match(/^\/api\/admin\/extensions\/install-requests\/(r2d2-install-[a-f0-9]{64})$/);
+      if (installRequestMatch && request.method === 'GET') {
+        if (url.search) throw Object.assign(new Error('installation request lookup does not accept query parameters'), { code: 'ValidationFailed', status: 400 });
+        const session = await resolveSession(request, { requireCsrf: false, correlationId });
+        return send(response, 200, await operationService.getInstallationRequest({ session, requestKey: installRequestMatch[1] }));
       }
       if (url.pathname === '/api/admin/extensions/install' && request.method === 'POST') {
         const session = await resolveSession(request, { requireCsrf: true, correlationId });

@@ -328,7 +328,8 @@ func installableExtensionFromPackage(pkg unstructured.Unstructured, trustedKeys 
 	reject := func(code, message string) (ExtensionCandidate, *catalog.Rejected) {
 		return ExtensionCandidate{}, &catalog.Rejected{Kind: "extension", ID: "extension." + id, Code: code, Message: message}
 	}
-	if id == "cluster-manager" || keyID == "opensphere-module-local-v1" || nestedString(pkg.Object, "spec", "permissionProfile") == "cluster-read" {
+	profile := nestedString(pkg.Object, "spec", "permissionProfile")
+	if id == "cluster-manager" || keyID == "opensphere-module-local-v1" || profile == "cluster-read" || profile == "cluster-infrastructure-manager-v1" {
 		if err := verifyOfficialModule(pkg, trustedKeys, time.Now()); err != nil {
 			return reject("ModuleReleaseInvalid", err.Error())
 		}

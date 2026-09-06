@@ -223,18 +223,33 @@ func TestRequireOKUsesJSONErrorMessage(t *testing.T) {
 
 func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T) {
 	requests := 0
+	installKey := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/admin/extensions/catalog" {
+			fmt.Fprintf(w, `{"schemaVersion":"1.0","freshness":"fresh","data":{"revision":"sha256:%s","items":[{"descriptorId":"extension.template"}]}}`, strings.Repeat("a", 64))
+			return
+		}
+		if r.URL.Path == "/api/admin/extensions/inspect" {
+			fmt.Fprintf(w, `{"freshness":"fresh","data":{"resolution":"Eligible","candidate":{"descriptorId":"extension.template","catalogRevision":"sha256:%s","channel":"edge","image":"ghcr.io/opensphere-platform/opensphere-shell-template@sha256:%s"}}}`, strings.Repeat("a", 64), strings.Repeat("b", 64))
+			return
+		}
+		if r.URL.Path != "/api/admin/extensions/install" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
 		requests++
 		var payload map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("install payload decode: %v", err)
 		}
-		if payload["client"] != "cli:os" {
-			t.Fatalf("install provenance must identify the native CLI: %#v", payload)
+		if len(payload) != 3 || payload["descriptorId"] != "extension.template" || payload["catalogRevision"] != "sha256:"+strings.Repeat("a", 64) {
+			t.Fatalf("install must use the closed GUI contract: %#v", payload)
 		}
-		if payload["image"] != "ghcr.io/opensphere-platform/opensphere-shell-template:edge" {
-			t.Fatalf("default GHCR namespace was not expanded: %#v", payload)
+		key := r.Header.Get("X-OS-Idempotency-Key")
+		if key == "" || installKey != "" && key != installKey {
+			t.Fatalf("retry changed the install idempotency key")
 		}
+		installKey = key
 		w.Header().Set("Content-Type", "application/json")
 		if requests < 3 {
 			w.Header().Set("Retry-After", "1")
@@ -243,7 +258,7 @@ func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T)
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"accepted":true,"id":"shell-template"}`))
+		fmt.Fprintf(w, `{"schemaVersion":"1.0","operationId":"11111111-1111-4111-8111-111111111111","actionId":"console.extension.install","state":"Authorized","targetRef":"ghcr.io/opensphere-platform/opensphere-shell-template@sha256:%s"}`, strings.Repeat("b", 64))
 	}))
 	defer server.Close()
 	originalSleep := sleepFn

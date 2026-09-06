@@ -186,7 +186,7 @@ func proxyWebShellRequest(ctx context.Context, method, rawURL string, body io.Re
 		Body: base64.RawStdEncoding.EncodeToString(requestBody), CorrelationID: requestID,
 	}
 	if method != http.MethodGet && method != http.MethodHead {
-		request.IdempotencyKey = requestID
+		request.IdempotencyKey = requestIdempotencyKey(ctx)
 	}
 	response, present, err := invokeWebShellAgent(ctx, webShellAgentRequest{
 		Contract: webShellAgentContract, Operation: "request", Request: &request,

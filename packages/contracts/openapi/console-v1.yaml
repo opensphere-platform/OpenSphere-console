@@ -2279,9 +2279,75 @@ paths:
               schema: { $ref: "../schemas/operation-receipt.schema.json" }
         "409": { $ref: "#/components/responses/Conflict" }
         "428": { $ref: "#/components/responses/StepUpRequired" }
+  /api/admin/extensions/install-requests/{requestKey}:
+    get:
+      operationId: getExtensionInstallationRequest
+      tags: [Extensions]
+      description: >-
+        Read-only recovery of one current actor's already accepted installation.
+        The key is derived from the actor, durable conversation and user request ID.
+        A missing receipt is not a successful installation. Session authority and
+        install permission are revalidated even on a miss. No query parameters.
+      x-opensphere-requirement: CON-FR-018
+      x-opensphere-authority: C_API
+      x-opensphere-permission: console.extension.install
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable-read-only
+      parameters:
+        - name: requestKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^r2d2-install-[a-f0-9]{64}$' }
+      responses:
+        "200":
+          description: Same-actor existing receipt or explicit null
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [schemaVersion, receipt]
+                properties:
+                  schemaVersion: { const: '1.0' }
+                  receipt:
+                    oneOf:
+                      - { $ref: '../schemas/operation-receipt.schema.json' }
+                      - { type: 'null' }
+        "403": { $ref: '#/components/responses/PermissionDenied' }
+        "503": { $ref: '#/components/responses/AuthorityUnavailable' }
+  /api/admin/extensions/catalog:
+    get:
+      operationId: getExtensionInstallationCatalog
+      tags: [Extensions]
+      description: >-
+        Fixed C_REG discovery for native CLI and delegated OS Shell. Returns current
+        descriptor identifiers and catalog revision, not installation eligibility.
+        inspectExtensionCandidate remains mandatory. No query parameters are accepted.
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-authority: OpenSphereRegistry
+      x-opensphere-permission: console.extension.install
+      x-opensphere-risk: R0
+      x-opensphere-idempotency: not-applicable-read-only
+      responses:
+        "200":
+          description: Current installation discovery; inspection required
+          content:
+            application/json:
+              schema: { $ref: "../schemas/extension-installation-catalog.schema.json" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "503": { $ref: "#/components/responses/AuthorityUnavailable" }
   /api/admin/extensions/inspect:
     post:
       operationId: inspectExtensionCandidate
+      description: >-
+        Browser requests require CSRF. The internal osaa-gateway-v1 delegation uses
+        an exchanged Supabase bearer with signature and current bound session checked
+        on every request; browser cookies and caller-supplied actor identity are rejected.
+        The owner marker is not an identity or permission grant. Installation permission
+        remains required. The delegated surface admits only inspect, install, GET of
+        an exact platform operation UUID and read-only own-request recovery; it does
+        not admit remove or generic mutations.
       tags: [Extensions]
       x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R0
@@ -2313,7 +2379,11 @@ paths:
         deployment or a localhost non-edge deployment still requires recent MFA.
         Direct official Cluster Manager installation uses requester confirmation, not a
         separate approver or Git proposal. C_EXT automatically verifies exact owner observations.
-        Current permissions, CSRF, session checks, immutable signed image, R2 risk and idempotency remain required.
+        Current permissions, browser CSRF, session checks, immutable signed image, R2 risk and idempotency remain required.
+        Internal C_AI submission uses the same closed body and exchanged Supabase user
+        bearer under osaa-gateway-v1. Current bound browser session, permissions and MFA
+        are revalidated server-side. 22 admits submission only for a direct installation
+        instruction in the current user turn, never tool output or model-generated consent.
       tags: [Extensions]
       x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2

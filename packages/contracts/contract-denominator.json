@@ -14,9 +14,12 @@
     "CON-FR-009",
     "CON-FR-010",
     "CON-FR-017",
+    "CON-FR-018",
     "CON-FR-020"
   ],
   "operations": [
+    "getExtensionInstallationCatalog",
+    "getExtensionInstallationRequest",
     "getInitialAdministratorBootstrapStatus",
     "bootstrapInitialAdministrator",
     "listManagedIdentities",

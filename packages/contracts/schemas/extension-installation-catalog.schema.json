@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Extension installation catalog discovery",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "authority", "observedAt", "freshness", "correlationId", "evidenceRefs", "data"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "authority": { "const": "OpenSphereRegistry" },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "freshness": { "const": "fresh" },
+    "correlationId": { "type": "string" },
+    "evidenceRefs": { "type": "array", "items": { "type": "string" } },
+    "data": {
+      "type": "object", "additionalProperties": false,
+      "required": ["revision", "items", "installationEligibility"],
+      "properties": {
+        "revision": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "installationEligibility": { "const": "InspectRequired" },
+        "items": { "type": "array", "maxItems": 2000, "items": {
+          "type": "object", "additionalProperties": false, "required": ["descriptorId", "displayName"],
+          "properties": { "descriptorId": { "type": "string", "pattern": "^extension\\.[a-z0-9][a-z0-9-]{0,62}$" }, "displayName": { "type": "string" } }
+        } }
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { createHash, randomBytes as systemRandomBytes } from 'node:crypto';
 import { createDatabaseSessionResolver, readBrowserSessionProof } from './session-resolver.mjs';
 import { validateAvatarSelection, validateAvatarUpload } from './profile-avatar.mjs';
+import { agentInstallationRoute } from './agent-installation-admission.mjs';
 
 export const OWNER_ADMISSION_MARKERS = Object.freeze([
   'osaa-gateway-v1',
@@ -1231,6 +1232,7 @@ export function createIdentitySessionBroker({
         const ownerAuthorityPath = new URL(String(request?.url || ''), 'http://console-api.local').pathname;
         if (!ownerMatch || ownerMatch[1].length > 16384
             || !((request?.method === 'GET' && ownerAuthorityPath === '/api/identity/me')
+              || agentInstallationRoute(request?.method, ownerAuthorityPath, ownerMarker)
               || (request?.method === 'POST' && ownerAuthorityPath === '/api/internal/cluster-manager/events'
                 && ownerMarker === 'extension-controller-v1'))
             || request?.headers?.cookie || request?.headers?.['x-os-csrf-token']

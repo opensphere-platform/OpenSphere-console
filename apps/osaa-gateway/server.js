@@ -63,6 +63,7 @@ const {
 } = require('./r2d2-prompt-boundary');
 const { SOURCE_TOOL_NAMES, groundCanonicalSourceAnswer } = require('./r2d2-source-grounding');
 const { requiresConsoleInstallationSummary, consoleInstallationObservation } = require('./console-installation-observation');
+const { installationIntent, createModuleInstallationClient, renderInstallationResult, MODULE_INSTALLATION_TOOL_NAMES } = require('./module-installation-client');
 const {
   OS_SHELL_DEPLOYMENTS,
   buildManualAccessDiagnosis,
@@ -6691,7 +6692,7 @@ const AGENT_MAX_TOOL_CALLS = 12;
 const AGENT_MAX_TOTAL_TOKENS = 40000;
 const AGENT_TOOL_RESULT_MAX_CHARS = 8000;
 
-function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisOwnerCapabilities = new Set(), cephOwnerCapabilities = new Set(), recoveryOwnerCapabilities = new Set()) {
+function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisOwnerCapabilities = new Set(), cephOwnerCapabilities = new Set(), recoveryOwnerCapabilities = new Set(), installationRequest = false) {
   const tools = [];
   const add = (permission, name, description, properties = {}, required = []) => {
     if (!hasPermission(actor, permission)) return;
@@ -6706,6 +6707,16 @@ function agentToolDefinitions(actor, observabilityCapabilities = new Set(), hisO
   };
   const namespace = { type: 'string', description: `Allowed namespace: ${OSAA_ENV_NAMESPACES.join(', ')}` };
   const name = { type: 'string', description: 'Kubernetes resource name' };
+  add('console.extension.install', 'inspect_module_installation', 'Inspect the official Cluster Manager candidate and current registration through the Console installation contract. Available before Cluster Manager or HISS is installed. No mutation. If already registered, do not reinstall.', {
+    descriptorId: { type: 'string', enum: ['extension.cluster-manager'] },
+  }, ['descriptorId']);
+  if (installationRequest) add('console.extension.install', 'install_module', 'Submit the Cluster Manager installation explicitly requested in this user turn. First inspect_module_installation, then use its exact catalogRevision. The server validates permissions and MFA (localhost AND edge exception). No second operator is required. Acceptance is not completion; query the returned operationId.', {
+    descriptorId: { type: 'string', enum: ['extension.cluster-manager'] },
+    catalogRevision: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' },
+  }, ['descriptorId', 'catalogRevision']);
+  add('console.extension.install', 'get_module_installation_operation', 'Read the exact existing module installation operationId from this conversation. Never infer success from acceptance. Verified means package installation verified; Kubernetes/HISS/Ceph product functions need separate verification.', {
+    operationId: { type: 'string', pattern: UUID_RE.source },
+  }, ['operationId']);
   add('osaa.system.read', 'get_console_installation_status', 'Read only node Ready counts, Console namespace deployment readiness and Cluster Manager registration readiness. No source code, credentials, personal data or other namespace details. This does not inspect approval operations or prove complete installation.', {});
   add('osaa.system.read', 'get_environment_snapshot', 'Read the current OpenSphere runtime snapshot. Use this for live facts, never manuals.', {
     namespace: { ...namespace, description: `${namespace.description}. Omit to inspect all allowed namespaces.` },
@@ -8224,6 +8235,21 @@ async function executeAgentTool(name, args, actor, context = {}) {
   let result;
   let permissionCode = 'osaa.system.read';
   switch (name) {
+    case 'inspect_module_installation':
+    case 'install_module':
+    case 'get_module_installation_operation': {
+      permissionCode = 'console.extension.install';
+      assertPermission(actor, permissionCode);
+      const client = createModuleInstallationClient({
+        baseUrl: CONSOLE_IDENTITY_URL, readRegistry: () => registryGet(),
+        observeInstallation: () => consoleInstallationObservation({ listResources: query => listKubernetesResources(query, actor) }),
+        signal: () => boundedSignal(15000),
+      });
+      result = name === 'inspect_module_installation' ? await client.inspect(actor, input)
+        : name === 'install_module' ? await client.install(actor, input, context)
+          : await client.getOperation(actor, input);
+      break;
+    }
     case 'get_console_installation_status':
       assertPermission(actor, 'osaa.system.read');
       requireClosedOwnerInputs(input, []);
@@ -8485,7 +8511,7 @@ async function executeAgentTool(name, args, actor, context = {}) {
     toolId: `agent.${name}`,
     target: `${input.namespace || 'opensphere'}/${input.name || input.pod || name}`,
     permissionCode,
-    reason: 'LLM read-tool loop',
+    reason: MODULE_INSTALLATION_TOOL_NAMES.has(name) ? '사용자 지시에 따른 Console 모듈 설치 계약' : 'LLM read-tool loop',
     input,
     status: 'applied',
     result,
@@ -8574,6 +8600,16 @@ async function chatCompletion(body, actor) {
   const baseMessages = normalizeMessages(body);
   const commandOut = await handleSlashCommand(latestUserContent(baseMessages), body, actor);
   if (commandOut) return commandOut;
+  const currentInstruction = latestUserContent(baseMessages);
+  if (installationIntent(currentInstruction)) {
+    const client = createModuleInstallationClient({ baseUrl: CONSOLE_IDENTITY_URL, signal: () => boundedSignal(15000) });
+    const existing = await client.findCurrentRequest(actor, { userInstruction: currentInstruction, sessionId: body.sessionId, clientRequestId: body.clientRequestId });
+    if (existing) return {
+      requestId: randomUUID(), modelAuthority: 'control', model: 'osaa-control-tools', moduleInstallation: existing,
+      message: '기존 설치 요청을 복구했습니다.\n' + renderInstallationResult(existing),
+      sources: [], usage: normalizeProviderUsage(null), replayed: true,
+    };
+  }
   const selfIdentityOut = osaaSelfIdentityConversation(baseMessages);
   if (selfIdentityOut) return selfIdentityOut;
   const registryStatusOut = await registryStatusConversation(baseMessages, actor);
@@ -8612,7 +8648,8 @@ async function chatCompletion(body, actor) {
   const evidenceMessages = [];
   const userContent = latestUserContent(baseMessages);
   const canonicalSourceIntent = requiresCanonicalSourceTools(userContent);
-  const installationSummaryIntent = !canonicalSourceIntent && requiresConsoleInstallationSummary(userContent);
+  const moduleInstallIntent = installationIntent(userContent);
+  const installationSummaryIntent = !moduleInstallIntent && !canonicalSourceIntent && requiresConsoleInstallationSummary(userContent);
   const extensionPresentationIntent = requiresExtensionPresentationStatus(userContent);
   const manualAccessDiagnosisIntent = requiresManualAccessDiagnosis(userContent);
   const osShellDiagnosisIntent = requiresOsShellDiagnosis(userContent);
@@ -8632,7 +8669,8 @@ async function chatCompletion(body, actor) {
       content: 'This request matches a deterministic Console surface diagnosis. Report the first failed stage from the verified diagnosis, keep unobservable browser state explicit, and do not replace the owner evidence with a generic restart or reinstall suggestion.',
     });
   }
-  if (!canonicalSourceIntent && !surfaceDiagnosisIntent && !installationSummaryIntent) {
+  if (moduleInstallIntent) systemMessages.push({ role: 'system', content: 'The current user explicitly requests installing OpenSphere-Cluster-Manager. Use inspect_module_installation -> install_module -> get_module_installation_operation. These narrowly scoped bootstrap tools do not depend on the legacy lifecycle mutation gate, Cluster Manager, HISS, embeddings, or Gitea proposal approval. C_API owns permissions and MFA. Do not ask for a second operator. Never execute shell commands or invent an operationId. Report an existing installation instead of reinstalling it.' });
+  if (!moduleInstallIntent && !canonicalSourceIntent && !surfaceDiagnosisIntent && !installationSummaryIntent) {
     try {
       sources = await searchKnowledge(userContent, OSAA_RAG_TOP_K, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
       if (sources.length) evidenceMessages.push(knowledgeSystemMessage(sources));
@@ -8648,7 +8686,7 @@ async function chatCompletion(body, actor) {
     }
   }
   try {
-    if (body.includeEnvironment !== false && !extensionPresentationIntent && !canonicalSourceIntent && !surfaceDiagnosisIntent && !installationSummaryIntent) {
+    if (body.includeEnvironment !== false && !extensionPresentationIntent && !canonicalSourceIntent && !surfaceDiagnosisIntent && !installationSummaryIntent && !moduleInstallIntent) {
       environment = await environmentSnapshot(body, actor);
       evidenceMessages.push(environmentSystemMessage(environment));
     }
@@ -8696,9 +8734,12 @@ async function chatCompletion(body, actor) {
   }
   messages = [...systemMessages, ...baseMessages, ...evidenceMessages];
   const maxTokens = Math.max(32, Math.min(4096, Number(body.maxTokens || 1024) || 1024));
-  const liveToolMode = requiresLiveAgentTools(userContent);
+  const liveToolMode = Boolean(moduleInstallIntent) || requiresLiveAgentTools(userContent);
   let tools = [];
-  if (installationSummaryIntent) {
+  if (moduleInstallIntent) {
+    tools = agentToolDefinitions(actor, new Set(), new Set(), new Set(), new Set(), true)
+      .filter(tool => MODULE_INSTALLATION_TOOL_NAMES.has(tool.function.name));
+  } else if (installationSummaryIntent) {
     // Restrict provider tool selection as well as automatic context attachment.
     tools = agentToolDefinitions(actor).filter((tool) => tool.function.name === 'get_console_installation_status');
   } else if (canonicalSourceIntent) {
@@ -8796,12 +8837,17 @@ async function chatCompletion(body, actor) {
       let cached = false;
       try {
         args = parseToolArguments(call?.function?.arguments);
+        if (!tools.some(tool => tool.function.name === toolName)) throw { code: 403, msg: 'This tool is not admitted for the current request' };
         const signature = toolCallSignature(toolName, args);
-        if (toolResultCache.has(signature)) {
+        // A receipt is a live observation: repeated reads must see owner progress.
+        // The per-turn tool/round budget still bounds polling and all mutations
+        // keep their cached result and durable request key.
+        if (toolResultCache.has(signature) && toolName !== 'get_module_installation_operation') {
           ({ output, ok } = toolResultCache.get(signature));
           cached = true;
         } else {
-          output = await executeAgentTool(toolName, args, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null });
+          output = await executeAgentTool(toolName, args, actor, { source, sessionId, runId: agentRunRecorded ? requestId : null,
+            userInstruction: userContent, clientRequestId: body.clientRequestId });
           ok = true;
           freshToolCalls += 1;
           toolResultCache.set(signature, { output, ok });
@@ -8810,7 +8856,7 @@ async function chatCompletion(body, actor) {
       } catch (error) {
         output = { ok: false, error: error.msg || error.message || String(error) };
         const signature = toolCallSignature(toolName, args);
-        if (!toolResultCache.has(signature)) {
+        if (!toolResultCache.has(signature) || toolName === 'get_module_installation_operation') {
           freshToolCalls += 1;
           toolResultCache.set(signature, { output, ok: false });
           verifiedToolEvidence.set(signature, { tool: toolName, arguments: args, result: output });
@@ -8984,6 +9030,12 @@ async function chatCompletion(body, actor) {
     ),
   });
   content = currentFactGuard.content;
+  const installationEvidence = [...verifiedToolEvidence.values()].filter(value => MODULE_INSTALLATION_TOOL_NAMES.has(value.tool));
+  const moduleInstallation = installationEvidence.map(value => value.result).filter(value => value?.schema === 'osaa.module-installation-operation/v1').at(-1)
+    || installationEvidence.map(value => value.result).filter(value => value?.schema === 'osaa.module-installation-review/v1').at(-1);
+  if (moduleInstallation) {
+    content = renderInstallationResult(moduleInstallation);
+  }
   if (currentFactGuard.applied) {
     audit(actor, 'current-fact-guard', `AgentRun/${requestId}`, 'blocked', currentFactGuard.state);
     if (agentRunRecorded) await recordAgentStep({
@@ -9006,6 +9058,7 @@ async function chatCompletion(body, actor) {
     model: providerModel,
     modelAuthority: 'provider',
     message: content,
+    ...(moduleInstallation ? { moduleInstallation } : {}),
     usage,
     usageRecorded,
     latencyMs,
@@ -9113,6 +9166,7 @@ async function durableChatCompletion(body, actor) {
         ...body,
         messages: turn.messages,
         sessionId: turn.conversationId,
+        clientRequestId: turn.clientRequestId,
         _dialogueContext: turn.dialogueContext,
       }, actor),
     );

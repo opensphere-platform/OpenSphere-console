@@ -65,6 +65,17 @@ function createVerifyRateLimiter({ limit = 6, windowMs = 60_000, now = Date.now 
 export function createRegistryOperations({ operationService, policyRevision, projectionStore, registryResolver, credentialBroker, clock = () => new Date(), verifyRateLimit = createVerifyRateLimiter() }) {
   if (!operationService?.accept) throw new TypeError('operation service is required');
   return Object.freeze({
+    async getInstallationCatalog({ session, correlationId }) {
+      requirePermission(session, 'console.extension.install');
+      if (!registryResolver?.readCatalogSnapshot) throw Object.assign(new Error('Registry catalog authority is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
+      const snapshot = await registryResolver.readCatalogSnapshot({ correlationId });
+      return {
+        schemaVersion: '1.0', authority: 'OpenSphereRegistry', observedAt: snapshot.observedAt,
+        freshness: 'fresh', correlationId, evidenceRefs: ['registry-catalog:' + snapshot.revision],
+        data: { revision: snapshot.revision, items: snapshot.descriptors.filter(value => value.class === 'extension')
+          .map(value => ({ descriptorId: value.id, displayName: value.displayName })), installationEligibility: 'InspectRequired' },
+      };
+    },
     async getRegistryConnection({ session, correlationId }) {
       if (!projectionStore?.getRegistryConnection) throw Object.assign(
         new Error('Registry connection projection is unavailable'),

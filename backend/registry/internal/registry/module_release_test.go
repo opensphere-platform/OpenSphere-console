@@ -51,4 +51,24 @@ func TestOfficialModuleAdmission(t *testing.T) {
 	if verifyOfficialModule(pkg, keys, now.Add(2*time.Hour)) == nil {
 		t.Fatal("expired signature admitted")
 	}
+	for _, profile := range []string{"cluster-read", "cluster-infrastructure-manager-v1", "cluster-admin"} {
+		spec["permissionProfile"] = profile
+		pkg.SetAnnotations(map[string]string{"opensphere.io/discovery-state": "Verified", "opensphere.io/module-release": seal(now.Add(time.Hour))})
+		err := verifyOfficialModule(pkg, keys, now)
+		if (profile != "cluster-admin") != (err == nil) {
+			t.Fatalf("signed profile %s admitted incorrectly: %v", profile, err)
+		}
+	}
+	spec["permissionProfile"] = "cluster-infrastructure-manager-v1"
+	pkg.SetAnnotations(map[string]string{"opensphere.io/discovery-state": "Verified", "opensphere.io/module-release": seal(now.Add(time.Hour))})
+	drift = pkg.DeepCopy()
+	drift.SetName("another-module")
+	if _, rejected := installableExtensionFromPackage(*drift, keys); rejected == nil || rejected.Code != "ModuleReleaseInvalid" {
+		t.Fatal("infrastructure profile escaped the official Cluster Manager signature boundary")
+	}
+	drift = pkg.DeepCopy()
+	drift.Object["spec"].(map[string]interface{})["permissionProfile"] = "cluster-read"
+	if verifyOfficialModule(*drift, keys, now) == nil {
+		t.Fatal("signed infrastructure profile was silently downgraded")
+	}
 }

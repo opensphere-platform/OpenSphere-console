@@ -14,6 +14,25 @@ CLIDownload 또는 다른 Binding으로 설치·활성화하지 않는다.
 현재 native CLI는 `admin` 사람 device flow만 제공한다. 자동화 credential은 실제 소비자,
 최소 scope, TTL, rotation과 폐기 요구가 승인되기 전에는 제공하지 않으며 사람 session을 재사용하지 않는다.
 
+## 모듈 설치 계약
+
+공식 Registry의 현재 후보를 선택하여 Console GUI와 동일한 검토·제출 API를 사용한다.
+설치할 모듈 자신이나 HISS가 먼저 실행되어 있을 필요는 없다. 권한·MFA는 Console API가 판단한다.
+
+```text
+os extensions inspect cluster-manager
+os extensions install cluster-manager --reason "클러스터 관리 시작"
+os extensions operation get <operation-uuid>
+os extensions operation watch <operation-uuid> --timeout 5m
+```
+
+설치 응답의 작업 ID로 조회한다. 일반 `os operation`은 별도 선언 변경 흐름이며 모듈 설치 조회용이 아니다.
+검토 결과의 정확한 `descriptorId`·`catalogRevision`을 제출하며 임의 이미지 body는 전송하지 않는다.
+공식 이미지·채널 입력도 지원하지만 현재 후보와 일치하지 않으면 중단한다. 채널을 자동 대체하지 않는다.
+Registry 자격 전파에 한정된 자동 재시도에서는 같은 멱등 키를 유지한다. CLI를 종료한 뒤 새로
+실행한 명령까지 같은 키라고 보장하지 않으므로, 응답이 불명확하면 작업 상태부터 확인한다.
+`Verified`는 패키지 설치 검증이며 HISS·Ceph 기능 및 클린 재현의 완료를 뜻하지 않는다.
+
 ## 빌드
 
 ```bash

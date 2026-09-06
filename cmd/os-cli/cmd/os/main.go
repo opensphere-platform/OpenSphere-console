@@ -314,7 +314,7 @@ func rawRequestWithRetryAfterContext(ctx context.Context, method, rawURL string,
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-OS-Correlation-ID", operationID())
 	if method != http.MethodGet && method != http.MethodHead {
-		req.Header.Set("X-OS-Idempotency-Key", operationID())
+		req.Header.Set("X-OS-Idempotency-Key", requestIdempotencyKey(ctx))
 	}
 	resp, err := client().Do(req)
 	if err != nil {
@@ -1146,24 +1146,11 @@ func extensions(cfg Config, args []string, out io.Writer) error {
 	var payload map[string]string
 	switch action {
 	case "inspect":
-		if len(args) != 2 {
-			return usageError("사용법: os extensions inspect <ghcr-image:edge|candidate|stable|ga|@sha256:digest>")
-		}
-		method, path, payload = http.MethodPost, "/api/admin/extensions/inspect", map[string]string{"image": args[1]}
+		return extensionCatalogAction(cfg, args, out)
 	case "install":
-		if len(args) < 2 || strings.HasPrefix(args[1], "--") {
-			return usageError("사용법: os extensions install <repository:edge|candidate|stable|ga|@sha256:digest> --reason <승인 사유> (기본: ghcr.io/opensphere-platform/)")
-		}
-		flags := parseLongFlags(args[2:])
-		reason := strings.TrimSpace(flags["reason"])
-		if len(reason) < 8 {
-			return usageError("--reason은 8자 이상의 설치 승인 사유여야 합니다")
-		}
-		image, err := normalizeExtensionInstallImage(args[1])
-		if err != nil {
-			return err
-		}
-		method, path, payload = http.MethodPost, "/api/admin/extensions/install", map[string]string{"image": image, "reason": reason, "client": "cli:os"}
+		return extensionCatalogAction(cfg, args, out)
+	case "operation":
+		return extensionOperation(cfg, args[1:], out)
 	case "activate", "disable", "uninstall", "rollback":
 		if len(args) != 2 || !validResourceName(args[1]) {
 			return usageErrorf("사용법: os extensions %s <module-id>", action)
@@ -1280,8 +1267,13 @@ func normalizeExtensionInstallImage(value string) (string, error) {
 // Retry is deliberately bounded and only applies to the explicit 503 contract.
 func extensionRequestWithPropagationRetry(cfg Config, method, rawURL string, payload []byte, contentType string) ([]byte, int, error) {
 	const maxAttempts = 5
+	ctx := context.WithValue(context.Background(), installationIdempotencyContextKey{}, operationID())
+	token, tokenErr := credentialToken(cfg)
+	if tokenErr != nil {
+		return nil, 0, tokenErr
+	}
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		b, status, retryAfter, err := requestWithRetryAfter(cfg, method, rawURL, bytes.NewReader(payload), contentType)
+		b, status, _, retryAfter, err := rawRequestWithRetryAfterContext(ctx, method, rawURL, bytes.NewReader(payload), contentType, token)
 		if err != nil || status != http.StatusServiceUnavailable || !registryCredentialsPropagating(b) || attempt == maxAttempts-1 {
 			return b, status, err
 		}

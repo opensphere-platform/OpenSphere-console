@@ -76,7 +76,7 @@ export function createShellCredentialHandler(broker){return async(request,respon
 const readRoutes=[/^\/api\/identity(?:\/me|\/supabase\/status|\/audit)?$/, /^\/api\/platform\/(?:contracts|gitea\/status|releases\/(?:status|component-targets))$/,
  /^\/api\/platform\/changes(?:\/[0-9a-f-]{36})?$/, /^\/api\/monitoring\/baseline\/v1\/(?:data-health|nodes)$/,
  /^\/api\/catalog\/entities(?:\/[^/]+)?$/, /^\/api\/admin\/(?:plugins\/(?:events|registrations)|bindings|extensions\/(?:revocations|registry-credentials|registry-connections\/opensphere-ghcr))$/,
- /^\/api\/platform\/operations\/[0-9a-f-]{36}$/, /^\/api\/audit(?:\/events)?$/];
+ /^\/api\/platform\/operations\/[0-9a-f-]{36}$/, /^\/api\/audit(?:\/events)?$/, /^\/api\/admin\/extensions\/catalog$/];
 const writeRoutes=[['POST',/^\/api\/platform\/changes(?:\/[0-9a-f-]{36}\/(?:approve|reject))?$/],
  ['POST',/^\/api\/admin\/extensions\/(?:inspect|install|remove|revocations)$/],
  ['POST',/^\/api\/identity\/users(?:\/[0-9a-f-]{36}\/(?:group|enabled|onboarding))?$/]];

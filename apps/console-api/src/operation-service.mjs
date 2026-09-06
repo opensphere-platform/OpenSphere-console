@@ -311,5 +311,12 @@ export function createOperationService({ store, policyCatalog, clock = () => new
       if (!record) fail('NotFound', 'operation was not found', 404);
       return receipt(record);
     },
+    async getInstallationRequest({ session, requestKey }) {
+      if (!session?.sessionId || !session.subjectId || !session.authorityFresh || session.revokedAt
+          || !session.permissions?.includes('console.extension.install')) fail('PermissionDenied', 'current module installation authority is required', 403);
+      if (!/^r2d2-install-[a-f0-9]{64}$/.test(requestKey || '')) fail('ValidationFailed', 'installation request key is invalid', 400);
+      const record = await store.getByRequest({ sessionId: session.sessionId, actorRef: session.subjectId, idempotencyKey: requestKey });
+      return { schemaVersion: '1.0', receipt: receipt(record) };
+    },
   });
 }
