@@ -177,7 +177,7 @@ import { OsPageHeader } from '../os/os-page-header';
         font-size: 0.65rem;
       }
       .os-mono {
-        font-family: monospace;
+        font-family: var(--os-font-mono);
         font-size: 0.62rem;
       }
     `,

@@ -54,7 +54,7 @@ import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
       }
       .os-bu-body code,
       .os-bu-detail code {
-        font-family: monospace;
+        font-family: var(--os-font-mono);
         font-size: 0.72rem;
         color: var(--os-ink);
       }

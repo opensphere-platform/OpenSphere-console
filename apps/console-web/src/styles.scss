@@ -6,10 +6,9 @@
 /* Foblex Flow 테마 — 연결선(SVG path) 스트로크·커넥터 스타일 제공(없으면 엣지가 투명). @use는 최상단 필수(Sass 규칙). */
 @use '@foblex/flow/styles/default' as *;
 @use './r2d2-page';
+@use './fonts';
 @import '@clr/ui/clr-ui.min.css';
 @import '@carbon/charts/styles.css';
-/* IBM Plex — 라틴(Sans)+한글(Sans KR)+모노. 한·영 단일 IBM 폰트 통일(사용자 지정). OFL 오픈폰트. */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap');
 
 /* ──────────────────────────────────────────────
  * OpenSphere Design Tokens (DESIGN-GUIDE.md §6)
@@ -54,7 +53,7 @@
   --os-radius-pill: 9999px;
   --os-elev-overlay: 0 12px 40px rgba(29, 39, 51, 0.25);
   --os-font: "IBM Plex Sans", "IBM Plex Sans KR", system-ui, "Segoe UI", sans-serif;
-  --os-font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
+  --os-font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
   --os-header-height: 3rem;
 
   /* ── Z-index 레이어 스케일 (전역 오버레이 순서, 낮음→높음) ──
@@ -85,6 +84,16 @@
   --os-brand-300: #8fa6ff;
   --os-surface: var(--os-surface-1);
   --os-muted: var(--os-ink-muted);       /* 2차 텍스트 → Carbon gray #525252 */
+
+  /* Font families: use library tokens rather than overriding every descendant. */
+  --clr-body-font: var(--os-font);
+  --clr-font: var(--os-font);
+  --clr-display-font: var(--os-font);
+  --cds-alias-typography-font-family: var(--os-font);
+  --cds-alias-typography-header-font-family: var(--os-font);
+  --cds-alias-typography-monospace-font-family: var(--os-font-mono);
+  --cds-charts-font-family: var(--os-font);
+  --cds-charts-font-family-condensed: var(--os-font);
 
   /* ── Clarity 매핑 (전 컴포넌트 일괄 반영) ── */
   --clr-header-bg-color: var(--os-header-bg);
@@ -271,7 +280,7 @@ os-panel .side-panel-body form.clr-form:not(.clr-row) textarea.clr-textarea {
  * Clarity의 14px 기본 스케일에서 한 단계만 올려, Console의 폼·표·보조 설명을
  * 확대하되 기존 rem 기반 간격과 컴포넌트 비율은 그대로 유지한다. */
 html { font-size: 15px; }
-html, body { height: 100%; margin: 0; background: var(--os-surface-1); font-family: var(--os-font) !important; }
+html, body { height: 100%; margin: 0; background: var(--os-surface-1); font-family: var(--os-font); font-synthesis-weight: none; }
 body { letter-spacing: 0.16px; color: var(--os-ink); }
 
 /* 접근성 기본선: 사용자 동작/대비 설정을 존중한다. */
@@ -289,9 +298,11 @@ body { letter-spacing: 0.16px; color: var(--os-ink); }
   .label { border: 1px solid CanvasText !important; }
 }
 
-/* IBM Plex 단일화 — Clarity 기본 Metropolis 전면 덮기(한·영 모두 IBM Plex). 아이콘은 SVG라 영향 없음. */
-body * { font-family: var(--os-font) !important; }
-body code, body kbd, body pre, body samp, .os-mono { font-family: var(--os-font-mono) !important; }
+/* Form controls do not consistently inherit body fonts; code keeps its own family. */
+button, input, select, textarea { font-family: var(--os-font); }
+code, kbd, pre, samp, .os-mono { font-family: var(--os-font-mono); }
+/* Syntax-highlighted descendants inherit Mono rather than reverting to the UI face. */
+code span, pre span { font-family: inherit; }
 
 /* [예외 등록 #3] 밴드 라벨(운영/구축/전달) ≈ ACC "Pinned" 섹션 라벨 — 라이트 nav용 그레이. */
 .os-band-label {
@@ -446,7 +457,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .os-sub { color: var(--os-muted); font-size: 0.7rem; margin: 0.3rem 0 0.8rem; }
 .os-engine { font-size: 0.6rem; color: var(--os-muted); font-weight: 400; margin-left: 0.4rem; }
 .os-kv td:first-child { width: 110px; color: var(--os-muted); }
-.os-mono { font-family: monospace; font-size: 0.62rem; }
+.os-mono { font-family: var(--os-font-mono); font-size: 0.62rem; }
 
 /* 감사 접근성 기준: 보조·메타 텍스트도 12px 미만으로 축소하지 않는다. */
 .os-page .os-sub,
@@ -549,7 +560,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .manual-hero h1 {
   margin: 0;
   color: #fff;
-  font-family: Georgia, 'Times New Roman', serif !important;
+  font-family: var(--os-font);
   font-size: 36px;
   font-weight: 400;
   line-height: 44px;
@@ -633,7 +644,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .manual-article h1,
 .manual-copy h2,
 .manual-copy h3 {
-  font-family: Georgia, 'Times New Roman', serif !important;
+  font-family: var(--os-font);
 }
 .manual-band-heading h2 { margin: 2px 0 0; font-size: 24px; font-weight: 600; line-height: 32px; }
 .manual-band-card > p { margin: 10px 0 18px 32px; color: #625f5a; font-size: 16px; line-height: 24px; }
@@ -655,7 +666,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
   cursor: pointer;
 }
 .manual-band-card li button:hover strong { color: var(--manual-teal); text-decoration: underline; }
-.manual-doc-number { color: var(--manual-ochre); font-family: Georgia, serif !important; font-size: 24px; line-height: 32px; }
+.manual-doc-number { color: var(--manual-ochre); font-family: var(--os-font); font-size: 24px; line-height: 32px; }
 .manual-band-card li strong { display: block; font-size: 16px; font-weight: 600; line-height: 22px; }
 .manual-band-card li small { display: block; margin-top: 2px; color: #66625d; font-size: 14px; font-weight: 400; line-height: 20px; }
 .manual-band-card li os-cicon { color: var(--manual-teal); }
@@ -680,7 +691,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
   cursor: pointer;
 }
 .manual-small-card:hover { transform: translateY(-2px); border-color: #aaa49b; }
-.manual-small-card > span { color: var(--manual-ochre); font-family: Georgia, serif !important; font-size: 28px; line-height: 34px; }
+.manual-small-card > span { color: var(--manual-ochre); font-family: var(--os-font); font-size: 28px; line-height: 34px; }
 .manual-small-card strong { margin-top: 2px; font-size: 18px; font-weight: 600; line-height: 24px; }
 .manual-small-card small { margin: 8px 0 28px; color: #66625d; font-size: 14px; line-height: 20px; }
 .manual-small-card os-cicon { position: absolute; left: 24px; bottom: 20px; color: var(--manual-teal); }
@@ -710,7 +721,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .manual-hit p { margin: 0; color: #625f5a; font-size: 15px; line-height: 22px; }
 .manual-hit small { display: block; margin-top: 14px; color: #77726c; font-size: 13px; line-height: 18px; }
 .manual-empty { padding: 3rem 1rem; text-align: center; }
-.manual-empty h3 { margin: 0; font-family: Georgia, serif !important; font-size: 24px; font-weight: 400; line-height: 32px; }
+.manual-empty h3 { margin: 0; font-family: var(--os-font); font-size: 24px; font-weight: 400; line-height: 32px; }
 .manual-empty p { color: #625f5a; font-size: 16px; line-height: 24px; }
 
 .manual-loading,
@@ -728,7 +739,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
   color: #fff;
 }
 .manual-reader-head .manual-shell-width { width: calc(100% - 48px); max-width: none; margin: 0; padding-left: 52px; display: block; }
-.manual-reader-head strong { display: block; margin-top: 3px; font-family: Georgia, 'Times New Roman', serif !important; font-size: 32px; font-weight: 400; line-height: 38px; }
+.manual-reader-head strong { display: block; margin-top: 3px; font-family: var(--os-font); font-size: 32px; font-weight: 400; line-height: 38px; }
 .manual-back { padding: 0; border: 0; background: transparent; color: #fff; cursor: pointer; font-size: 12px; font-weight: 600; line-height: 18px; }
 .manual-reader {
   width: 100%;
@@ -776,7 +787,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .manual-eyebrow { color: var(--manual-teal); }
 .manual-article h1 {
   margin: 6px 0 14px;
-  font-family: 'IBM Plex Sans', 'IBM Plex Sans KR', Arial, sans-serif !important;
+  font-family: var(--os-font);
   font-size: 32px;
   font-weight: 700;
   line-height: 40px;
@@ -786,7 +797,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .manual-copy { border-top: 0; padding-top: 0; }
 .manual-copy h2 {
   margin: 30px 0 20px;
-  font-family: 'IBM Plex Sans', 'IBM Plex Sans KR', Arial, sans-serif !important;
+  font-family: var(--os-font);
   font-size: 30px;
   font-weight: 700;
   line-height: 38px;
@@ -795,7 +806,7 @@ clr-datagrid .datagrid-cell, clr-datagrid .datagrid-column { border-color: var(-
 .manual-copy h3 {
   margin: 28px 0 10px;
   color: #075f74;
-  font-family: 'IBM Plex Sans', 'IBM Plex Sans KR', Arial, sans-serif !important;
+  font-family: var(--os-font);
   font-size: 18px;
   font-weight: 700;
   line-height: 25px;

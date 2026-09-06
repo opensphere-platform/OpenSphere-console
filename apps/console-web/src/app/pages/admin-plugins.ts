@@ -1161,7 +1161,7 @@ const EXTENSION_PRIMARY_VIEWS = [
       }
 
       .os-mono {
-        font-family: monospace;
+        font-family: var(--os-font-mono);
         font-size: 0.62rem;
       }
 
@@ -1404,7 +1404,7 @@ const EXTENSION_PRIMARY_VIEWS = [
       }
       .tm {
         color: var(--os-muted);
-        font-family: monospace;
+        font-family: var(--os-font-mono);
         font-size: 0.62rem;
         margin-left: auto;
       }

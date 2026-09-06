@@ -26,7 +26,7 @@ import { Component, Input, ChangeDetectionStrategy } from '@angular/core';
       .oph-lead { margin: 0.5rem 0 0; color: var(--os-ink-muted); font-size: 0.9rem; line-height: 1.5; max-width: 62rem; }
       .oph-lead ::ng-deep p { margin: 0; }
       .oph-lead ::ng-deep code {
-        font-family: monospace; font-size: 0.85em; background: var(--os-surface-1);
+        font-family: var(--os-font-mono); font-size: 0.85em; background: var(--os-surface-1);
         padding: 0.05rem 0.3rem; border-radius: 3px;
       }
     `,

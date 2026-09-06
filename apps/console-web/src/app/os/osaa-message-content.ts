@@ -62,13 +62,13 @@ import { parseOsaaMessage } from './osaa-message-parser';
     blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #6f8f9d; background: #f5f8f9; color: #304a56; }
     hr { border: 0; border-top: 1px solid #d8e0e4; margin: 14px 0; }
     a { color: #0068b5; text-decoration: underline; text-underline-offset: 2px; }
-    .osaa-inline-code { padding: 1px 5px; border-radius: 3px; background: #edf1f3; color: #243746; font: 0.92em/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .osaa-inline-code { padding: 1px 5px; border-radius: 3px; background: #edf1f3; color: #243746; font: 0.92em/1.4 var(--os-font-mono); }
     .osaa-code-block { margin: 10px 0 14px; border: 1px solid #cbd6dc; border-radius: 5px; overflow: hidden; background: #111820; color: #edf4f7; }
-    .osaa-code-block header { display: flex; align-items: center; justify-content: space-between; min-height: 31px; padding: 0 8px 0 12px; background: #202b34; color: #c5d2d8; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .osaa-code-block header { display: flex; align-items: center; justify-content: space-between; min-height: 31px; padding: 0 8px 0 12px; background: #202b34; color: #c5d2d8; font: 12px var(--os-font-mono); }
     .osaa-code-block button { border: 0; border-radius: 3px; padding: 3px 8px; background: transparent; color: #dce7eb; cursor: pointer; }
     .osaa-code-block button:hover { background: #34434e; }
     pre { max-width: 100%; margin: 0; padding: 13px 14px; overflow-x: auto; white-space: pre; tab-size: 2; }
-    pre code { color: inherit; font: 13px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    pre code { color: inherit; font: 13px/1.55 var(--os-font-mono); }
     .osaa-table-scroll { max-width: 100%; margin: 10px 0 14px; overflow-x: auto; }
     table { width: 100%; min-width: 360px; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 7px 9px; border: 1px solid #d6dfe3; text-align: left; vertical-align: top; }

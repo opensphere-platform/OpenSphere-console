@@ -45,10 +45,10 @@ import { OsShellPage } from './system-plugins/os-shell/os-shell-page';
     }
   `,
   styles: [`
-    .os-bootstrap-error { max-width: 52rem; margin: 12vh auto; padding: 2rem; font-family: system-ui, sans-serif; color: #17233c; }
+    .os-bootstrap-error { max-width: 52rem; margin: 12vh auto; padding: 2rem; font-family: var(--os-font); color: #17233c; }
     .os-bootstrap-error pre { white-space: pre-wrap; background: #f4f6fb; padding: 1rem; border-radius: .4rem; }
     .os-bootstrap-error button { padding: .6rem 1rem; cursor: pointer; }
-    .os-authority-warning { padding: .45rem 1rem; border-bottom: 1px solid #e0a000; background: #fff4ce; color: #3d2d00; font: 600 .8rem/1.35 system-ui, sans-serif; }
+    .os-authority-warning { padding: .45rem 1rem; border-bottom: 1px solid #e0a000; background: #fff4ce; color: #3d2d00; font: 600 .8rem/1.35 var(--os-font); }
     .os-authority-warning span { margin-left: .5rem; font-weight: 400; }
   `],
 })

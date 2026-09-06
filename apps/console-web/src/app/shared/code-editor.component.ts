@@ -91,7 +91,7 @@ export class CodeEditorComponent implements AfterViewInit, OnChanges, OnDestroy 
         ...themeExt,
         EditorView.theme({
           '&': { height: '100%', fontSize: '0.78rem' },
-          '.cm-scroller': { fontFamily: `'SF Mono','Courier New',monospace`, lineHeight: '1.5' },
+          '.cm-scroller': { fontFamily: 'var(--os-font-mono)', lineHeight: '1.5' },
         }),
         EditorView.updateListener.of(u => {
           if (u.docChanged && editable) this.valueChange.emit(u.state.doc.toString());

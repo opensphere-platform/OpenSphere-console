@@ -58,7 +58,7 @@ interface IdentityPayload { users?: IdentityUser[]; groups?: { name: string; des
     </div>
   `,
   styles: [`
-    .os-sub { color:var(--os-muted); font-size:.7rem; margin:.3rem 0 .8rem; }.os-mono { font-family:monospace; font-size:.62rem; color:var(--os-ink-muted); }.detail-h { font-size:.8rem; margin:1.1rem 0 .3rem; }.panel-actions { display:flex; gap:.5rem; align-items:center; margin-top:.6rem; }.warn-tag { color:var(--os-ink-subtle); font-size:.66rem; }.label { margin:0 .25rem .25rem 0; }.member-list { list-style:none; margin:.2rem 0; padding:0; display:flex; flex-direction:column; gap:.3rem; }.member-list li { display:flex; justify-content:space-between; gap:.6rem; padding:.25rem 0; border-bottom:1px solid var(--os-hairline); }
+    .os-sub { color:var(--os-muted); font-size:.7rem; margin:.3rem 0 .8rem; }.os-mono { font-family: var(--os-font-mono); font-size:.62rem; color:var(--os-ink-muted); }.detail-h { font-size:.8rem; margin:1.1rem 0 .3rem; }.panel-actions { display:flex; gap:.5rem; align-items:center; margin-top:.6rem; }.warn-tag { color:var(--os-ink-subtle); font-size:.66rem; }.label { margin:0 .25rem .25rem 0; }.member-list { list-style:none; margin:.2rem 0; padding:0; display:flex; flex-direction:column; gap:.3rem; }.member-list li { display:flex; justify-content:space-between; gap:.6rem; padding:.25rem 0; border-bottom:1px solid var(--os-hairline); }
   `],
 })
 export class AdminRoles implements OnInit {

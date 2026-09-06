@@ -27,6 +27,7 @@ const terminal = new Terminal({
   disableStdin: true,
   fontFamily: 'IBM Plex Mono, Cascadia Code, ui-monospace, monospace',
   fontSize: 14,
+  fontWeightBold: '600',
   lineHeight: 1.2,
   rightClickSelectsWord: true,
   scrollback: 1000,
@@ -222,7 +223,15 @@ const observer = new ResizeObserver(() => {
 });
 observer.observe(root);
 
+// Re-measure terminal cells after the bundled face loads; never change transport permissions.
+let disposed = false;
+void Promise.all([
+  document.fonts.load('400 14px "IBM Plex Mono"'),
+  document.fonts.load('600 14px "IBM Plex Mono"'),
+]).then(() => { if (!disposed) resize(); }).catch(() => { /* System Mono remains usable. */ });
+
 window.addEventListener('pagehide', () => {
+  disposed = true;
   if (attached) post({ type: 'detach' });
   clearPendingInput();
   observer.disconnect();

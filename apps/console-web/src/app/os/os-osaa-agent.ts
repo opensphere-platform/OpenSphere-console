@@ -383,7 +383,7 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
         border-bottom: 1px solid #e5e7eb; background: #fff; color: #1f2733;
       }
       .osaa-chat-title span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.76rem; font-weight: 600; }
-      .osaa-chat-title span:last-child { flex: 0 0 auto; color: #6b7280; font-family: monospace; font-size: 0.56rem; }
+      .osaa-chat-title span:last-child { flex: 0 0 auto; color: #6b7280; font-family: var(--os-font-mono); font-size: 0.56rem; }
       .osaa-history {
         flex: 0 0 auto; max-height: 13rem; overflow: auto;
         border-bottom: 1px solid #e5e7eb; background: #fff;
@@ -415,7 +415,7 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
       .osaa-user .osaa-bubble { background: #1f6feb; color: #fff; border-color: #1f6feb; }
       .osaa-system .osaa-bubble { background: #eef2f7; color: #566174; border-color: #dfe5ee; }
       .osaa-content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.73rem; line-height: 1.55; }
-      .osaa-meta { margin-top: 0.35rem; font-size: 0.56rem; color: #7a8496; font-family: monospace; }
+      .osaa-meta { margin-top: 0.35rem; font-size: 0.56rem; color: #7a8496; font-family: var(--os-font-mono); }
       .osaa-user .osaa-meta { color: rgba(255, 255, 255, 0.75); }
       .osaa-context-inspector {
         margin-top: 0.45rem; border: 1px solid #dde4ee; border-radius: 6px; background: #f8fafc;
@@ -445,7 +445,7 @@ const R2D2_CHAT_TIMEOUT_MS = 120000;
       .osaa-source-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
       .osaa-source-ref {
         max-width: 13rem; overflow: hidden; text-overflow: ellipsis;
-        color: #718096; font-family: monospace; white-space: nowrap;
+        color: #718096; font-family: var(--os-font-mono); white-space: nowrap;
       }
       .osaa-thinking { display: inline-flex; gap: 0.22rem; align-items: center; min-width: 48px; min-height: 31px; }
       .osaa-thinking span {
