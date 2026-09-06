@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'), assert=require('node:assert/strict');
 const {hissIntent,createHisLifecycleClient,renderHisResult}=require('./his-lifecycle-client');
+const {durableHisRequestId}=require('./his-lifecycle-client');
 const actor={subject:'user-a',bearerToken:'unit-test-only'};
 const context={sessionId:'dialogue-a',clientRequestId:'11111111-1111-4111-8111-111111111111',userInstruction:'HISS cert-manager를 설치해줘'};
 const revision='sha256:'+'a'.repeat(64);
@@ -60,4 +61,24 @@ test('accepted/unknown/failed is not completed; removal requires live postcondit
   assert.match(renderHisResult(value),/완료가 아닙니다/);
   assert.doesNotMatch(renderHisResult({...value,operation:{...value.operation,phase:'Removed'}}),/삭제 결과 검증 완료/);
   assert.match(renderHisResult({...value,removalVerified:true,operation:{...value.operation,phase:'Removed'}}),/삭제 결과 검증 완료/);
+});
+
+test('durable recovery keeps the same UUID across retries and separates distinct requests',()=>{
+  const a=durableHisRequestId('retry-key-111111111');
+  assert.match(a,/^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  assert.equal(a,durableHisRequestId('retry-key-111111111'));
+  assert.notEqual(a,durableHisRequestId('retry-key-222222222'));
+});
+test('historical replay performs only a fresh read after receipt, never another mutation',async()=>{
+  const calls=[];
+  const client=createHisLifecycleClient({baseUrl:'http://shell.test',fetchImpl:async(url,init)=>{
+    const req=JSON.parse(init.body); calls.push(req.command);
+    if(req.command==='hiss.install') return new Response(JSON.stringify({schema:'opensphere.shell-command/v1',controlPlane:'OS-Shell',requestId:req.requestId,command:req.command,replayed:true,data:{...receipt(),observedAt:'2001-01-01'}}));
+    return shellResponse(init);
+  }});
+  const result=await client.execute(actor,{id:'cert-manager',action:'install'},context);
+  assert.deepEqual(calls,['hiss.install','hiss.inspect']);
+  assert.equal(result.receiptReplayed,true);
+  assert.equal(result.commandRequestId,context.clientRequestId);
+  assert.match(renderHisResult(result),/재실행하지 않고 현재 상태/);
 });

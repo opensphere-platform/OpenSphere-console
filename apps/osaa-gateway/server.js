@@ -64,7 +64,7 @@ const {
 const { SOURCE_TOOL_NAMES, groundCanonicalSourceAnswer } = require('./r2d2-source-grounding');
 const { requiresConsoleInstallationSummary, consoleInstallationObservation, installationMutationReadiness } = require('./console-installation-observation');
 const { installationIntent, createModuleInstallationClient, renderInstallationResult, installationFailure, MODULE_INSTALLATION_TOOL_NAMES } = require('./module-installation-client');
-const {IDS: HISS_IDS, HISS_TOOL_NAMES, hissIntent, createHisLifecycleClient, hissFailure, renderHisResult} = require('./his-lifecycle-client');
+const {IDS: HISS_IDS, HISS_TOOL_NAMES, hissIntent, createHisLifecycleClient, hissFailure, renderHisResult, durableHisRequestId} = require('./his-lifecycle-client');
 const {
   OS_SHELL_DEPLOYMENTS,
   buildManualAccessDiagnosis,
@@ -9659,7 +9659,7 @@ async function durableHisRecover(inputs, actor) {
   if (String(inputs.confirmation || '') !== `recover HISS ${id}`) throw { code: 400, msg: `exact human confirmation required: recover HISS ${id}` };
   const result = await executeOwnerControlAction('osaa.his.lifecycle', {
     id, action: 'recover', confirm: inputs.confirmation, reason: inputs.reason,
-  }, actor);
+  }, actor, {clientRequestId:durableHisRequestId(idempotencyKey)});
   return { ...result, durableIdempotencyKey: idempotencyKey };
 }
 

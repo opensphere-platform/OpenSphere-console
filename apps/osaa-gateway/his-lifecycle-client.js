@@ -1,5 +1,11 @@
 'use strict';
-const {randomUUID} = require('node:crypto');
+const {randomUUID,createHash} = require('node:crypto');
+function durableHisRequestId(key) {
+  const bytes=createHash('sha256').update(JSON.stringify(['opensphere.hiss.recover/v1',key])).digest().subarray(0,16);
+  bytes[6]=(bytes[6]&15)|0x50; bytes[8]=(bytes[8]&63)|0x80;
+  const h=bytes.toString('hex');
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
 const IDS = ['ingress-nginx','cert-manager','metrics-server','crossplane-core','kube-prometheus-stack'];
 const HISS_TOOL_NAMES = new Set(['inspect_hiss_module','execute_hiss_lifecycle']);
 const REVISION = /^sha256:[a-f0-9]{64}$/;
@@ -49,6 +55,12 @@ function createHisLifecycleClient({baseUrl, fetchImpl = fetch, signal = () => Ab
     const value = await response.json().catch(() => ({}));
     if (!response.ok) fail(response.status, String(value.message || value.error || `OS Shell HTTP ${response.status}`).slice(0,1000));
     if(value.schema!=='opensphere.shell-command/v1'||value.controlPlane!=='OS-Shell'||value.requestId!==requestId||value.command!==body.command)fail(502,'OS Shell 명령 응답을 검증하지 못했습니다.');
+    if(value.replayed===true&&route!=='inspect') {
+      // A durable receipt is historical evidence. Read current state separately;
+      // never present its original timestamp as a fresh observation or retry a write.
+      const current=await request(actor,'inspect',{id:args.id});
+      return {...current,commandRequestId:requestId,receiptReplayed:true};
+    }
     return {...project(value.data,args.id),controlPlane:'OS-Shell',commandRequestId:requestId};
   }
   async function inspect(actor, input) {
@@ -87,6 +99,7 @@ function renderHisResult(value, failure) {
     : operation ? `작업 단계: ${phases[operation.phase] || operation.phase}` : `현재 상태: ${value.state}`;
   return prefix + `${value.displayName || value.id} · ${value.chartVersion}\n${label}\n`
     + (value.controlPlane==='OS-Shell' ? '제어 경로: OS Shell\n' : '')
+    + (value.receiptReplayed ? '기존 요청을 재실행하지 않고 현재 상태를 다시 조회했습니다.\n' : '')
     + (operation ? `작업 ID: ${operation.id}\n` : '접수된 작업 없음\n')
     + (value.noChange || operation?.noChange ? '이미 요청한 상태로 확인되어 Helm 변경을 실행하지 않았습니다.\n' : '')
     + (operation?.error ? `오류: ${operation.error}\n` : '')
@@ -96,4 +109,4 @@ function renderHisResult(value, failure) {
     + (operation && !completed && !removed ? '요청 접수나 대기 상태는 완료가 아닙니다. 현재 상태를 다시 조회하세요.\n' : '')
     + `삭제 시 보존 대상: ${(value.retainedOnDelete || []).join(', ') || '소유자 정책 확인 필요'}\n[HISS에서 보기](/p/cluster-manager/his/hiss)`;
 }
-module.exports = {IDS, HISS_TOOL_NAMES, hissIntent, createHisLifecycleClient, hissFailure, renderHisResult};
+module.exports = {IDS, HISS_TOOL_NAMES, hissIntent, createHisLifecycleClient, hissFailure, renderHisResult, durableHisRequestId};
