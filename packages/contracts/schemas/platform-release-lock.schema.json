@@ -30,9 +30,14 @@
     "baseReleaseDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "changedComponents": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "uniqueItems": true,
       "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
+    "changedAuxiliaryArtifacts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["cliArtifacts", "consoleIndexContent"] }
     },
     "components": {
       "type": "object",
@@ -43,7 +48,12 @@
     "auxiliaryArtifacts": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "cliArtifacts": { "$ref": "#/$defs/artifact" } }
+      "properties": {
+        "cliArtifacts": { "$ref": "#/$defs/artifact" },
+        "osShellControl": { "$ref": "#/$defs/artifact" },
+        "osShellRuntime": { "$ref": "#/$defs/artifact" },
+        "consoleIndexContent": { "$ref": "#/$defs/artifact" }
+      }
     }
   },
   "$defs": {
@@ -53,7 +63,7 @@
       "required": ["repository", "image", "sourceRevision"],
       "properties": {
         "repository": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
-        "image": { "type": "string", "pattern": "^ghcr\\.io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$" },
+        "image": { "type": "string", "pattern": "^ghcr[.]io/opensphere-platform/[a-z0-9][a-z0-9-]*@sha256:[a-f0-9]{64}$" },
         "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
         "registryCredentialsRequired": { "type": "boolean" }
       }

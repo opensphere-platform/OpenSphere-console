@@ -269,8 +269,8 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
     if (!Array.isArray(changedAuxiliary)
       || changedAuxiliary.length !== canonicalChangedAuxiliary.length
       || changedAuxiliary.some((name, index) => name !== canonicalChangedAuxiliary[index])
-      || changedAuxiliary.some((name) => name !== 'consoleIndexContent')) {
-      throw new Error('component targetLock changedAuxiliaryArtifacts must contain only the canonical Console index artifact');
+      || changedAuxiliary.some((name) => !['cliArtifacts', 'consoleIndexContent'].includes(name))) {
+      throw new Error('component targetLock changedAuxiliaryArtifacts must contain only canonical CLI or Console index artifacts');
     }
     if (changed.length === 0 && changedAuxiliary.length === 0) {
       throw new Error('component targetLock must change at least one component or auxiliary artifact');
@@ -480,11 +480,11 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
   const evidenceComponents = evidence.components ?? {};
   const evidenceAuxiliary = evidence.auxiliaryArtifacts ?? {};
   assertClosedObject(evidenceComponents, supportedNames, 'componentEvidence.components');
-  assertClosedObject(evidenceAuxiliary, ['consoleIndexContent'], 'componentEvidence.auxiliaryArtifacts');
+  assertClosedObject(evidenceAuxiliary, ['cliArtifacts', 'consoleIndexContent'], 'componentEvidence.auxiliaryArtifacts');
   const changedComponents = Object.keys(evidenceComponents).sort();
   const changedAuxiliaryArtifacts = Object.keys(evidenceAuxiliary).sort();
   if (!targetProfile && changedAuxiliaryArtifacts.length > 0) {
-    throw new Error('Console index auxiliary artifact requires the current C_API/C_EXT component profile');
+    throw new Error('Auxiliary artifact updates require the current C_API/C_EXT component profile');
   }
   if (changedComponents.length === 0 && changedAuxiliaryArtifacts.length === 0) {
     throw new Error('componentEvidence must contain at least one changed component or auxiliary artifact');
