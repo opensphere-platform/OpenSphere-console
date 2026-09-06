@@ -8648,7 +8648,7 @@ async function chatCompletion(body, actor) {
   const userContent = latestUserContent(baseMessages);
   const canonicalSourceIntent = requiresCanonicalSourceTools(userContent);
   const moduleInstallIntent = installationIntent(userContent);
-  const hissRequest = hissIntent(userContent);
+  const hissRequest = canonicalSourceIntent ? null : hissIntent(userContent);
   const installationSummaryIntent = !moduleInstallIntent && !canonicalSourceIntent && requiresConsoleInstallationSummary(userContent);
   const extensionPresentationIntent = requiresExtensionPresentationStatus(userContent);
   const manualAccessDiagnosisIntent = requiresManualAccessDiagnosis(userContent);
