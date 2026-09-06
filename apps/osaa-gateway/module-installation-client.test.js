@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { installationIntent, createModuleInstallationClient, projectReceipt, renderInstallationResult } = require('./module-installation-client');
+const { installationIntent, createModuleInstallationClient, projectReceipt, renderInstallationResult, installationFailure } = require('./module-installation-client');
 const descriptorId = 'extension.cluster-manager';
 const catalogRevision = 'sha256:' + 'a'.repeat(64);
 const image = 'ghcr.io/opensphere-platform/opensphere-shell-cluster-manager@sha256:' + 'b'.repeat(64);
@@ -148,4 +148,17 @@ test('operator output uses readable state, existing Drawer link, and no image di
     assert.ok(!text.includes('sha256:'));
     assert.ok(text.includes('전체 제품 기능의 검증은 아직 완료하지 않았습니다'));
   }
+});
+
+test('submission failure is not hidden by an earlier successful review', () => {
+  const review = { installable: true };
+  const failure = installationFailure({ errorCode: 'StepUpRequired', message: 'private upstream diagnostic must not escape' });
+  const text = renderInstallationResult(review, failure);
+  assert.ok(text.includes('MFA'));
+  assert.ok(!text.includes('검토 완료'));
+  assert.ok(!text.includes('private upstream'));
+  const afterAcceptance = renderInstallationResult(projectReceipt(receipt('Reconciling')), installationFailure({ status: 503 }));
+  assert.ok(afterAcceptance.includes(operationId));
+  assert.ok(afterAcceptance.includes('마지막으로 확인한'));
+  assert.ok(afterAcceptance.includes('새 설치를 제출하지 말고'));
 });

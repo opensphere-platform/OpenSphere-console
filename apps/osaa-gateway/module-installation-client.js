@@ -178,10 +178,30 @@ function createModuleInstallationClient({ baseUrl, fetchImpl = fetch, readRegist
   return Object.freeze({ inspect, install, getOperation, findCurrentRequest });
 }
 
-function renderInstallationResult(result) {
-  if (!result?.operationId) return `OpenSphere-Cluster-Manager: ${result?.nextAction || (result?.installable ? '설치 검토 완료, 설치 실행은 아직 확인되지 않았습니다.' : '설치 상태 확인 필요')}\n전체 제품 기능 검증을 완료했다는 뜻은 아닙니다.`;
-  const labels = { Planned: '검토 중', Authorized: '실행 대기', Submitted: '제출됨', Reconciling: '설치 중', Applied: '준비 상태 확인 중', Verified: '패키지 설치 검증됨', Failed: '실패', Unknown: '현재 상태 확인 필요', RolledBack: '되돌려짐' };
-  return `OpenSphere-Cluster-Manager 설치 작업: ${labels[result.state] || '확인 필요'}\n작업 ID: ${result.operationId}\n${result.nextAction}\n[설치 진행 보기](${result.reviewPath})\nHISS·Ceph를 포함한 전체 제품 기능의 검증은 아직 완료하지 않았습니다.`;
+function installationFailure(error) {
+  const messages = {
+    StepUpRequired: 'MFA 인증 후 같은 요청을 다시 진행하세요.',
+    AuthenticationRequired: '현재 사용자 세션을 다시 확인하세요.',
+    PermissionDenied: '현재 사용자에게 필요한 설치 권한이 없습니다.',
+    ExplicitInstallRequestRequired: '현재 대화에서 대상이 명확한 설치 지시가 필요합니다.',
+    ValidationFailed: '요청 형식이 설치 계약과 일치하지 않습니다.',
+    CatalogNotReady: '공식 설치 목록의 필수 정보가 준비되지 않았습니다.',
+    CandidateUnavailable: '검증된 공식 Cluster Manager 설치 후보가 없습니다.',
+    RuntimeUnknown: '현재 등록 상태를 확인하지 못했습니다.',
+    StaleRevision: '설치 목록이 변경되었습니다. 다시 검토하세요.',
+    InvalidOwnerResponse: '설치 API 응답을 검증하지 못했습니다. 같은 요청으로 접수 여부를 확인하세요.',
+    AuthorityUnavailable: '설치 API 조회에 실패했습니다. 새 설치를 제출하지 말고 같은 요청으로 확인하세요.',
+  };
+  const supplied = error?.errorCode || error?.code;
+  const code = Object.hasOwn(messages, supplied) ? supplied : ({ 401: 'AuthenticationRequired', 403: 'PermissionDenied', 428: 'StepUpRequired' }[error?.status || error?.code] || 'AuthorityUnavailable');
+  return { schema: 'osaa.module-installation-failure/v1', ok: false, errorCode: code, error: messages[code] };
 }
 
-module.exports = { installationIntent, createModuleInstallationClient, projectReceipt, renderInstallationResult, MODULE_INSTALLATION_TOOL_NAMES: TOOL_NAMES };
+function renderInstallationResult(result, failure = null) {
+  const failed = failure?.schema === 'osaa.module-installation-failure/v1' ? `설치 절차를 멈췄습니다: ${failure.error}\n` : '';
+  if (!result?.operationId) return failed || `OpenSphere-Cluster-Manager: ${result?.nextAction || (result?.installable ? '설치 검토 완료, 설치 실행은 아직 확인되지 않았습니다.' : '설치 상태 확인 필요')}\n전체 제품 기능 검증을 완료했다는 뜻은 아닙니다.`;
+  const labels = { Planned: '검토 중', Authorized: '실행 대기', Submitted: '제출됨', Reconciling: '설치 중', Applied: '준비 상태 확인 중', Verified: '패키지 설치 검증됨', Failed: '실패', Unknown: '현재 상태 확인 필요', RolledBack: '되돌려짐' };
+  return failed + `${failed ? '마지막으로 확인한 ' : ''}OpenSphere-Cluster-Manager 설치 작업: ${labels[result.state] || '확인 필요'}\n작업 ID: ${result.operationId}\n${result.nextAction}\n[설치 진행 보기](${result.reviewPath})\nHISS·Ceph를 포함한 전체 제품 기능의 검증은 아직 완료하지 않았습니다.`;
+}
+
+module.exports = { installationIntent, createModuleInstallationClient, projectReceipt, renderInstallationResult, installationFailure, MODULE_INSTALLATION_TOOL_NAMES: TOOL_NAMES };

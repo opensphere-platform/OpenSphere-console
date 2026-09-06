@@ -63,7 +63,7 @@ const {
 } = require('./r2d2-prompt-boundary');
 const { SOURCE_TOOL_NAMES, groundCanonicalSourceAnswer } = require('./r2d2-source-grounding');
 const { requiresConsoleInstallationSummary, consoleInstallationObservation } = require('./console-installation-observation');
-const { installationIntent, createModuleInstallationClient, renderInstallationResult, MODULE_INSTALLATION_TOOL_NAMES } = require('./module-installation-client');
+const { installationIntent, createModuleInstallationClient, renderInstallationResult, installationFailure, MODULE_INSTALLATION_TOOL_NAMES } = require('./module-installation-client');
 const {
   OS_SHELL_DEPLOYMENTS,
   buildManualAccessDiagnosis,
@@ -8768,6 +8768,7 @@ async function chatCompletion(body, actor) {
   });
   const toolResultCache = new Map();
   const verifiedToolEvidence = new Map();
+  let moduleToolFailure = null;
   if (extensionPresentationEvidence) {
     const signature = toolCallSignature('get_extension_presentation_status', {});
     toolResultCache.set(signature, { output: extensionPresentationEvidence, ok: true });
@@ -8854,7 +8855,9 @@ async function chatCompletion(body, actor) {
           verifiedToolEvidence.set(signature, { tool: toolName, arguments: args, result: output });
         }
       } catch (error) {
-        output = { ok: false, error: error.msg || error.message || String(error) };
+        output = MODULE_INSTALLATION_TOOL_NAMES.has(toolName) ? installationFailure(error)
+          : { ok: false, error: error.msg || error.message || String(error) };
+        if (moduleInstallIntent && MODULE_INSTALLATION_TOOL_NAMES.has(toolName)) moduleToolFailure = output;
         const signature = toolCallSignature(toolName, args);
         if (!toolResultCache.has(signature) || toolName === 'get_module_installation_operation') {
           freshToolCalls += 1;
@@ -8865,8 +8868,8 @@ async function chatCompletion(body, actor) {
             agentRunId: agentRunRecorded ? requestId : null,
             toolId: `agent.${toolName || 'unknown'}`,
             target: `${args.namespace || 'opensphere'}/${args.name || args.pod || toolName || 'unknown'}`,
-            permissionCode: 'osaa.system.read',
-            reason: 'LLM read-tool loop',
+            permissionCode: MODULE_INSTALLATION_TOOL_NAMES.has(toolName) ? 'console.extension.install' : 'osaa.system.read',
+            reason: MODULE_INSTALLATION_TOOL_NAMES.has(toolName) ? 'Module installation tool failed; no further submission in this turn' : 'LLM read-tool loop',
             input: args,
             status: 'failed',
             result: output,
@@ -8899,7 +8902,9 @@ async function chatCompletion(body, actor) {
         name: toolName,
         content: toolResultContent(output),
       });
+      if (moduleToolFailure) break;
     }
+    if (moduleToolFailure) break;
     if (freshToolCalls === 0) {
       audit(actor, 'agent-tool-loop-deduplicated', key.id, 'ok', `round=${rounds}; repeated_calls=${toolCalls.length}`);
       break;
@@ -8910,6 +8915,7 @@ async function chatCompletion(body, actor) {
     }
   }
 
+  if (moduleToolFailure) content = renderInstallationResult(null, moduleToolFailure);
   if (!content) {
     const evidence = { redactedJson: redactToolText(JSON.stringify(Array.from(verifiedToolEvidence.values()))).slice(0, 22000) };
     const finalMessages = [...systemMessages, {
@@ -9033,8 +9039,8 @@ async function chatCompletion(body, actor) {
   const installationEvidence = [...verifiedToolEvidence.values()].filter(value => MODULE_INSTALLATION_TOOL_NAMES.has(value.tool));
   const moduleInstallation = installationEvidence.map(value => value.result).filter(value => value?.schema === 'osaa.module-installation-operation/v1').at(-1)
     || installationEvidence.map(value => value.result).filter(value => value?.schema === 'osaa.module-installation-review/v1').at(-1);
-  if (moduleInstallation) {
-    content = renderInstallationResult(moduleInstallation);
+  if (moduleInstallation || moduleToolFailure) {
+    content = renderInstallationResult(moduleInstallation, moduleToolFailure);
   }
   if (currentFactGuard.applied) {
     audit(actor, 'current-fact-guard', `AgentRun/${requestId}`, 'blocked', currentFactGuard.state);
