@@ -92,6 +92,8 @@ function renderHisResult(value, failure) {
     + (value.noChange || operation?.noChange ? '이미 요청한 상태로 확인되어 Helm 변경을 실행하지 않았습니다.\n' : '')
     + (operation?.error ? `오류: ${operation.error}\n` : '')
     + `Helm: ${value.releaseStatus} · revision ${value.releaseRevision}\n관측 시각: ${value.observedAt}\n`
+    + (value.message ? `상태 설명: ${value.message}\n` : '')
+    + (value.executionReady === false ? `실행 준비 미완료: ${value.executionBlocker}\n` : '')
     + (operation && !completed && !removed ? '요청 접수나 대기 상태는 완료가 아닙니다. 현재 상태를 다시 조회하세요.\n' : '')
     + `삭제 시 보존 대상: ${(value.retainedOnDelete || []).join(', ') || '소유자 정책 확인 필요'}\n[HISS에서 보기](/p/cluster-manager/his/hiss)`;
 }

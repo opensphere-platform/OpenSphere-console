@@ -152,6 +152,12 @@
     },
     "removalVerified": {
       "type": "boolean"
+    },
+    "executionReady": {
+      "type": "boolean"
+    },
+    "executionBlocker": {
+      "type": "string"
     }
   }
 }
