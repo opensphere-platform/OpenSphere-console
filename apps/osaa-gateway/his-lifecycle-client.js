@@ -1,5 +1,5 @@
 'use strict';
-const {createHash} = require('node:crypto');
+const {randomUUID} = require('node:crypto');
 const IDS = ['ingress-nginx','cert-manager','metrics-server','crossplane-core','kube-prometheus-stack'];
 const HISS_TOOL_NAMES = new Set(['inspect_hiss_module','execute_hiss_lifecycle']);
 const REVISION = /^sha256:[a-f0-9]{64}$/;
@@ -37,49 +37,37 @@ function project(value, id) {
   return value;
 }
 function createHisLifecycleClient({baseUrl, fetchImpl = fetch, signal = () => AbortSignal.timeout(30000)}) {
-  async function request(actor, route, body) {
+  async function request(actor, route, args, requestId=randomUUID(), reviewRevision) {
     if (!actor?.bearerToken) fail(401, '로그인 사용자 세션이 필요합니다.');
     let response;
-    try { response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/api/hiss/${route}`, {
+    const body={command:`hiss.${route}`,arguments:args,requestId,...(reviewRevision?{reviewRevision}:{})};
+    try { response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/api/os-shell/commands`, {
       method:'POST', redirect:'error', signal:signal(),
       headers:{authorization:`Bearer ${actor.bearerToken}`, 'content-type':'application/json', accept:'application/json'},
       body:JSON.stringify(body),
     }); } catch { fail(503, 'HISS owner에 연결하지 못했습니다. 상태를 다시 조회하기 전에는 변경을 재제출하지 않습니다.'); }
     const value = await response.json().catch(() => ({}));
-    if (!response.ok) fail(response.status, String(value.error || `HISS HTTP ${response.status}`).slice(0,1000));
-    return project(value, body.id);
+    if (!response.ok) fail(response.status, String(value.message || value.error || `OS Shell HTTP ${response.status}`).slice(0,1000));
+    if(value.schema!=='opensphere.shell-command/v1'||value.controlPlane!=='OS-Shell'||value.requestId!==requestId||value.command!==body.command)fail(502,'OS Shell 명령 응답을 검증하지 못했습니다.');
+    return {...project(value.data,args.id),controlPlane:'OS-Shell',commandRequestId:requestId};
   }
   async function inspect(actor, input) {
     exact(input, ['id']);
     return request(actor, 'inspect', input);
   }
   async function execute(actor, input, context) {
-    exact(input, ['id','action','planRevision']);
-    const intent = hissIntent(context?.userInstruction);
-    if (!intent?.action || intent.id !== input.id || intent.action !== input.action
-        || !context?.sessionId || !context?.clientRequestId || !actor.subject) fail(403, '현재 사용자 메시지에 한 모듈의 설치 또는 삭제 지시가 명확해야 합니다.');
-    if (!REVISION.test(input.planRevision || '')) fail(400, '현재 상태를 검토한 revision이 필요합니다.');
-    if (intent.version) {
-      const current = await inspect(actor, {id:input.id});
-      if (intent.version.replace(/^v/, '') !== String(current.chartVersion).replace(/^v/, '')) fail(409, '요청한 버전이 서명된 고정 HISS 차트 버전과 다릅니다. 다른 버전을 임의 설치하지 않습니다.');
-    }
-    const requestKey = 'r2d2-hiss-' + createHash('sha256').update(JSON.stringify([
-      actor.subject,context.sessionId,context.clientRequestId,input.id,input.action,
-    ])).digest('hex');
-    return request(actor, input.action, {id:input.id, requestKey, planRevision:input.planRevision,
-      reason:`22 사용자 요청: ${intent.instruction.slice(0,480)}`,
-      ...(input.action === 'uninstall' ? {confirm:input.id} : {}),
-    });
-  }
-  async function executeRequested(actor, input, context) {
     exact(input, ['id','action']);
     const intent = hissIntent(context?.userInstruction);
-    if (!intent?.action || intent.id !== input.id || intent.action !== input.action)
-      fail(403, '현재 사용자 메시지에 한 모듈의 설치 또는 삭제 지시가 명확해야 합니다.');
-    // The model selects the authorized action, never copies an opaque authority
-    // revision. The owner still rejects drift between this fresh review and write.
-    const reviewed = await inspect(actor, {id:input.id});
-    return execute(actor, {...input, planRevision:reviewed.revision}, context);
+    if (!intent?.action || intent.id !== input.id || intent.action !== input.action
+        || !context?.sessionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(context?.clientRequestId||'') || !actor.subject) fail(403, '현재 사용자 메시지에 한 모듈의 설치 또는 삭제 지시가 명확해야 합니다.');
+    return request(actor, input.action, {id:input.id,
+      reason:`22 사용자 요청: ${intent.instruction.slice(0,480)}`,
+      ...(intent.version ? {chartVersion:intent.version} : {}),
+      ...(input.action === 'uninstall' ? {confirm:input.id} : {}),
+    },context.clientRequestId);
+  }
+  async function executeRequested(actor, input, context) {
+    return execute(actor,input,context);
   }
   return {inspect, execute, executeRequested};
 }
@@ -98,6 +86,7 @@ function renderHisResult(value, failure) {
   const label = completed ? '설치 상태 검증 완료' : removed ? '삭제 결과 검증 완료'
     : operation ? `작업 단계: ${phases[operation.phase] || operation.phase}` : `현재 상태: ${value.state}`;
   return prefix + `${value.displayName || value.id} · ${value.chartVersion}\n${label}\n`
+    + (value.controlPlane==='OS-Shell' ? '제어 경로: OS Shell\n' : '')
     + (operation ? `작업 ID: ${operation.id}\n` : '접수된 작업 없음\n')
     + (value.noChange || operation?.noChange ? '이미 요청한 상태로 확인되어 Helm 변경을 실행하지 않았습니다.\n' : '')
     + (operation?.error ? `오류: ${operation.error}\n` : '')

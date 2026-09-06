@@ -1,4 +1,5 @@
 import { createClusterManagerAudit } from './cluster-manager-audit.mjs';
+import {createShellCommandBridge} from './shell-command-bridge.mjs';
 import {GITHUB_OAUTH_CLIENT_ID} from './github-oauth-app.mjs';
 import {requiredImages as requiredRegistryImages} from './registry-lifecycle-contract.mjs';
 import {createGitHubRegistryAuth} from './github-registry-auth.mjs';
@@ -67,6 +68,7 @@ const identityOperations = createIdentityOperations({ store });
 const supabaseAuthUrl = String(process.env.CONSOLE_SUPABASE_AUTH_URL || 'http://opensphere-supabase-auth.opensphere-console-data.svc.cluster.local:9999');
 const supabaseStorageUrl = String(process.env.CONSOLE_SUPABASE_STORAGE_URL || 'http://opensphere-supabase-storage.opensphere-console-data.svc.cluster.local:5000');
 const supabaseServiceRoleKey = String(process.env.CONSOLE_SUPABASE_SERVICE_ROLE_KEY || '');
+let resolveCommandShellSession;
 const identitySessionBroker = createIdentitySessionBroker({
   store,
   authClient: createSupabaseAuthClient({
@@ -84,6 +86,7 @@ const identitySessionBroker = createIdentitySessionBroker({
     encryptionKey: String(process.env.CONSOLE_SESSION_ENCRYPTION_KEY || ''),
   }),
   publicOrigin,
+  resolveCommandShellSession: request => resolveCommandShellSession?.(request),
 });
 const cliIdentityBroker = createCliIdentityBroker({
   store,
@@ -165,6 +168,7 @@ const baselineMonitoringOperations = createBaselineMonitoringOperations({
   maximumResponseBytes: positiveInteger('CONSOLE_BESZEL_MAX_RESPONSE_BYTES', 524288, 1048576),
 });
 const handlerOptions = {
+  shellCommandBridge:createShellCommandBridge({baseUrl:process.env.CONSOLE_OS_SHELL_COMMAND_URL||'http://opensphere-shell-api.opensphere-console.svc.cluster.local:8080'}),
   resolveSession: identitySessionBroker.resolveSession,
   operationService,
   registryOperations,
@@ -190,6 +194,7 @@ if(shellEnabled==='true'){
   const encodedKey=String(process.env.OS_SHELL_DELEGATION_SIGNING_KEY || '');
   if(!/^[A-Za-z0-9+/]{43}=$/.test(encodedKey))throw new Error('a dedicated 32-byte Shell signing key is required');
   const broker=createShellDelegationBroker({query:pool.query.bind(pool),delegationSecret:String(process.env.OS_SHELL_DELEGATION_SECRET || ''),signingKey:Buffer.from(encodedKey,'base64')});
+  resolveCommandShellSession=broker.resolveSession;
   if(!await broker.health())throw new Error('current Shell authority migration is required before activation');
   for(const [privatePort,prefix,handler] of [
     [8444,'OS_SHELL_CREDENTIAL_AUTHORITY',createShellCredentialHandler(broker)],

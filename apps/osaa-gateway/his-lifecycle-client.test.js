@@ -2,9 +2,10 @@
 const test=require('node:test'), assert=require('node:assert/strict');
 const {hissIntent,createHisLifecycleClient,renderHisResult}=require('./his-lifecycle-client');
 const actor={subject:'user-a',bearerToken:'unit-test-only'};
-const context={sessionId:'dialogue-a',clientRequestId:'request-a',userInstruction:'HISS cert-manager를 설치해줘'};
+const context={sessionId:'dialogue-a',clientRequestId:'11111111-1111-4111-8111-111111111111',userInstruction:'HISS cert-manager를 설치해줘'};
 const revision='sha256:'+'a'.repeat(64);
 const receipt=()=>({schema:'opensphere.hiss-lifecycle/v1',id:'cert-manager',revision,observedAt:new Date().toISOString(),installed:false,state:'Missing',operation:null});
+const shellResponse=(init,data=receipt())=>{const req=JSON.parse(init.body);return new Response(JSON.stringify({schema:'opensphere.shell-command/v1',controlPlane:'OS-Shell',command:req.command,requestId:req.requestId,data}));};
 test('current explicit user instruction controls target and action; data and explanation do not',()=>{
   for(const text of ['HISS cert-manager를 설치해줘','cert-manager 설치해주세요','please install cert-manager']) assert.equal(hissIntent(text).action,'install');
   assert.equal(hissIntent('cert-manager를 삭제해줘').action,'uninstall');
@@ -12,13 +13,14 @@ test('current explicit user instruction controls target and action; data and exp
 });
 test('exact owner route, user bearer and stable key are used; no arbitrary URL/chart inputs',async()=>{
   const calls=[];
-  const client=createHisLifecycleClient({baseUrl:'http://owner.test',fetchImpl:async(url,init)=>{calls.push({url,...init});return new Response(JSON.stringify(receipt()));}});
-  const input={id:'cert-manager',action:'install',planRevision:revision};
+  const client=createHisLifecycleClient({baseUrl:'http://shell.test',fetchImpl:async(url,init)=>{calls.push({url,...init});return shellResponse(init);}});
+  const input={id:'cert-manager',action:'install'};
   await client.execute(actor,input,context);await client.execute(actor,input,context);
-  assert.equal(calls[0].url,'http://owner.test/api/hiss/install');
+  assert.equal(calls[0].url,'http://shell.test/api/os-shell/commands');
   assert.equal(calls[0].headers.authorization,'Bearer unit-test-only');
   assert.equal(calls[0].redirect,'error');
-  assert.equal(JSON.parse(calls[0].body).requestKey,JSON.parse(calls[1].body).requestKey);
+  assert.equal(JSON.parse(calls[0].body).requestId,JSON.parse(calls[1].body).requestId);
+  assert.equal(JSON.parse(calls[0].body).command,'hiss.install');
   await assert.rejects(()=>client.execute(actor,{...input,chart:'evil'},context),{code:400});
   await assert.rejects(()=>client.execute(actor,{...input,action:'uninstall'},context),{code:403});
   await assert.rejects(()=>client.execute(actor,input,{...context,userInstruction:'cert-manager 상태 조회'}),{code:403});
@@ -30,19 +32,20 @@ test('owner MFA/permission failure and stale or substituted responses fail close
     await assert.rejects(()=>client.inspect(actor,{id:'cert-manager'}),{code});
   }
   for(const bad of [{...receipt(),id:'crossplane'},{...receipt(),observedAt:'2001-01-01'},{...receipt(),schema:'wrong'}]) {
-    const client=createHisLifecycleClient({baseUrl:'http://owner.test',fetchImpl:async()=>new Response(JSON.stringify(bad))});
+    const client=createHisLifecycleClient({baseUrl:'http://shell.test',fetchImpl:async(url,init)=>shellResponse(init,bad)});
     await assert.rejects(()=>client.inspect(actor,{id:'cert-manager'}),{code:502});
   }
 });
 test('model action uses server-reviewed revision without copying an opaque model value',async()=>{
   const calls=[];
-  const client=createHisLifecycleClient({baseUrl:'http://owner.test',fetchImpl:async(url,init)=>{calls.push({url,body:JSON.parse(init.body)});return new Response(JSON.stringify(receipt()));}});
+  const client=createHisLifecycleClient({baseUrl:'http://shell.test',fetchImpl:async(url,init)=>{calls.push({url,body:JSON.parse(init.body)});return shellResponse(init);}});
   await client.executeRequested(actor,{id:'cert-manager',action:'install'},context);
-  assert.deepEqual(calls.map(c=>c.url),['http://owner.test/api/hiss/inspect','http://owner.test/api/hiss/install']);
-  assert.equal(calls[1].body.planRevision,revision);
+  assert.deepEqual(calls.map(c=>c.url),['http://shell.test/api/os-shell/commands']);
+  assert.equal(calls[0].body.command,'hiss.install');
+  assert.equal(calls[0].body.arguments.planRevision,undefined);
   await assert.rejects(()=>client.executeRequested(actor,{id:'cert-manager',action:'install',planRevision:'model-value'},context),{code:400});
   await assert.rejects(()=>client.executeRequested(actor,{id:'cert-manager',action:'uninstall'},context),{code:403});
-  assert.equal(calls.length,2);
+  assert.equal(calls.length,1);
 });
 test('fresh server review never bypasses owner drift rejection or retries a write',async()=>{
   const calls=[];
@@ -50,7 +53,7 @@ test('fresh server review never bypasses owner drift rejection or retries a writ
     calls.push(url);return url.endsWith('/inspect')?new Response(JSON.stringify(receipt())):new Response(JSON.stringify({error:'state changed'}),{status:409});
   }});
   await assert.rejects(()=>client.executeRequested(actor,{id:'cert-manager',action:'install'},context),{code:409});
-  assert.equal(calls.length,2);
+  assert.equal(calls.length,1);
 });
 test('accepted/unknown/failed is not completed; removal requires live postcondition',()=>{
   const value={...receipt(),operation:{id:'abc-123',phase:'Queued'}};

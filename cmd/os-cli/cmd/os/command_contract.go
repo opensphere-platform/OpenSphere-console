@@ -36,6 +36,7 @@ type commandArity struct {
 }
 
 var commandDefinitions = []commandDefinition{
+	{Name: "shell", Summary: "OS Shell 공통 명령 조회·실행", Usage: []string{"os shell commands", "os shell execute <command> --id MODULE --reason TEXT [--confirm MODULE]", "os shell execute <command> --file arguments.json [--request-id UUID]"}, Options: []string{"--id MODULE", "--reason TEXT", "--confirm MODULE", "--chart-version VERSION", "--file PATH", "--request-id UUID", "--review-revision SHA256"}},
 	{Name: "login", Summary: "브라우저 승인으로 관리자 장치 신뢰 등록", Usage: []string{"os login [--console URL] [--label DEVICE]"}, Options: []string{"--console URL", "--label DEVICE", "--registry URL", "--api URL", "--identity URL", "--web"}},
 	{Name: "whoami", Summary: "현재 사용자·장치·역할 확인", Usage: []string{"os whoami"}},
 	{Name: "logout", Summary: "서버 장치 신뢰와 로컬 보안 키 폐기", Usage: []string{"os logout"}},
@@ -70,6 +71,7 @@ var commandDefinitions = []commandDefinition{
 // by the longest command/subcommand prefix and form the authoritative option
 // allow-list for native commands.
 var nativeOptionRules = map[string]map[string]bool{
+	"shell": {}, "shell commands": {}, "shell execute": {"id": true, "reason": true, "confirm": true, "chart-version": true, "file": true, "request-id": true, "review-revision": true},
 	"login":                       {"console": true, "label": true, "registry": true, "api": true, "identity": true, "web": false},
 	"whoami":                      {},
 	"logout":                      {},
@@ -154,6 +156,7 @@ var nativeOptionRules = map[string]map[string]bool{
 }
 
 var nativeArityRules = map[string]commandArity{
+	"shell": {1, 1}, "shell commands": {0, 0}, "shell execute": {1, 1},
 	"login": {0, 0}, "whoami": {0, 0}, "logout": {0, 0}, "status": {0, 0}, "health": {0, 0}, "doctor": {0, 0},
 	"describe": {1, 1}, "events": {0, 0}, "registry": {0, 0}, "get": {1, 2}, "plan": {0, 0}, "plan list": {0, 0}, "plan show": {1, 1}, "plan delete": {1, 1}, "apply": {1, 1},
 	"rollback": {1, 1}, "support-bundle": {0, 0}, "update": {0, 0}, "completion": {1, 1}, "version": {0, 0},

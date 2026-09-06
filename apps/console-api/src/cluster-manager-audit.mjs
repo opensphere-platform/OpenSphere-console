@@ -15,8 +15,9 @@ export function validateClusterManagerEvent(body) {
 export function createClusterManagerAudit({query}) {
   return async ({session, body}) => {
     validateClusterManagerEvent(body);
-    if (session.credentialType !== 'owner-access' || !session.permissions.includes('console.role.admin')) fault(403, 'Current Console administrator owner credential required');
-    const result = await query('SELECT console_audit.append_cluster_manager_event($1::uuid,$2::uuid,$3::bigint,$4::bigint,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text) AS receipt',
+    if ((!['owner-access','cli-device'].includes(session.credentialType)&&session.credentialKind!=='web_shell') || !session.authorityFresh || !session.permissions.includes('console.role.admin')) fault(403, 'Current Console administrator owner credential required');
+    const fn=session.credentialType==='cli-device'?'append_cluster_manager_cli_event':'append_cluster_manager_event';
+    const result = await query(`SELECT console_audit.${fn}($1::uuid,$2::uuid,$3::bigint,$4::bigint,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text) AS receipt`,
       [session.sessionId,session.subjectId,session.permissionRevision,session.revokeEpoch,body.action,body.target,body.outcome,body.reason,body.correlationId,body.metadataDigest]);
     const receipt = result.rows?.[0]?.receipt;
     if (!receipt?.eventId) throw Object.assign(new Error('Cluster Manager audit persistence unavailable'),{status:503,code:'AuthorityUnavailable'});

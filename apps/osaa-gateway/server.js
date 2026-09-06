@@ -7359,6 +7359,14 @@ function requireOwnerActionId(value, allowed = null) {
   return id;
 }
 
+async function shellHisCommand(actor, command, args, context) {
+  const requestId=context.clientRequestId||randomUUID();
+  const result=await fixedOwnerPost(process.env.OS_SHELL_COMMAND_URL||'http://opensphere-shell-api.opensphere-console.svc.cluster.local:8080',
+    '/api/os-shell/commands',actor,{command,arguments:args,requestId},'OS Shell');
+  if(result.schema!=='opensphere.shell-command/v1'||result.controlPlane!=='OS-Shell'||result.requestId!==requestId||result.command!==command)throw {code:502,msg:'Invalid OS Shell command receipt'};
+  return {...result.data,controlPlane:'OS-Shell',commandRequestId:requestId};
+}
+
 async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
   actor = await currentDelegatedActor(actor);
   if (!OSAA_OWNER_ACTION_TOOL_IDS.has(toolId)) throw { code: 403, msg: 'tool is not an approved owner control-plane action' };
@@ -7476,7 +7484,7 @@ async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
     const id = requireOwnerActionId(inputs.id, OSAA_HIS_VALIDATION_IDS);
     requireConfirm(inputs.confirm, `validate HISS ${id}`);
     owner = 'Cluster Manager HISS'; target = `HISS/${id}`;
-    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/hiss/validate', actor, { id, reason }, owner);
+    response = await shellHisCommand(actor, 'hiss.validate', {id,reason}, context);
   } else if (toolId === 'osaa.his.lifecycle') {
     requireClosedOwnerInputs(inputs, ['id', 'action', 'revision', 'confirm', 'reason']);
     const id = requireOwnerActionId(inputs.id, OSAA_HIS_MANAGED_IDS);
@@ -7496,7 +7504,7 @@ async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
     }
     requireConfirm(inputs.confirm, expected);
     owner = 'Cluster Manager HISS'; target = `HISS/${id}`;
-    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, `/api/hiss/${action}`, actor, payload, owner);
+    response = await shellHisCommand(actor, `hiss.${action}`, payload, context);
   } else if (toolId === 'osaa.his.observability.configure') {
     requireClosedOwnerInputs(inputs, ['config', 'resetData', 'confirm', 'reason']);
     const ownerCapabilities = await osaaHisOwnerCapabilities(actor);
@@ -7506,9 +7514,12 @@ async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
     const expected = hisObservabilityConfirmation(config, inputs.resetData);
     requireConfirm(inputs.confirm, expected);
     owner = 'Cluster Manager HISS'; target = 'HISS/kube-prometheus-stack';
-    response = await fixedOwnerPost(CLUSTER_MANAGER_URL, '/api/hiss/osaa/observability/configure', actor, {
-      config, resetData: inputs.resetData, confirm: inputs.confirm, reason,
-    }, owner, 600000);
+    response = await shellHisCommand(actor, 'hiss.observability.configure', {
+      id:'kube-prometheus-stack',config,resetData:inputs.resetData,reason,
+      // These phrases translate the exact, already checked human confirmation.
+      resetConfirmation:inputs.resetData?'RESET OBSERVABILITY DATA':'',
+      publicConfirmation:config.grafana.exposureMode==='PublicIngress'?'ENABLE PUBLIC GRAFANA':'',
+    }, context);
   } else if (toolId === 'osaa.ceph.connect') {
     requireClosedOwnerInputs(inputs, ['importRef', 'confirm', 'reason']);
     const ownerCapabilities = await osaaCephOwnerCapabilities(actor);
@@ -8230,7 +8241,7 @@ async function executeAgentTool(name, args, actor, context = {}) {
       permissionCode = name === 'execute_hiss_lifecycle' ? 'osaa.action.execute.high' : 'osaa.system.read';
       assertPermission(actor, permissionCode);
       if (name === 'execute_hiss_lifecycle') assertUserMutationAssurance(actor, 'HISS lifecycle action', C_AI_RUNTIME_PROFILE);
-      const client = createHisLifecycleClient({baseUrl:CLUSTER_MANAGER_URL, signal:() => boundedSignal(30000)});
+      const client = createHisLifecycleClient({baseUrl:process.env.OS_SHELL_COMMAND_URL||'http://opensphere-shell-api.opensphere-console.svc.cluster.local:8080', signal:() => boundedSignal(30000)});
       result = name === 'inspect_hiss_module' ? await client.inspect(actor, input) : await client.executeRequested(actor, input, context);
       break;
     }

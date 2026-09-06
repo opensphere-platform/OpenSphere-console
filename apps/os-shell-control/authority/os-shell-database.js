@@ -11,6 +11,8 @@ const {
 const EXACT_REVISION = /^sha256:[a-f0-9]{64}$/;
 const HEALTH_CONTRACT = Object.freeze({
   api: Object.freeze([
+    'console_shell.claim_command(uuid,uuid,uuid,text,text,text)',
+    'console_shell.finish_command(uuid,uuid,text,jsonb)',
     'console_shell.current_shell_permission_revision(uuid)',
     'console_shell.get_shell_feature_state()',
     'console_shell.create_shell_session(uuid,uuid,uuid,text,text,text,text,timestamptz,timestamptz,jsonb)',

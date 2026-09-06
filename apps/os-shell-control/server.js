@@ -13,6 +13,8 @@ const { verifyOsShellAdmission } = require('./authority/os-shell-admission');
 const { createOsShellConsoleOwnerAdmission } = require('./authority/console-owner-admission');
 const { verifyOsShellContextJws } = require('./authority/os-shell-context');
 const { loadConfig } = require('./config');
+const { createCommandService } = require('./commands');
+const { createCommandLedger } = require('./command-ledger');
 const { createKubernetesClient, validatedRuntimeIdentity } = require('./kubernetes');
 const { buildRuntimePod, shellPodName, USER_NAMESPACE_POLICY } = require('./runtime-template');
 
@@ -183,6 +185,8 @@ function createControl({ config = loadConfig(), database, kubernetes,
   }) : null;
   const kube = kubernetes || (config.enabled && config.mode === 'reconciler' ? createKubernetesClient() : null);
   const active = new Map();
+  const commands = config.targetOwnerAdmission ? createCommandService({identityUrl:config.consoleOwnerAuthorityURL,
+    clusterManagerUrl:config.clusterManagerURL,ledger:pool?createCommandLedger((sql,values)=>pool.query(sql,values)):null}) : null;
   let lastReconcileSuccess = 0;
 
   async function componentReadiness() {
@@ -325,13 +329,20 @@ function createControl({ config = loadConfig(), database, kubernetes,
             nextAction: 'Restore CBSS database/RPC, exact release projection, and reconciler authority.' } });
       }
       if (!config.enabled) throw Object.assign(new Error('OS Shell control disabled'), { status: 503 });
+      if (path === '/api/os-shell/commands' && ['GET','POST'].includes(req.method)) {
+        if (!commands || config.mode !== 'api') throw Object.assign(new Error('OS Shell command service unavailable'), {status:503});
+        if (new URL(req.url,'http://control').search) throw Object.assign(new Error('command query is not supported'), {status:400});
+        if (req.method === 'GET') return json(res,200,await commands.catalog(req));
+        const result = await commands.execute(req,await readBody(req));
+        return json(res,result.status,result.body);
+      }
       const internalPath = path === '/internal/runtime/register' || path.startsWith('/api/os-shell/runtime/');
       if (internalPath && !req.socket.encrypted) throw Object.assign(new Error('internal runtime routes require TLS'), { status: 404 });
       if (!internalPath && req.socket.encrypted) throw Object.assign(new Error('browser routes are not served on the internal listener'), { status: 404 });
       if (path === '/internal/runtime/register' && req.method === 'POST') return await registerRuntime(req, res);
       if (path.startsWith('/api/os-shell/runtime/') && req.method === 'POST') return await runtimeApi(req, res, path);
       const claims = await admission(req, config, targetAdmission); return await browserApi(req, res, path, claims);
-    } catch (error) { return json(res, status(error), { error: error.code || 'ShellControlFailed', message: error.message || 'OS Shell control failed' }); }
+    } catch (error) { return json(res, status(error), { error: error.code || 'ShellControlFailed', message: error.message || 'OS Shell control failed', ...(path === '/api/os-shell/commands' ? {controlPlane:'OS-Shell',sideEffect:error.sideEffect||'none'} : {}) }); }
   }
 
   async function reprojectStaleRuntime(row) {

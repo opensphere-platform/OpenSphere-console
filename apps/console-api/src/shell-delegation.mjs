@@ -77,7 +77,7 @@ const readRoutes=[/^\/api\/identity(?:\/me|\/supabase\/status|\/audit)?$/, /^\/a
  /^\/api\/platform\/changes(?:\/[0-9a-f-]{36})?$/, /^\/api\/monitoring\/baseline\/v1\/(?:data-health|nodes)$/,
  /^\/api\/catalog\/entities(?:\/[^/]+)?$/, /^\/api\/admin\/(?:plugins\/(?:events|registrations)|bindings|extensions\/(?:revocations|registry-credentials|registry-connections\/opensphere-ghcr))$/,
  /^\/api\/platform\/operations\/[0-9a-f-]{36}$/, /^\/api\/audit(?:\/events)?$/, /^\/api\/admin\/extensions\/catalog$/];
-const writeRoutes=[['POST',/^\/api\/platform\/changes(?:\/[0-9a-f-]{36}\/(?:approve|reject))?$/],
+const writeRoutes=[['POST',/^\/api\/os-shell\/commands$/],['POST',/^\/api\/platform\/changes(?:\/[0-9a-f-]{36}\/(?:approve|reject))?$/],
  ['POST',/^\/api\/admin\/extensions\/(?:inspect|install|remove|revocations)$/],
  ['POST',/^\/api\/identity\/users(?:\/[0-9a-f-]{36}\/(?:group|enabled|onboarding))?$/]];
 export function createShellConsoleHandler({broker,createHandler,handlerOptions}){
@@ -87,7 +87,7 @@ export function createShellConsoleHandler({broker,createHandler,handlerOptions})
   const raw=String(request.url||'');if(!raw.startsWith('/api/') || raw.split('?')[0].includes('%') || raw.includes('\\') || raw.split(/[/?]/).some(p=>p==='.'||p==='..'))return send(response,404,{code:'NotFound'});
   const url=new URL(raw,'https://shell.invalid');
   const introspect=url.pathname==='/api/identity/cli/introspect' && request.method==='GET' && !url.search;
-  if(!introspect && !(request.method==='GET' && readRoutes.some(r=>r.test(url.pathname))) && !writeRoutes.some(([method,r])=>request.method===method && r.test(url.pathname)))return send(response,404,{code:'NotFound'});
+  if(!introspect && !(request.method==='GET' && (url.pathname==='/api/os-shell/commands'||readRoutes.some(r=>r.test(url.pathname)))) && !writeRoutes.some(([method,r])=>request.method===method && r.test(url.pathname)))return send(response,404,{code:'NotFound'});
   const session=await broker.resolveSession(request);
   if(introspect)return send(response,200,{active:true,userId:session.subjectId,subject:session.subjectId,deviceId:null,
    groups:session.permissions.flatMap(p=>({'console.role.admin':['console-admins'],'console.role.operator':['console-operators'],'console.role.viewer':['console-viewers']})[p]||[]),permissions:session.permissions,type:'web_shell',expiresAt:session.accessTokenExpiresAt});

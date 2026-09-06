@@ -44,6 +44,7 @@ type AttestedExecutionContext struct {
 var attestedExecutionContextProvider = readAttestedExecutionContextFromAgent
 
 var nativeExecutionClasses = map[string]string{
+	"shell":          executionClassConsoleAPI,
 	"login":          executionClassLocalHost,
 	"whoami":         executionClassConsoleAPI,
 	"logout":         executionClassLocalHost,

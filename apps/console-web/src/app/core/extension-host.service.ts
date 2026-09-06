@@ -884,6 +884,20 @@ export class ExtensionHostService {
   }
 
   private async fetchForPlugin(manifest: NormalizedManifest, input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+    // The existing signed Cluster Manager consumes the native OS Shell command
+    // contract. Keep arbitrary cross-module URLs outside the plugin API proxy.
+    if (manifest.id === 'cluster-manager' && String(input) === '/api/os-shell/commands') {
+      if (init.method?.toUpperCase() !== 'POST' || typeof init.body !== 'string') {
+        throw new Error('OS Shell은 구조화된 POST 명령을 요구합니다');
+      }
+      const command = JSON.parse(init.body);
+      if (!['hiss.status','hiss.inspect','hiss.plan','hiss.install','hiss.uninstall','hiss.upgrade',
+        'hiss.recover','hiss.rollback','hiss.validate','hiss.profiles.set','hiss.observability.config',
+        'hiss.observability.plan','hiss.observability.configure'].includes(command?.command)) {
+        throw new Error('Cluster Manager의 OS Shell 명령 범위를 벗어났습니다');
+      }
+      return this.http.request('/api/os-shell/commands', init);
+    }
     const apiBase = manifest.apiBase ?? '';
     if (!apiBase) throw new Error('api:proxy는 apiBase가 필요합니다');
     const raw = input instanceof Request ? input.url : String(input);

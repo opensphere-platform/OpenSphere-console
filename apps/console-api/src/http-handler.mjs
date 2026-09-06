@@ -108,7 +108,7 @@ function errorEnvelope(error, correlationId) {
   };
 }
 
-export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformChangeTemplateOperations, platformReleaseOperations, baselineMonitoringOperations, clusterManagerAudit, health = async () => true }) {
+export function createConsoleApiHandler({ resolveSession, operationService, registryOperations, catalogOperations, ownerAdmissionOperations, auditOperations, identityOperations, identitySessionBroker, cliIdentityBroker, dataIdentityOperations, platformChangeOperations, platformChangeTemplateOperations, platformReleaseOperations, baselineMonitoringOperations, clusterManagerAudit, shellCommandBridge, health = async () => true }) {
   if (typeof resolveSession !== 'function') throw new TypeError('session resolver is required');
   return async function consoleApiHandler(request, response) {
     const requestedCorrelation = String(request.headers['x-os-correlation-id'] || '').trim();
@@ -155,6 +155,12 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
           throw Object.assign(new Error('OS Shell owner admission is unavailable'), { code: 'AuthorityUnavailable', status: 503 });
         }
         return sendOwnerAdmission(response, await ownerAdmissionOperations.authorizeOsShell(request, { correlationId }));
+      }
+      if (url.pathname === '/api/os-shell/commands' && ['GET','POST'].includes(request.method)) {
+        if(url.search) throw Object.assign(new Error('command query is invalid'),{code:'ValidationFailed',status:400});
+        if(!shellCommandBridge) throw Object.assign(new Error('OS Shell command bridge is unavailable'),{code:'AuthorityUnavailable',status:503});
+        const result=await shellCommandBridge({request,body:request.method==='POST'?await jsonBody(request):null,resolveSession,identitySessionBroker,correlationId});
+        return send(response,result.status,result.body);
       }
       if (url.pathname === '/api/internal/plugin-proxy-authz' && request.method === 'GET') {
         if (url.search) throw Object.assign(new Error('request query is invalid'), { code: 'ValidationFailed', status: 400 });

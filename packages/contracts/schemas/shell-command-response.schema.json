@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "controlPlane",
+    "command",
+    "requestId",
+    "owner",
+    "operationId",
+    "observedAt",
+    "data"
+  ],
+  "properties": {
+    "schema": {
+      "const": "opensphere.shell-command/v1"
+    },
+    "controlPlane": {
+      "const": "OS-Shell"
+    },
+    "command": {
+      "enum": [
+        "hiss.status",
+        "hiss.inspect",
+        "hiss.plan",
+        "hiss.install",
+        "hiss.uninstall",
+        "hiss.upgrade",
+        "hiss.recover",
+        "hiss.rollback",
+        "hiss.validate",
+        "hiss.profiles.set",
+        "hiss.observability.config",
+        "hiss.observability.plan",
+        "hiss.observability.configure"
+      ]
+    },
+    "requestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "owner": {
+      "const": "cluster-manager"
+    },
+    "operationId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "data": {
+      "type": "object"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  }
+}

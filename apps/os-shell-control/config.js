@@ -30,6 +30,7 @@ function loadConfig(mode = process.env.OS_SHELL_MODE) {
     targetOwnerAdmission: on('OS_SHELL_TARGET_OWNER_ADMISSION'),
     consoleOwnerAuthorityURL: on('OS_SHELL_TARGET_OWNER_ADMISSION') ? required('OS_SHELL_OWNER_AUTHORITY_URL') : '',
     publicOrigin: on('OS_SHELL_TARGET_OWNER_ADMISSION') ? required('OS_SHELL_PUBLIC_ORIGIN') : '',
+    clusterManagerURL: process.env.OS_SHELL_CLUSTER_MANAGER_URL || 'http://cluster-manager.opensphere-console.svc.cluster.local:8080',
     database: enabled ? database(mode) : null, admissionSecret: enabled && mode !== 'reconciler' ? required('OS_SHELL_ADMISSION_SECRET') : '',
     worker: process.env.OS_SHELL_WORKER_ID || process.env.HOSTNAME || `shell-${process.pid}`,
     namespace: process.env.OS_SHELL_SESSION_NAMESPACE || 'opensphere-shell-sessions',

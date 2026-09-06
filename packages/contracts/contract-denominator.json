@@ -97,7 +97,9 @@
     "uninstallExtensionRegistration",
     "rollbackExtensionRegistration",
     "getRegistryInventory",
-    "appendClusterManagerOwnerAudit"
+    "appendClusterManagerOwnerAudit",
+    "listShellCommands",
+    "executeShellCommand"
   ],
   "requiredActionPolicies": [
     "console.platform.change.propose@1.0",
@@ -189,7 +191,11 @@
     "console-index-content.schema.json",
     "console-index-envelope.schema.json",
     "extension-management.schema.json",
-    "cluster-manager-audit.schema.json"
+    "cluster-manager-audit.schema.json",
+    "shell-command-request.schema.json",
+    "shell-command-response.schema.json",
+    "shell-command-catalog.schema.json",
+    "shell-command-error.schema.json"
   ],
   "releaseProfiles": {
     "bootstrap-core": {

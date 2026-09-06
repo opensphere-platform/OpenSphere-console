@@ -5,7 +5,7 @@ import {createClusterManagerAudit, validateClusterManagerEvent} from '../src/clu
 import {createConsoleApiHandler} from '../src/http-handler.mjs';
 
 const event = {source:'cluster-manager',action:'HISCanaryValidationRequested',target:'HISS/network',outcome:'accepted',reason:'Verify the existing network',correlationId:'verify-network-1',metadataDigest:'sha256:'+'a'.repeat(64)};
-const session = {credentialType:'owner-access',sessionId:'22222222-2222-4222-8222-222222222222',subjectId:'11111111-1111-4111-8111-111111111111',permissions:['console.role.admin'],permissionRevision:'4',revokeEpoch:'2'};
+const session = {authorityFresh:true,credentialType:'owner-access',sessionId:'22222222-2222-4222-8222-222222222222',subjectId:'11111111-1111-4111-8111-111111111111',permissions:['console.role.admin'],permissionRevision:'4',revokeEpoch:'2'};
 
 test('owner audit binds current actor and revisions; no request-supplied actor or raw metadata',async()=>{
   let values;

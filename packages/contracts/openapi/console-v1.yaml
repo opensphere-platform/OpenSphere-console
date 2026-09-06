@@ -16,6 +16,140 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /api/os-shell/commands:
+    get:
+      operationId: listShellCommands
+      tags:
+        - Operations
+      security:
+        - BrowserSession: []
+        - CliBearer: []
+      x-opensphere-owner: C_SCTL
+      x-opensphere-requirement: CON-FR-007
+      description: >-
+        Current actor command discovery. allowed is role eligibility; actual MFA and owner preconditions are
+        checked on execution.
+      responses:
+        '200':
+          description: Closed OS Shell command catalog
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-catalog.schema.json
+        '400': &ref_0
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+        '401': &ref_1
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+        '403': &ref_2
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+        '404': &ref_3
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+        '409': &ref_4
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+        '428': &ref_5
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+        '502': &ref_6
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+        '503': &ref_7
+          description: >-
+            Validation, current authority/MFA, request conflict, or unknown execution result. Never an
+            installation-success claim.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-error.schema.json
+    post:
+      operationId: executeShellCommand
+      tags:
+        - Operations
+      security:
+        - BrowserSession: []
+        - CliBearer: []
+      x-opensphere-owner: C_SCTL
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        Mutations claim durable (actor, requestId) before dispatch; changed command/input returns 409; unknown
+        outcomes never redispatch. Read commands do not mutate.
+      description: >-
+        GUI, OS CLI and 22 share OS Shell authorization, fixed owner dispatch, receipts and failures. Browser
+        requests require exact Origin and CSRF; bearer credentials must pass current authority. MFA is required
+        except trusted HTTPS localhost + edge. Owner readiness is observed, never inferred from 202.
+      parameters:
+        - name: X-OS-CSRF-Token
+          in: header
+          required: false
+          description: Required only for browser-cookie POST requests.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/shell-command-request.schema.json
+      responses:
+        '200':
+          description: Observation, verified no-change or replayed receipt; replay is not a fresh observation.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-response.schema.json
+        '202':
+          description: Owner accepted asynchronous operation. Query hiss.inspect/status for final state.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/shell-command-response.schema.json
+        '400': *ref_0
+        '401': *ref_1
+        '403': *ref_2
+        '404': *ref_3
+        '409': *ref_4
+        '428': *ref_5
+        '502': *ref_6
+        '503': *ref_7
   /api/hiss/inspect:
     post:
       operationId: inspectHissLifecycle

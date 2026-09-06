@@ -270,6 +270,7 @@ function sessionEventLimit(value) {
 
 export function createIdentitySessionBroker({
   store,
+  resolveCommandShellSession,
   authClient,
   storageClient,
   credentialCipher,
@@ -1203,6 +1204,21 @@ export function createIdentitySessionBroker({
     async resolveSession(request, { requireCsrf = false, correlationId } = {}) {
       const authorization = String(request?.headers?.authorization || '').trim();
       if (authorization) {
+        // A Shell runtime credential remains signed, short-lived and tied to
+        // the live parent session. Only owner introspection/audit may consume it
+        // on the public listener; application commands enter the private bridge.
+        let tokenType;
+        try {tokenType=JSON.parse(Buffer.from(authorization.slice(7).split('.')[0],'base64url')).typ;} catch {}
+        if(tokenType==='opensphere-shell-delegation+jwt') {
+          const path=new URL(String(request.url||''),'http://console-api.local').pathname;
+          const marker=request.headers['x-os-owner-admission'];
+          const admitted=(request.method==='GET'&&path==='/api/identity/me'&&['os-shell-control-v1','extension-controller-v1'].includes(marker))
+            ||(request.method==='POST'&&path==='/api/internal/cluster-manager/events'&&marker==='extension-controller-v1');
+          if(!admitted||typeof resolveCommandShellSession!=='function')fail('AuthenticationRequired','Shell credential target is not admitted',401);
+          const session=await resolveCommandShellSession(request);
+          if(!session?.authorityFresh||session.revokedAt)fail('AuthenticationRequired','active delegated Shell authority is required',401);
+          return session;
+        }
         const cliMatch = authorization.match(/^Bearer ([A-Za-z0-9_-]{32,512})$/u);
         if (cliMatch) {
           if (!store?.resolveCliSession) fail('AuthenticationRequired', 'valid CLI bearer credential is required', 401);

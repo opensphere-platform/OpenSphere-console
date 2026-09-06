@@ -14,6 +14,10 @@
         "crossplane-core",
         "kube-prometheus-stack"
       ]
+    },
+    "chartVersion": {
+      "type": "string",
+      "pattern": "^v?[0-9]+[.][0-9]+[.][0-9]+$"
     }
   }
 }

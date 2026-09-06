@@ -728,7 +728,7 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
         assert(JSON.stringify(operation.security) === JSON.stringify([{OwnerAccess: []}]), 'Cluster Manager audit must accept only owner Bearer credentials');
         assert(parameters.some(entry => entry.name === 'x-os-owner-admission' && entry.required && entry.schema?.const === 'extension-controller-v1'), 'Cluster Manager audit owner marker missing');
         assert(operation.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/cluster-manager-audit.schema.json', 'Cluster Manager audit must use the closed no-secret event schema');
-      } else if (operation.operationId === 'revokeCliDevice') {
+      } else if (['revokeCliDevice','executeShellCommand'].includes(operation.operationId)) {
         assert(JSON.stringify(operation.security) === JSON.stringify([{ BrowserSession: [] }, { CliBearer: [] }]),
           'revokeCliDevice must allow only browser or short CLI bearer authority');
         assert(parameters.some((entry) => entry.name === 'X-OS-CSRF-Token' && entry.required === false),

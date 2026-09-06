@@ -617,6 +617,8 @@ func runContext(ctx context.Context, args []string, in io.Reader, out, errOut io
 		return catalog(cfg, args[1:], out)
 	case "extensions":
 		return extensions(cfg, args[1:], out)
+	case "shell":
+		return shellCommands(cfg, args[1:], in, out)
 	default:
 		return dynamic(ctx, cfg, args, in, out, errOut)
 	}

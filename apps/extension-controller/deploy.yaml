@@ -127,6 +127,9 @@ spec:
         - podSelector:
             matchLabels:
               app: opensphere-console-osaa-gateway
+        - podSelector:
+            matchLabels:
+              app: opensphere-shell-api
       ports:
         - { protocol: TCP, port: 8080 }
 ---

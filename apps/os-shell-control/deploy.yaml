@@ -137,12 +137,14 @@ spec:
             - { name: OS_SHELL_DELEGATION_SECRET, valueFrom: { secretKeyRef: { name: opensphere-shell-control-runtime, key: delegation-secret } } }
           ports: [{ name: browser-http, containerPort: 8080 }, { name: runtime-tls, containerPort: 8443 }]
           volumeMounts:
+            - { name: installation-profile, mountPath: /var/run/opensphere/installation, readOnly: true }
             - { name: api-tls, mountPath: /var/run/opensphere-shell-api-tls, readOnly: true }
             - { name: control-ca, mountPath: /var/run/opensphere-shell-control-ca, readOnly: true }
           readinessProbe: { httpGet: { path: /readyz, port: 8080 }, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: 8080 }, periodSeconds: 10 }
           securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
       volumes:
+        - { name: installation-profile, configMap: { name: opensphere-installation-lock, items: [{ key: config.json, path: config.json }] } }
         - { name: api-tls, secret: { secretName: opensphere-shell-api-tls } }
         - { name: control-ca, configMap: { name: opensphere-shell-control-ca } }
 ---
@@ -477,6 +479,7 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
+        - podSelector: { matchLabels: { app: opensphere-console-osaa-gateway } }
         - podSelector: { matchLabels: { app: opensphere-console } }
         - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
       ports: [{ protocol: TCP, port: 8080 }]
@@ -550,6 +553,9 @@ spec:
   podSelector: { matchLabels: { app: opensphere-shell-api } }
   policyTypes: [Egress]
   egress:
+    - to:
+        - podSelector: { matchLabels: { opensphere.io/extension-id: cluster-manager } }
+      ports: [{ protocol: TCP, port: 8080 }]
     - to:
         - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-console-api } }
       ports: [{ protocol: TCP, port: 8080 }]

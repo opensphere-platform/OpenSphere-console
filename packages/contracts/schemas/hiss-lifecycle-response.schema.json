@@ -158,6 +158,13 @@
     },
     "executionBlocker": {
       "type": "string"
+    },
+    "controlPlane": {
+      "const": "OS-Shell"
+    },
+    "commandRequestId": {
+      "type": "string",
+      "format": "uuid"
     }
   }
 }
