@@ -426,7 +426,7 @@
   "tier-support-entry": "Console OS Shell + 선택 기능의 HISS·권한·설치 증거. L5 Foundation 없이 진입 가능. Crossplane core가 필요하면 기존 Cluster Manager가 준비한다.",
   "tier-support-current": "원본 Foundation의 Argo CD·Crossplane 화면을 독립 소스로 추출했고 로컬 빌드·경계 테스트를 통과했습니다. 신규 신뢰 키·권한 프로필은 보안 승인 대기입니다. 실제 L4 설치·22 운용·클린 재현은 아직 완료되지 않았습니다.",
   "tier-support-exit": "L4 자체 설치·재부팅·갱신·회수와 GUI·CLI·22의 동일 명령·권한·작업 기록을 검증한다. 선택 capability별 Ready 증거를 제공하며 L5 데이터·기존 CM을 변경하지 않는다.",
-  "tier-support-gate": "L4 ACCEPTANCE",
+  "tier-support-gate": "L4 수용",
   "tier-support-source": "근거: ADR-0015 · 기존 Foundation 5e3217b · Platform Support 설계. 실행 수용과 별도인 채택 결정입니다.",
   "tier-support-task-1-id": "L4-01",
   "tier-support-task-1-title": "독립 모듈 설치·발견",
