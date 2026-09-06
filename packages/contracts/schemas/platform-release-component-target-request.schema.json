@@ -12,8 +12,12 @@
     "auxiliaryArtifacts": {
       "type": "object",
       "minProperties": 1,
-      "maxProperties": 2,
-      "propertyNames": { "enum": ["cliArtifacts", "consoleIndexContent"] },
+      "maxProperties": 4,
+      "propertyNames": { "enum": ["cliArtifacts", "consoleIndexContent", "osShellControl", "osShellRuntime"] },
+      "dependentRequired": {
+        "osShellControl": ["cliArtifacts", "osShellRuntime"],
+        "osShellRuntime": ["cliArtifacts", "osShellControl"]
+      },
       "additionalProperties": { "$ref": "#/properties/components/additionalProperties" }
     },
     "components": {

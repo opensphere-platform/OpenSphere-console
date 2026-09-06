@@ -37,7 +37,7 @@
     "changedAuxiliaryArtifacts": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "enum": ["cliArtifacts", "consoleIndexContent"] }
+      "items": { "enum": ["cliArtifacts", "consoleIndexContent", "osShellControl", "osShellRuntime"] }
     },
     "components": {
       "type": "object",

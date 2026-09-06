@@ -269,9 +269,10 @@ function validateReleaseLock(lock, { allowInstalledAgentIdentityCutover = false 
     if (!Array.isArray(changedAuxiliary)
       || changedAuxiliary.length !== canonicalChangedAuxiliary.length
       || changedAuxiliary.some((name, index) => name !== canonicalChangedAuxiliary[index])
-      || changedAuxiliary.some((name) => !['cliArtifacts', 'consoleIndexContent'].includes(name))) {
-      throw new Error('component targetLock changedAuxiliaryArtifacts must contain only canonical CLI or Console index artifacts');
+      || changedAuxiliary.some((name) => !Object.hasOwn(TARGET_AUXILIARY_ARTIFACT_REPOSITORIES, name))) {
+      throw new Error('component targetLock changedAuxiliaryArtifacts must contain only canonical Console artifacts');
     }
+    assertShellArtifactSet(changedAuxiliary);
     if (changed.length === 0 && changedAuxiliary.length === 0) {
       throw new Error('component targetLock must change at least one component or auxiliary artifact');
     }
@@ -465,6 +466,16 @@ function normalizeComponentImage(name, value, repositories = COMPONENT_REPOSITOR
   return image;
 }
 
+// The Shell controller and its admitted runtime image are one deployment
+// contract. Require the matching CLI artifact so execution and downloads do
+// not silently diverge. This validates evidence; it does not enable an executor.
+function assertShellArtifactSet(names) {
+  if (names.some(name => name === 'osShellControl' || name === 'osShellRuntime')
+      && !['cliArtifacts', 'osShellControl', 'osShellRuntime'].every(name => names.includes(name))) {
+    throw new Error('OS Shell updates require matching cliArtifacts, osShellControl and osShellRuntime together');
+  }
+}
+
 function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
   const base = validateReleaseLock(baseLock, { allowInstalledAgentIdentityCutover: true });
   if (base.channel !== 'edge' || canonicalJson(base.trust) !== canonicalJson(LOCAL_EDGE_TRUST)) {
@@ -480,9 +491,10 @@ function buildComponentReleaseLock(baseLock, evidence, now = new Date()) {
   const evidenceComponents = evidence.components ?? {};
   const evidenceAuxiliary = evidence.auxiliaryArtifacts ?? {};
   assertClosedObject(evidenceComponents, supportedNames, 'componentEvidence.components');
-  assertClosedObject(evidenceAuxiliary, ['cliArtifacts', 'consoleIndexContent'], 'componentEvidence.auxiliaryArtifacts');
+  assertClosedObject(evidenceAuxiliary, Object.keys(TARGET_AUXILIARY_ARTIFACT_REPOSITORIES), 'componentEvidence.auxiliaryArtifacts');
   const changedComponents = Object.keys(evidenceComponents).sort();
   const changedAuxiliaryArtifacts = Object.keys(evidenceAuxiliary).sort();
+  assertShellArtifactSet(changedAuxiliaryArtifacts);
   if (!targetProfile && changedAuxiliaryArtifacts.length > 0) {
     throw new Error('Auxiliary artifact updates require the current C_API/C_EXT component profile');
   }

@@ -63,6 +63,28 @@ test('CON-FR-014: an independent CLI update records exactly its artifact and pre
   ]) await assert.rejects(operations(fixture).generateComponentTarget({ session, body: { ...body, auxiliaryArtifacts } }), { code: 'ValidationFailed' });
 });
 
+test('CON-FR-007/014: a Shell update binds control, runtime and CLI while preserving other installed owners', async () => {
+  const auxiliaryArtifacts = Object.fromEntries(['cliArtifacts','osShellControl','osShellRuntime'].map((name,index)=>[name,{image:'sha256:'+String(index+5).repeat(64)}]));
+  const body = { reason:'verified matching Shell execution artifacts',sourceRevision:'b'.repeat(40),auxiliaryArtifacts };
+  const result = await operations(fixture).generateComponentTarget({session,body});
+  assert.deepEqual(result.changedComponents,[]);
+  assert.deepEqual(result.changedAuxiliaryArtifacts,['cliArtifacts','osShellControl','osShellRuntime']);
+  assert.deepEqual(result.targetLock.components,fixture.components);
+  assert.equal(contract.validateReleaseTransition(fixture,result.targetLock).releaseDigest,result.targetLock.releaseDigest);
+  const requestSchema=JSON.parse(await readFile(new URL('../../../packages/contracts/schemas/platform-release-component-target-request.schema.json',import.meta.url),'utf8'));
+  const validate=new Ajv2020({strict:false}).compile(requestSchema);assert.equal(validate(body),true);
+  for(const missing of ['cliArtifacts','osShellControl','osShellRuntime']){
+    const incomplete=structuredClone(body);delete incomplete.auxiliaryArtifacts[missing];
+    assert.equal(validate(incomplete),false);
+    await assert.rejects(operations(fixture).generateComponentTarget({session,body:incomplete}),{code:'ValidationFailed'});
+  }
+  const hidden=structuredClone(result.targetLock);hidden.changedAuxiliaryArtifacts=['cliArtifacts'];redigest(hidden);
+  assert.throws(()=>contract.validateReleaseTransition(fixture,hidden),/unlisted auxiliary artifact/);
+  const foreign=structuredClone(body);foreign.auxiliaryArtifacts.osShellControl.image='ghcr.io/other/control@sha256:'+'f'.repeat(64);
+  await assert.rejects(operations(fixture).generateComponentTarget({session,body:foreign}),{code:'ValidationFailed'});
+  assert.equal((await operations(result.targetLock).status({session})).execution.ready,false);
+});
+
 test('CON-FR-014: incomplete, expanded, mixed legacy, mutable and tampered current locks fail closed', async () => {
   const mutations = [
     lock=>delete lock.components.beszelHub,
