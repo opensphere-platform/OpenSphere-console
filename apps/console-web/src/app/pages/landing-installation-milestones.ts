@@ -16,7 +16,7 @@ export class LandingInstallationMilestones {
 
   jumpTo(id: string): void {
     // This is a local navigation action, never an installation/apply action.
-    if (!/^M0[1-8]$/.test(id)) return;
+    if (!/^(?:M0[1-8]|L4-Platform-Support)$/.test(id)) return;
     const title = this.element.nativeElement.querySelector<HTMLElement>('#milestone-title-' + id);
     const unit = this.element.nativeElement.querySelector<HTMLElement>('#milestone-' + id);
     title?.focus({ preventScroll: true });

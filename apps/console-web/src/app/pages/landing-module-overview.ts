@@ -106,6 +106,14 @@ export class LandingModuleOverview {
     ]
   },
   {
+    "id": "platform-support",
+    "name": "Platform Support",
+    "pictogram": "control-tower",
+    "groupKey": "module-support-group",
+    "summaryKey": "module-support-summary",
+    "featureKeys": ["feature-support-delivery", "feature-support-adapter", "feature-support-operations"]
+  },
+  {
     "id": "foundation",
     "name": "Foundation",
     "pictogram": "connected-ecosystem",

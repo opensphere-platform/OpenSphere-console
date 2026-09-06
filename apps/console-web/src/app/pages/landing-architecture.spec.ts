@@ -40,7 +40,7 @@ test('main index defines exactly six vertical Service Realization Layers', () =>
     'Console Backbone Layer',
     'Platform Control Layer',
     'Platform Support Layer',
-    'Platform Foundation Layer',
+    'Platform Services Layer',
     'Domain Service Layer',
   ]) {
     assert.match(realizationModel, new RegExp(name));
@@ -161,7 +161,7 @@ test('PFSS delivery page defines the full install and update authority flow', ()
     'Runtime Catalog',
     'PFSS Owner API',
     'Argo CD는 App Store가 아니며 Registry 업데이트를 스스로 선택하지 않습니다.',
-    'Registry가 모듈 후보를 고정하고, PFSS Owner가 runtime 입력을 검증하며, OSCE가 승인하고, Gitea·Argo CD가 배포한 뒤 PFSS Owner가 Instance를 운영합니다.',
+    'Registry가 후보를 고정하고 L5 Foundation이 서비스 요구와 Binding을 책임집니다.',
   ]) {
     assert.match(normalized, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }

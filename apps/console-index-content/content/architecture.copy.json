@@ -101,8 +101,8 @@
   "module-console-summary": "플랫폼 운영 콘솔",
   "module-cluster-group": "모듈 · 인프라 관리",
   "module-cluster-summary": "Kubernetes·기반 서비스·스토리지 관리",
-  "module-foundation-group": "모듈 · 공통 서비스",
-  "module-foundation-summary": "애플리케이션이 소비하는 공통 서비스 제공·관리",
+  "module-foundation-group": "공통 서비스 · L5",
+  "module-foundation-summary": "독립 티어 Platform Services의 Foundation 모듈. 서비스 요구를 Plan·Claim·Instance·Binding으로 제공하고 소비자 데이터와 회수 정책을 책임집니다.",
   "module-developer-group": "모듈 · 개발",
   "module-developer-summary": "애플리케이션 개발·실행·배포",
   "module-ai-group": "모듈 · AI 개발",
@@ -117,8 +117,8 @@
   "feature-kubernetes": "기능 · Kubernetes 관리",
   "feature-hiss": "기능 · 기반 서비스 관리 (HISS)",
   "feature-ceph": "기능 · Ceph 스토리지 관리",
-  "feature-foundation-catalog": "기능 · 공통 서비스 선택",
-  "feature-foundation-binding": "기능 · 서비스 제공·연결",
+  "feature-foundation-catalog": "서비스 Catalog · Plan · Claim",
+  "feature-foundation-binding": "Instance · Binding · 데이터 수명주기",
   "feature-developer-task": "기능 · 개발 작업",
   "feature-developer-preview": "기능 · 실행·미리보기·배포",
   "feature-ai-experiment": "기능 · AI 개발·실험",
@@ -135,5 +135,10 @@
   "naming-extension-body": "페이지·패널·배너·작업 진입점을 추가하는 방식입니다. 표시만으로 독립적인 데이터·실행 권한을 얻지 않습니다. Extensions는 이 종류만의 이름이 아니라 전체 기능을 찾고 설치·관리하는 메뉴 이름입니다.",
   "naming-tools-note": "지원 산출물의 명칭: 도구 · Tool = Setup CLI 같은 설치·개발 도구. 라이브러리 · Library = Design Kit·SDK 같은 공유 코드·자산. 참조 템플릿 · Reference Template = 제품으로 수용되지 않은 예제·골격. 이들도 기능 추가만으로 새 모듈·저장소가 되지는 않습니다.",
   "naming-axes-title": "사용 예와 10P × 6L의 관계",
-  "naming-axes-body": "Cluster Manager(모듈)의 Ceph 관리(기능)로 외부 Ceph(서비스)를 연결(연동)합니다. 이처럼 명칭은 제품·업무·포함·실행·연결·표시를 구분합니다. 10P는 업무 관점, 6L은 실현 책임의 별도 축이며 하나의 모듈이 여러 관점과 층에 걸칠 수 있습니다."
+  "naming-axes-body": "10P는 서비스 관점, 6L은 실현 계층, Module은 제품·배포 책임, Feature는 기능입니다. L4 Platform Support와 L5 Platform Services는 독립 티어이며 각각 OpenSphere-Platform-Support와 OpenSphere-Foundation이 담당합니다. 이는 7번째 Layer나 기능별 repository를 추가한다는 뜻이 아닙니다.",
+  "module-support-group": "운영 기반 · L4",
+  "module-support-summary": "독립 티어 Platform Support. 배포·동기화와 선택적 자원 adapter를 제공하고 관측·복구·정책 운영을 연결합니다. Foundation의 하위 기능이 아닙니다.",
+  "feature-support-delivery": "Argo CD · 승인된 선언 배포·동기화",
+  "feature-support-adapter": "Crossplane · 선택적 자원 adapter",
+  "feature-support-operations": "관측·복구·정책 · 기존 owner와 연동"
 }

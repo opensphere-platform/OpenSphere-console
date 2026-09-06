@@ -3,7 +3,7 @@
   "documentId": "OS-INSTALL-MILESTONES",
   "updatedAt": "2026-09-06",
   "title": "OpenSphere Setup · 설치와 제어 능력 확장",
-  "authority": "기존 승인된 제품 경계를 따르는 실행 순서 제안. 문서 작성 요청은 후속 모듈의 설치·삭제·신규 기술 도입 승인이 아니다.",
+  "authority": "2026-09-06 사용자 채택 ADR-0015: L4 Platform Support와 L5 Platform Services의 독립 티어. 설계 채택·소스 구현·실행 수용을 구분하며 과거 시험 기록을 현재 Ready로 확대하지 않는다.",
   "snapshot": {
     "at": "2026-09-06 21:10 KST",
     "context": "docker-desktop",
@@ -20,10 +20,11 @@
     "Setup CLI는 최초 Console 기반을 마련하고 종료하는 독립 실행 도구다. 이후 기능 설정·모듈 활성화는 Console의 승인·선언·Owner 실행·receipt 경로로 처리한다.",
     "공식 이미지 버전·채널·GHCR·digest 정책을 상속한다. 채널을 선택해도 실행 계획은 불변 digest에 고정하며, Setup 실행 파일 버전과 OCI artifactVersion을 혼동하지 않는다.",
     "Console의 CLI·OS Shell·OSAA/OSDST·Extension Controller·Registry·Recovery·Gitea bootstrap은 네이티브 기능이다. 별도 제품 설치로 분리하여 Console 완료 조건을 피하지 않는다.",
-    "Foundation은 필요한 서비스 자원을 선언·할당·Binding하는 책임이다. Cluster Manager의 읽기 진단과 구분한다. Foundation Owner API는 내부 역할이며 별도 OpenSphere-Foundation-Owner repository가 아니다.",
+    "L4 OpenSphere-Platform-Support는 독립 운영 기반, L5 OpenSphere-Foundation은 공통 서비스 요구·Claim·Instance·Binding·데이터 수명주기 책임이다. 하나의 설치 묶음이 아니며 필요한 capability 계약으로 연결한다.",
     "Workspace·Developer·Pulse·AI Workbench는 요구와 호환성에 따라 선택한다. 독립 실행 제품에 Workspace 설치를 일률적으로 강제하지 않는다. Design Kit는 공통 빌드 의존성이지 상시 서비스 설치 단계가 아니다.",
     "각 기능은 자신의 제어 계약을 제공한다. OS Shell이 공통 정책·기록을 집행하고 CLI·22·GUI가 같은 계약을 소비한다.",
-    "Argo CD·선택적 Crossplane adapter와 공유 관측 runtime은 L4. Crossplane core는 선택 adapter가 요구할 때만 HISS 선행 준비."
+    "Argo CD·선택적 Crossplane adapter와 공유 관측 runtime은 L4. Crossplane core는 선택 adapter가 요구할 때만 HISS 선행 준비.",
+    "Module/Feature, 10P×6L, repo명=설계 폴더, 서명·GHCR·채널·불변 버전, OS Shell 공통 제어, OsPanel Drawer·폰트·로고 정책을 상속한다. 관측/복구/정책의 기존 owner를 무조건 교체하지 않는다."
   ],
   "dependencyEdges": [
     [
@@ -79,7 +80,7 @@
     [
       "L4-Platform-Support",
       "M04",
-      "Foundation이 요구하는 배포·프로비저닝 계약"
+      "선택 서비스가 요구한 capability만; L4 전체 일괄 설치 아님"
     ]
   ],
   "milestones": [
@@ -357,17 +358,76 @@
       ]
     },
     {
+      "id": "L4-Platform-Support",
+      "repo": "OpenSphere-Platform-Support",
+      "name": "배포·동기화 · 자원 adapter · 운영 통제",
+      "phase": "L4 · 독립 운영 기반",
+      "icon": "control-tower.svg",
+      "status": "partial",
+      "state": "구현 진행 · 배포 전",
+      "required": "독립 운영 기능을 선택할 때",
+      "entry": "Console OS Shell + 선택 기능의 HISS·권한·설치 증거. L5 Foundation 없이 진입 가능. Crossplane core가 필요하면 기존 Cluster Manager가 준비한다.",
+      "exit": "L4 자체 설치·재부팅·갱신·회수와 GUI·CLI·22의 동일 명령·권한·작업 기록을 검증한다. 선택 capability별 Ready 증거를 제공하며 L5 데이터·기존 CM을 변경하지 않는다.",
+      "current": "원본 Foundation의 Argo CD·Crossplane 화면을 독립 소스로 추출했고 로컬 빌드·경계 테스트를 통과했습니다. 신규 신뢰 키·권한 프로필은 보안 승인 대기입니다. 실제 L4 설치·22 운용·클린 재현은 아직 완료되지 않았습니다.",
+      "scope": "C_SUPPORT · Foundation과 별도 repository·artifact·수명주기",
+      "sources": [
+        "ADR-0015"
+      ],
+      "tasks": [
+        {
+          "id": "L4-01",
+          "title": "독립 모듈 설치·발견",
+          "work": "기존 Argo CD·Crossplane 기능을 독립 배포물로 제공한다. 서명·채널·버전·호환성을 확인하고 Console Registry에서 발견한다.",
+          "evidence": "검증된 artifact만 활성화; L5 없는 기동·제거와 별도 업그레이드",
+          "status": "planned",
+          "observation": "소스 분리·빌드 완료 / 신뢰 등록·설치 대기"
+        },
+        {
+          "id": "L4-02",
+          "title": "Argo CD · 배포 동기화",
+          "work": "승인된 Gitea 선언과 고정 revision을 관측·동기화한다. L4가 서비스 요구나 버전을 임의 결정하지 않는다.",
+          "evidence": "실제 revision 비교, 중복 요청 기록, drift·실패 명시",
+          "status": "planned",
+          "observation": "OS Shell 명령 구현 / 실제 환경 수용 전"
+        },
+        {
+          "id": "L4-03",
+          "title": "Crossplane · 선택적 adapter",
+          "work": "provider 구성·상태는 L4. core 설치·제거는 기존 Cluster Manager. 기존 ProviderConfig를 임의 덮어쓰지 않는다.",
+          "evidence": "미선택이면 해당 없음; 동일 자원에 단일 writer, 충돌 차단",
+          "status": "planned",
+          "observation": "명령·멱등성 테스트 통과 / 실제 환경 수용 전"
+        },
+        {
+          "id": "L4-04",
+          "title": "공통 제어 계약 · GUI·CLI·22",
+          "work": "기능이 명령·입출력·위험·완료 조건을 제공한다. OS Shell은 사용자 권한·MFA·멱등성·기록을 집행하고 각 클라이언트가 같은 목록을 사용한다.",
+          "evidence": "등록·갱신·회수 반영, 세 경로의 같은 결과·기록",
+          "status": "planned",
+          "observation": "서명 계약 발견 코드 구현 / 통합 배포 전"
+        },
+        {
+          "id": "L4-05",
+          "title": "관측·복구·정책 운영",
+          "work": "기존 관측·복구·정책 owner와 연결해 선택 서비스의 운영 증거를 제공한다. 새 controller나 observability stack을 자동 도입하지 않는다.",
+          "evidence": "fresh 상태, 복원 시험, 필수 capability와 해당 없음 구분",
+          "status": "planned",
+          "observation": "계약 설계 / 연결·복원 실증 미완료"
+        }
+      ]
+    },
+    {
       "id": "M04",
       "repo": "OpenSphere-Foundation",
-      "name": "L4 배포 기반을 소비해 필요한 서비스 자원을 제공",
-      "phase": "04 · 조건부 기반",
+      "name": "Platform Services · 요구한 공통 서비스를 제공",
+      "phase": "L5 · 독립 공통 서비스",
       "icon": "systems.svg",
       "status": "conditional",
       "state": "필요 capability부터 상세 설계",
       "required": "제품의 자원 요구가 있을 때",
-      "entry": "진입: 필요한 HISS 증거 + L4 Platform Support 배포 계약 + 소비자 요구. Argo CD는 Git 선언을 동기화하고 Crossplane은 선택 adapter일 때 자원을 조정한다.",
+      "entry": "Console 공통 제어 + 소비자가 선택한 서비스의 L4 capability·HISS 증거. 미선택 Crossplane이나 모든 provider의 설치를 강제하지 않는다.",
       "exit": "G04: 선택한 capability 하나의 plan→승인→Claim→Binding→소비자 연결과 실패/삭제/복원 정책을 검증한다. 모든 provider 설치를 완료 조건으로 삼지 않는다.",
-      "current": "Foundation은 L5의 Claim·Binding과 서비스 자원 책임입니다. Argo CD·Crossplane adapter는 L4이며 Foundation 자체나 별도 네 번째 Service Stack이 아닙니다. 이번 페이지 갱신은 이들의 실제 설치·정상 동작을 선언하지 않습니다.",
+      "current": "L5 제품은 기존 OpenSphere-Foundation을 유지합니다. 공통 서비스의 Claim·Instance·Binding·데이터 수명주기가 책임입니다. 기존 원본을 확보했으며, L4 분리 뒤 소비 계약과 실제 서비스 수용 시험은 남아 있습니다.",
       "scope": "C_FAPI / C_FCTL · 하나의 OpenSphere-Foundation repository",
       "sources": [
         "S8",
@@ -383,9 +443,9 @@
           "id": "M04-01"
         },
         {
-          "title": "선행 L4 · Argo CD + Crossplane",
-          "work": "Argo CD는 Gitea의 승인된 선언을 배포·동기화한다. Crossplane은 선택한 provider/adapter의 자원 프로비저닝을 담당한다. Foundation은 이를 소비한다.",
-          "evidence": "Git 선언 → 동기화 → 실제 자원·Binding → 상태·실패·rollback 검증; 같은 자원의 lifecycle owner는 하나",
+          "title": "서비스 Owner · Plan·Claim·Binding",
+          "work": "서비스 요구·자격·용량·데이터 정책을 검증해 Plan·Claim·Instance·Binding으로 제공한다. L4에는 필요한 배포·자원 기능만 계약으로 요청하며 같은 자원에 두 writer를 두지 않는다.",
+          "evidence": "서비스마다 상태 권위 하나, 기존 데이터 보존, OS Shell의 동일 권한·기록·멱등성 적용",
           "status": "planned",
           "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M04-02"
@@ -807,6 +867,13 @@
     "argoCd": "승인된 Gitea 선언의 배포·동기화",
     "crossplane": "선택 adapter의 프로비저닝; core 준비만 조건부 HISS 선행 요소",
     "ownership": "Foundation은 L5 consumer. 같은 자원의 owner는 하나. 별도 repo 또는 네 번째 stack을 뜻하지 않음.",
-    "acceptance": "이번 작업에서 실제 설치·수용 검증하지 않음"
+    "acceptance": "이번 작업에서 실제 설치·수용 검증하지 않음",
+    "decision": "ADR-0015 / Accepted",
+    "tier": "SRL-L4",
+    "module": "OpenSphere-Platform-Support",
+    "independentFrom": "OpenSphere-Foundation / SRL-L5",
+    "runtimeAcceptance": "not-complete",
+    "securityRegistration": "approval-required",
+    "sourceBaseline": "OpenSphere-shell-foundation 5e3217bffc1b7a331260459d34b7a857f45f6c8b"
   }
 }
