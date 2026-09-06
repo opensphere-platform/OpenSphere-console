@@ -716,6 +716,13 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
       } else if (['createCliDeviceEnrollment', 'pollCliDeviceEnrollment', 'createCliDeviceChallenge', 'createCliDeviceSession'].includes(operation.operationId)) {
         assert(Array.isArray(operation.security) && operation.security.length === 0,
           operation.operationId + ' must be explicitly unauthenticated and prove its own bounded secret');
+      } else if (['inspectHissLifecycle','installHissModule','uninstallHissModule'].includes(operation.operationId)) {
+        const route = {inspectHissLifecycle:'inspect',installHissModule:'install',uninstallHissModule:'uninstall'}[operation.operationId];
+        assert(path === `/api/hiss/${route}` && method === 'post', 'HISS owner route changed');
+        assert(operation.servers?.[0]?.url === 'http://cluster-manager.opensphere-console.svc.cluster.local:8080', 'HISS must name its actual owner server');
+        assert(JSON.stringify(operation.security) === JSON.stringify([{OwnerAccess: []}]), 'HISS requires current user bearer, never browser-cookie-only mutation');
+        assert(operation.requestBody?.content?.['application/json']?.schema?.$ref === `../schemas/hiss-${route==='inspect'?'inspect':'lifecycle'}-request.schema.json`, 'HISS closed input schema missing');
+        assert(operation.responses?.['200']?.content?.['application/json']?.schema?.$ref === '../schemas/hiss-lifecycle-response.schema.json', 'HISS typed receipt schema missing');
       } else if (operation.operationId === 'appendClusterManagerOwnerAudit') {
         assert(path === '/api/internal/cluster-manager/events' && method === 'post', 'Cluster Manager audit owner path changed');
         assert(JSON.stringify(operation.security) === JSON.stringify([{OwnerAccess: []}]), 'Cluster Manager audit must accept only owner Bearer credentials');

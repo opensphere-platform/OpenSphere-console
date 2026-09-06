@@ -8,7 +8,9 @@
     "hiss": [
       "observability-config-read",
       "observability-plan",
-      "observability-configure"
+      "observability-configure",
+      "lifecycle-inspect",
+      "lifecycle-execute"
     ],
     "ceph": [
       "status-read",

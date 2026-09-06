@@ -20,6 +20,8 @@ test('HISS Observability tools are capability-negotiated against the signed owne
     'observability-config-read',
     'observability-plan',
     'observability-configure',
+    'lifecycle-inspect',
+    'lifecycle-execute',
   ]);
 });
 

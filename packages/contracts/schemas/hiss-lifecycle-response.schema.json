@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "displayName",
+    "chartVersion",
+    "namespace",
+    "releaseName",
+    "observedAt",
+    "revision",
+    "ownership",
+    "state",
+    "reason",
+    "message",
+    "installed",
+    "releaseStatus",
+    "releaseRevision",
+    "operation",
+    "retainedOnDelete"
+  ],
+  "properties": {
+    "schema": {
+      "const": "opensphere.hiss-lifecycle/v1"
+    },
+    "id": {
+      "enum": [
+        "ingress-nginx",
+        "cert-manager",
+        "metrics-server",
+        "crossplane-core",
+        "kube-prometheus-stack"
+      ]
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "chartVersion": {
+      "type": "string"
+    },
+    "namespace": {
+      "type": "string"
+    },
+    "releaseName": {
+      "type": "string"
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "ownership": {
+      "enum": [
+        "ClusterManager",
+        "External",
+        "Unmanaged",
+        "Unknown"
+      ]
+    },
+    "state": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "installed": {
+      "type": "boolean"
+    },
+    "releaseStatus": {
+      "type": "string"
+    },
+    "releaseRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "operation": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "action",
+            "phase",
+            "progress",
+            "startedAt",
+            "updatedAt",
+            "finishedAt",
+            "error",
+            "noChange"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9]+-[a-f0-9]+$"
+            },
+            "action": {
+              "type": "string"
+            },
+            "phase": {
+              "type": "string"
+            },
+            "progress": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "startedAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "finishedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "error": {
+              "type": "string"
+            },
+            "noChange": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    },
+    "retainedOnDelete": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "replayed": {
+      "type": "boolean"
+    },
+    "noChange": {
+      "type": "boolean"
+    },
+    "removalVerified": {
+      "type": "boolean"
+    }
+  }
+}

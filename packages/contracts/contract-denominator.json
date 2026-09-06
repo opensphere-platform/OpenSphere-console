@@ -18,6 +18,9 @@
     "CON-FR-020"
   ],
   "operations": [
+    "inspectHissLifecycle",
+    "installHissModule",
+    "uninstallHissModule",
     "getExtensionInstallationCatalog",
     "getExtensionInstallationRequest",
     "getInitialAdministratorBootstrapStatus",
@@ -105,6 +108,9 @@
     "console.extension.remove@1.0"
   ],
   "requiredSchemas": [
+    "hiss-inspect-request.schema.json",
+    "hiss-lifecycle-request.schema.json",
+    "hiss-lifecycle-response.schema.json",
     "platform-change-template-response.schema.json",
     "platform-release-lock.schema.json",
     "platform-release-status-response.schema.json",

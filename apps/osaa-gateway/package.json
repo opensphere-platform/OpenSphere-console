@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --check server.js && node --test artifact-wiring.test.js console-identity-client.test.js c-ai-owner-api.test.js user-mutation-assurance.test.js his-owner-contract.test.js agent-control-readiness.test.js dialogue-capability.test.js dialogue-evidence.test.js dialogue-redteam-corpus.test.js dialogue-request-boundary.test.js dialogue-runtime-regression.test.js extension-presentation.test.js live-tool-observation.test.js console-installation-observation.test.js r2d2-prompt-boundary.test.js manual-seed-reconcile.test.js r2d2-source-grounding.test.js source-evidence-contract.test.js turn-lease-execution.test.js module-installation-client.test.js"
+    "test": "node --check server.js && node --test artifact-wiring.test.js console-identity-client.test.js c-ai-owner-api.test.js user-mutation-assurance.test.js his-owner-contract.test.js agent-control-readiness.test.js dialogue-capability.test.js dialogue-evidence.test.js dialogue-redteam-corpus.test.js dialogue-request-boundary.test.js dialogue-runtime-regression.test.js extension-presentation.test.js live-tool-observation.test.js console-installation-observation.test.js r2d2-prompt-boundary.test.js manual-seed-reconcile.test.js r2d2-source-grounding.test.js source-evidence-contract.test.js turn-lease-execution.test.js module-installation-client.test.js his-lifecycle-client.test.js his-lifecycle-contract.test.js"
   },
   "dependencies": {
     "pg": "8.16.3"

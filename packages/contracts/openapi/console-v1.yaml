@@ -16,6 +16,337 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /api/hiss/inspect:
+    post:
+      operationId: inspectHissLifecycle
+      servers:
+        - url: http://cluster-manager.opensphere-console.svc.cluster.local:8080
+      tags:
+        - Operations
+      security:
+        - OwnerAccess: []
+      x-opensphere-owner: OpenSphere-Cluster-Manager
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: read-only
+      description: Fresh typed HISS observation. Owner revalidates the current Console user with viewer/operator/admin role. No mutation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/hiss-inspect-request.schema.json
+      responses:
+        '200':
+          description: Fresh observation or accepted operation; query inspect for completion.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/hiss-lifecycle-response.schema.json
+        '400':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '401':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '403':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '409':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '428':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '502':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '503':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+  /api/hiss/install:
+    post:
+      operationId: installHissModule
+      servers:
+        - url: http://cluster-manager.opensphere-console.svc.cluster.local:8080
+      tags:
+        - Operations
+      security:
+        - OwnerAccess: []
+      x-opensphere-owner: OpenSphere-Cluster-Manager
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        Actor/session-bound request key; latest same request replays; earlier requests conflict on plan revision. Kubernetes CAS serializes per-module
+        admission.
+      description: >-
+        Existing HISS owner lifecycle with optional typed 22 contract shown here. Current Console administrator and MFA required except HTTPS localhost
+        AND edge. Fixed catalog only; no arbitrary chart/namespace. uninstall additionally requires confirm equal to id. Unknown/stale states fail
+        closed. 202 is acceptance, never completion. GUI legacy body remains compatible.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/hiss-lifecycle-request.schema.json
+      responses:
+        '200':
+          description: Fresh observation or accepted operation; query inspect for completion.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/hiss-lifecycle-response.schema.json
+        '202':
+          description: Fresh observation or accepted operation; query inspect for completion.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/hiss-lifecycle-response.schema.json
+        '400':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '401':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '403':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '409':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '428':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '502':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '503':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+  /api/hiss/uninstall:
+    post:
+      operationId: uninstallHissModule
+      servers:
+        - url: http://cluster-manager.opensphere-console.svc.cluster.local:8080
+      tags:
+        - Operations
+      security:
+        - OwnerAccess: []
+      x-opensphere-owner: OpenSphere-Cluster-Manager
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        Actor/session-bound request key; latest same request replays; earlier requests conflict on plan revision. Kubernetes CAS serializes per-module
+        admission.
+      description: >-
+        Existing HISS owner lifecycle with optional typed 22 contract shown here. Current Console administrator and MFA required except HTTPS localhost
+        AND edge. Fixed catalog only; no arbitrary chart/namespace. uninstall additionally requires confirm equal to id. Unknown/stale states fail
+        closed. 202 is acceptance, never completion. GUI legacy body remains compatible.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/hiss-lifecycle-request.schema.json
+      responses:
+        '200':
+          description: Fresh observation or accepted operation; query inspect for completion.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/hiss-lifecycle-response.schema.json
+        '202':
+          description: Fresh observation or accepted operation; query inspect for completion.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/hiss-lifecycle-response.schema.json
+        '400':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '401':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '403':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '409':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '428':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '502':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
+        '503':
+          description: Validation, identity/MFA, stale/concurrent state, or upstream failure. No success claim.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    type: string
   /api/internal/cluster-manager/events:
     post:
       operationId: appendClusterManagerOwnerAudit

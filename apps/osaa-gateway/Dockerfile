@@ -10,6 +10,7 @@ COPY provider-tool-calls.js /app/provider-tool-calls.js
 COPY chat-runtime-policy.js /app/chat-runtime-policy.js
 COPY console-installation-observation.js /app/console-installation-observation.js
 COPY module-installation-client.js /app/module-installation-client.js
+COPY his-lifecycle-client.js /app/his-lifecycle-client.js
 COPY osdst-client.js /app/osdst-client.js
 COPY canonical-digest.js /app/canonical-digest.js
 COPY console-identity-client.js /app/console-identity-client.js
