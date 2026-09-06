@@ -71,7 +71,17 @@ function createHisLifecycleClient({baseUrl, fetchImpl = fetch, signal = () => Ab
       ...(input.action === 'uninstall' ? {confirm:input.id} : {}),
     });
   }
-  return {inspect, execute};
+  async function executeRequested(actor, input, context) {
+    exact(input, ['id','action']);
+    const intent = hissIntent(context?.userInstruction);
+    if (!intent?.action || intent.id !== input.id || intent.action !== input.action)
+      fail(403, '현재 사용자 메시지에 한 모듈의 설치 또는 삭제 지시가 명확해야 합니다.');
+    // The model selects the authorized action, never copies an opaque authority
+    // revision. The owner still rejects drift between this fresh review and write.
+    const reviewed = await inspect(actor, {id:input.id});
+    return execute(actor, {...input, planRevision:reviewed.revision}, context);
+  }
+  return {inspect, execute, executeRequested};
 }
 function hissFailure(error) {
   const clean = String(error?.msg || error?.message || 'HISS 상태 확인 실패').replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')

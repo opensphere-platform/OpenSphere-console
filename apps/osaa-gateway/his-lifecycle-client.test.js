@@ -34,6 +34,24 @@ test('owner MFA/permission failure and stale or substituted responses fail close
     await assert.rejects(()=>client.inspect(actor,{id:'cert-manager'}),{code:502});
   }
 });
+test('model action uses server-reviewed revision without copying an opaque model value',async()=>{
+  const calls=[];
+  const client=createHisLifecycleClient({baseUrl:'http://owner.test',fetchImpl:async(url,init)=>{calls.push({url,body:JSON.parse(init.body)});return new Response(JSON.stringify(receipt()));}});
+  await client.executeRequested(actor,{id:'cert-manager',action:'install'},context);
+  assert.deepEqual(calls.map(c=>c.url),['http://owner.test/api/hiss/inspect','http://owner.test/api/hiss/install']);
+  assert.equal(calls[1].body.planRevision,revision);
+  await assert.rejects(()=>client.executeRequested(actor,{id:'cert-manager',action:'install',planRevision:'model-value'},context),{code:400});
+  await assert.rejects(()=>client.executeRequested(actor,{id:'cert-manager',action:'uninstall'},context),{code:403});
+  assert.equal(calls.length,2);
+});
+test('fresh server review never bypasses owner drift rejection or retries a write',async()=>{
+  const calls=[];
+  const client=createHisLifecycleClient({baseUrl:'http://owner.test',fetchImpl:async(url)=>{
+    calls.push(url);return url.endsWith('/inspect')?new Response(JSON.stringify(receipt())):new Response(JSON.stringify({error:'state changed'}),{status:409});
+  }});
+  await assert.rejects(()=>client.executeRequested(actor,{id:'cert-manager',action:'install'},context),{code:409});
+  assert.equal(calls.length,2);
+});
 test('accepted/unknown/failed is not completed; removal requires live postcondition',()=>{
   const value={...receipt(),operation:{id:'abc-123',phase:'Queued'}};
   assert.match(renderHisResult(value),/완료가 아닙니다/);
