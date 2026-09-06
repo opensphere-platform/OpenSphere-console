@@ -82,7 +82,7 @@
   "관리-요청-정책-승인": "관리 요청·정책·승인",
   "desired-state-정본": "Desired-state 정본",
   "kubernetes-배포-실행": "Kubernetes 배포 실행",
-  "argo-cd-hiss-platform-support-controller": "Argo CD · HISS Platform Support Controller",
+  "argo-cd-hiss-platform-support-controller": "Argo CD · L4 Platform Support",
   "runtime-설정-instance-lifecycle": "Runtime 설정·Instance lifecycle",
   "pfss-runtime-catalog-owner-operator": "PFSS Runtime Catalog + Owner / Operator",
   "최종-완료-복구-판정": "최종 완료·복구 판정",

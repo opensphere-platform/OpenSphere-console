@@ -1,18 +1,18 @@
 {
   "schemaVersion": "1.0",
   "documentId": "OS-INSTALL-MILESTONES",
-  "updatedAt": "2026-09-04",
-  "title": "OpenSphere 설치 이정표",
+  "updatedAt": "2026-09-06",
+  "title": "OpenSphere Setup · 설치와 제어 능력 확장",
   "authority": "기존 승인된 제품 경계를 따르는 실행 순서 제안. 문서 작성 요청은 후속 모듈의 설치·삭제·신규 기술 도입 승인이 아니다.",
   "snapshot": {
-    "at": "2026-09-04 00:30–00:36 KST",
+    "at": "2026-09-06 21:10 KST",
     "context": "docker-desktop",
-    "runtime": "6/6 노드 · 65/65 활성 Pod Ready · 13/13 PVC Bound",
-    "result": "재부팅 후 서비스 기동과 Console 기반 런타임을 확인했습니다. 기능 수용·공식 배포본 결속·클린 설치 재현은 진행 중입니다.",
-    "access": "Console과 Developer의 HTTPS 신뢰 검증 실패가 남음. www 설계 페이지는 TLS 신뢰 검증 통과.",
-    "limitation": "이 페이지는 기준 시점의 기록이며 실시간 상태판이 아닙니다. 단계 전환 전 다시 검증합니다."
+    "runtime": "Console 202609062010 · edge / Cluster Manager 202609061919",
+    "result": "22의 삭제·재설치·중복 요청 시험은 cert-manager만 통과했습니다. Ingress·metrics 권한 오류, 검증 4건의 실패 후 대기 표시, 22 종합 응답 오류가 남습니다. Crossplane을 제외해도 전체 제어는 불가합니다.",
+    "access": "로그인된 Console에서 22 실무 시험 수행. 다른 제품의 과거 TLS 상태는 이번 관측에 포함하지 않음.",
+    "limitation": "실시간 상태판이 아닌 기준 시점의 시험·설계 기록. 다른 기능의 과거 관측을 최신 수용으로 확대하지 않음."
   },
-  "next": "M02의 남은 네이티브 기능 수용과 G02 클린 재현은 최종 릴리스 게이트로 계속 진행합니다. M03 Cluster Manager의 범위·계약과 read-only 진단 slice는 지금 병행 착수할 수 있습니다. 승인 쓰기 작업은 필요한 Console Owner 경로와 G02 결과에 연계합니다.",
+  "next": "기능이 명령·설명·입출력·권한·완료·복구 기준을 제공해야 합니다. OS Shell은 검증·권한·기록을 공통 적용하고 기존 기능에 실행을 전달합니다. CLI·22는 같은 목록을 사용하며 갱신·제거 시 노출도 갱신됩니다.",
   "prerequisite": "M00 · 기존 Kubernetes: API·Ready 노드·CNI/DNS·StorageClass·ingress/LB 경로를 제공한다. Setup doctor는 이를 검사하며 클러스터를 임의 교체하지 않는다. 재부팅 복원 점검은 통과했지만 매 설치 직전에 재검사한다.",
   "rules": [
     "큰 박스는 책임을 가진 repository 또는 수용 단위다. 작은 박스는 작업과 통과 증거다. 박스 개수가 Pod·이미지·릴리스 수를 뜻하지 않는다.",
@@ -20,9 +20,10 @@
     "Setup CLI는 최초 Console 기반을 마련하고 종료하는 독립 실행 도구다. 이후 기능 설정·모듈 활성화는 Console의 승인·선언·Owner 실행·receipt 경로로 처리한다.",
     "공식 이미지 버전·채널·GHCR·digest 정책을 상속한다. 채널을 선택해도 실행 계획은 불변 digest에 고정하며, Setup 실행 파일 버전과 OCI artifactVersion을 혼동하지 않는다.",
     "Console의 CLI·OS Shell·OSAA/OSDST·Extension Controller·Registry·Recovery·Gitea bootstrap은 네이티브 기능이다. 별도 제품 설치로 분리하여 Console 완료 조건을 피하지 않는다.",
-    "Cluster Manager는 기존 클러스터의 진단·제한된 승인 작업을 담당한다. Ceph가 없으면 미설치/해당 없음으로 표시한다. 이정표 통과를 위해 Ceph·메시·새 컨트롤러를 일괄 도입하지 않는다.",
     "Foundation은 필요한 서비스 자원을 선언·할당·Binding하는 책임이다. Cluster Manager의 읽기 진단과 구분한다. Foundation Owner API는 내부 역할이며 별도 OpenSphere-Foundation-Owner repository가 아니다.",
-    "Workspace·Developer·Pulse·AI Workbench는 요구와 호환성에 따라 선택한다. 독립 실행 제품에 Workspace 설치를 일률적으로 강제하지 않는다. Design Kit는 공통 빌드 의존성이지 상시 서비스 설치 단계가 아니다."
+    "Workspace·Developer·Pulse·AI Workbench는 요구와 호환성에 따라 선택한다. 독립 실행 제품에 Workspace 설치를 일률적으로 강제하지 않는다. Design Kit는 공통 빌드 의존성이지 상시 서비스 설치 단계가 아니다.",
+    "각 기능은 자신의 제어 계약을 제공한다. OS Shell이 공통 정책·기록을 집행하고 CLI·22·GUI가 같은 계약을 소비한다.",
+    "Argo CD·선택적 Crossplane adapter와 공유 관측 runtime은 L4. Crossplane core는 선택 adapter가 요구할 때만 HISS 선행 준비."
   ],
   "dependencyEdges": [
     [
@@ -41,19 +42,9 @@
       "검증한 수정을 배포본에 반영하고 클린 재현"
     ],
     [
-      "M02",
-      "M03",
-      "Console 기반 운영 확인 후 read-only 설계·구현 병행; 승인 쓰기·최종 설치는 G02 결과 연계"
-    ],
-    [
       "G02",
       "M04",
       "요구 자원/Owner 계약이 필요한 경우"
-    ],
-    [
-      "M03",
-      "M04",
-      "인프라 요구가 확인된 경우만; 읽기 진단에 Foundation 강제 의존 없음"
     ],
     [
       "G02",
@@ -69,6 +60,26 @@
       "M05",
       "M06–M08",
       "Workforce 발견·SSO·launch 통합 선택 시; standalone의 필수 선행 아님"
+    ],
+    [
+      "M02",
+      "M03",
+      "기존 Cluster Manager 활성화와 OS Shell 공통 제어"
+    ],
+    [
+      "M03",
+      "L1-HIS-Preflight",
+      "기반 실제 증거와 제어 계약 검증"
+    ],
+    [
+      "L1-HIS-Preflight",
+      "L4-Platform-Support",
+      "Argo CD와 선택 adapter 준비"
+    ],
+    [
+      "L4-Platform-Support",
+      "M04",
+      "Foundation이 요구하는 배포·프로비저닝 계약"
     ]
   ],
   "milestones": [
@@ -83,7 +94,7 @@
       "required": "필수",
       "entry": "구조적으로 정상인 기존 Kubernetes + 설치 대상/버전/채널 선택",
       "exit": "G01: 고정한 배포본으로 Backbone과 네이티브 제어면이 기동하고, 소유권 목록·실패 상태·검증 receipt를 남긴다. 전체 완료는 G02까지 통과해야 한다.",
-      "current": "기존 설치는 기동 중입니다. 로컬 수정과 운영 보완이 공개 배포본에 모두 결속되지 않아 클린 재현은 아직 보증하지 않습니다.",
+      "current": "기존 Console과 Cluster Manager는 설치돼 있습니다. 공통 HISS 경로는 edge로 발행·배포됐지만 기능별 준비물의 Setup 반영과 수동 보완 없는 클린 재현은 미완료입니다.",
       "scope": "일회성 실행; Windows 상시 설치·자동 시작 서비스가 아님",
       "sources": [
         "S1",
@@ -185,7 +196,7 @@
       "required": "필수 · 최종 릴리스 게이트",
       "entry": "M01으로 기동한 기존 설치를 보존하고 결함을 수정한다. 지금 클린 삭제하지 않는다.",
       "exit": "G02: 전체 필수 기능 수용 → 수정의 공식 배포본 결속 → 소유 자원만 정리한 클린 설치 → 같은 기능 수용 + 재부팅 검증 통과. 동일 바이너리/BOM/schema·설정 의미·결과로 비교하며 새 Secret 값까지 같을 필요는 없다.",
-      "current": "Console 기반 서비스와 네이티브 런타임은 운영 중입니다. Platform Release 실행 Owner, Repair Runner 실행 경로, 사용자 OS Shell·OSAA 종단 시험, 파일 Recovery, 공식 배포본 결속과 클린 재현이 남아 있습니다. 이 항목은 Cluster Manager read-only slice 착수를 막지 않습니다.",
+      "current": "현재 목표는 공통 OS Shell 실행의 전체 기능 검증과, 각 기능이 제공하는 계약의 등록·발견입니다. HISS 공통 경로 배포와 cert-manager 시험은 통과했으나 자동 확장·전체 HISS·클린 재현은 미완료입니다. 아래 다른 기능의 과거 관측은 최신 수용으로 재사용하지 않습니다.",
       "scope": "Console 소유 네이티브 기능; 별도 제품으로 분리하지 않음",
       "sources": [
         "S2",
@@ -199,31 +210,31 @@
           "work": "신뢰되는 HTTPS에서 로그인하고 필수 route·역할·오류/빈 상태·API를 확인한다.",
           "evidence": "인증서 우회 없이 접속; 필수 화면의 예상 밖 5xx 없음",
           "status": "open",
-          "observation": "Console TLS 신뢰 실패; 전체 브라우저 journey 미검증",
+          "observation": "09-06 로그인된 Console에서 22 실무 시험 수행. 전체 화면·TLS 수용을 이번 부분 시험으로 대체하지 않음.",
           "id": "M02-01"
         },
         {
-          "title": "OS CLI · OS Shell",
-          "work": "사용자 명령, 세션 연결/재연결, 권한 회수와 실행 종료를 검증한다.",
-          "evidence": "허용 명령 성공 + 거부/회수 이후 실행 차단 + 감사 기록",
+          "title": "OS Shell · 공통 실행 기반",
+          "work": "화면·CLI·22가 같은 명령, 현재 사용자 권한, MFA, 작업 기록과 멱등성 규칙을 사용한다. 기능별 실행은 기존 owner에 남긴다.",
+          "evidence": "같은 사용자·요청 ID의 동일 결과, 권한 회수·중복 요청·오류 처리 일치",
           "status": "partial",
-          "observation": "Shell Ready·heartbeat·부팅 후 attach 확인; 실제 명령 cycle 미완료",
+          "observation": "공통 경로 배포 및 cert-manager 범위 통과. 새 기능 계약의 자동 등록은 미완료.",
           "id": "M02-02"
         },
         {
-          "title": "OSAA · OSDST",
-          "work": "설정된 provider의 실제 응답, 대화 상태 저장·재개, 승인 없는 mutation 차단을 확인한다.",
-          "evidence": "실제 응답 + 대화 재개 + 권한 거절 시험",
+          "title": "22 · 계약 발견과 결과 전달",
+          "work": "22는 OS Shell의 권한별 명령 설명·입력 계약을 읽어 도구를 선택한다. 응답 저장까지 성공해야 사용자 작업을 완료로 표시한다.",
+          "evidence": "기능 추가 후 22 코드 수정 없이 발견·실행; 응답 유실을 완료로 표시하지 않음",
           "status": "partial",
-          "observation": "readiness 200; 실제 provider/사용자 종단 수용 미완료",
+          "observation": "DeepSeek 실요청으로 cert-manager 반복 제어 통과. 종합 조회 24,000자 오류와 고정 대상 목록은 개선 필요.",
           "id": "M02-03"
         },
         {
-          "title": "Registry · Extension Controller",
-          "work": "배포물 조회·호환성·권한을 검사하고 허용된 모듈 활성화/비활성화 경로를 검증한다.",
-          "evidence": "descriptor→계획→승인→적용→상태/receipt; unsigned·비호환 거절",
+          "title": "기능 활성화 · 제어 계약 등록",
+          "work": "서명된 기능 활성화에 제어 계약의 소유자·버전·호환성·권한 검증을 연결한다. 비활성화·제거 시 명령 노출을 회수한다.",
+          "evidence": "새 기능 설치·갱신·제거 후 화면·CLI·22 목록 일치; 기존 감사 기록 보존",
           "status": "partial",
-          "observation": "서비스 기동 확인; 후속 모듈 설치의 종단 증거 필요",
+          "observation": "기존 Cluster Manager Activated 확인. 범용 제어 계약 등록·갱신은 미완료.",
           "id": "M02-04"
         },
         {
@@ -231,7 +242,7 @@
           "work": "승인된 Gitea 변경이 정확한 Owner 실행과 release 상태·receipt로 이어지도록 완성한다.",
           "evidence": "merge/webhook→실행→postcondition→receipt; 실패·중복 요청 검증",
           "status": "open",
-          "observation": "상태 조회 보완과 실제 승인 변경 실행은 별개; 실행 경로 미완료",
+          "observation": "이전 미완료 기록. 이번 HISS 시험에서 Platform Release 전체 실행은 재검증하지 않음.",
           "id": "M02-05"
         },
         {
@@ -239,7 +250,7 @@
           "work": "native operation/schema와 허용된 repair executor를 연결하고 영향·실패·재개를 표시한다.",
           "evidence": "진단→허용 계획→승인→실행→복구 결과; 권한 우회 0",
           "status": "open",
-          "observation": "네이티브 실행 경로 미완료",
+          "observation": "이전 미완료 기록. 이번 HISS 시험에서 Repair Runner 전체 경로는 재검증하지 않음.",
           "id": "M02-06"
         },
         {
@@ -263,7 +274,7 @@
           "work": "수정한 source·migration·installer·BOM을 정리하고 영향받는 이미지만 정책대로 발행한다.",
           "evidence": "source SHA→GHCR digest→Setup 검증 자료→실행 inventory 일치",
           "status": "open",
-          "observation": "로컬 소스 마운트/수정 남음; 최종 발행 전",
+          "observation": "Console 202609062010 · edge의 공통 제어 경로 발행·배포 확인. 전체 기능·클린 재현 완료는 아님.",
           "id": "M02-09"
         },
         {
@@ -279,16 +290,16 @@
     {
       "id": "M03",
       "repo": "OpenSphere-Cluster-Manager",
-      "name": "다음 구현 대상 · 클러스터를 관리 가능한 상태로",
+      "name": "기존 제품을 사용해 HISS·Ceph를 관리하고 제어 능력을 확장",
       "phase": "03 · 병행 착수",
       "icon": "cloud-infrastructure-management.svg",
       "status": "planned",
-      "state": "읽기 진단 설계·구현 착수 가능",
-      "required": "다음 구현 대상 · read-only부터",
-      "entry": "Console 기반 운영 확인 + cluster-manager API/권한/배포/수용 명세. 설계와 read-only 진단 slice는 지금 착수한다. 승인 쓰기 작업은 필요한 Console Owner 경로와 G02 결과에 연계한다.",
-      "exit": "G03: 기존 cluster를 안전하게 등록·조회하고 상태의 근거·시각·장애를 설명한다. 필요한 승인 action 하나를 선택한 Owner 경로로 검증한다. read-only slice와 write slice의 완료를 구분한다.",
-      "current": "현재 경계 문서가 있으며 read-only 최소 slice의 구체 설계·구현을 착수할 수 있습니다. 아직 설치 명령이나 게시 이미지가 준비된 상태는 아닙니다.",
-      "scope": "C_CLUSTER · 인프라 진단과 제한된 작업; 범용 kubectl 실행기 아님",
+      "state": "설치됨 · 전체 제어 미완료",
+      "required": "현재 보강 대상",
+      "entry": "기존 Cluster Manager 202609061919와 Console 공통 제어 경로를 사용한다. 조회 전용 대체 제품을 새로 만들지 않는다. 기능별 권한·소유권·실패 복구를 검증한다.",
+      "exit": "G03: 각 기능이 제공한 계약을 OS Shell에 등록하고 화면·CLI·22의 제어·권한·기록·오류·멱등성을 일치시킨다. HISS 항목별 실제 검증과 기능 갱신·제거 후 목록 갱신까지 통과해야 하며 cert-manager 하나의 성공으로 대체하지 않는다.",
+      "current": "설치된 원래 제품으로 22 시험을 진행했습니다. cert-manager는 삭제·재설치·중복 요청을 통과했지만 나머지는 권한·기록 결함이 있습니다. Crossplane과 공유 관측의 L4 책임은 기본 HISS와 구분합니다.",
+      "scope": "기존 Cluster Manager가 실행 owner; OS Shell은 공통 제어 중심",
       "sources": [
         "S6",
         "S7",
@@ -296,51 +307,51 @@
       ],
       "tasks": [
         {
-          "title": "설치 가능한 최소 계약",
-          "work": "첫 화면·API/schema·권한·배포 artifact·namespace·제거/rollback·수용 fixture를 확정한다.",
-          "evidence": "완전 설계 표준에 맞춘 최소 기능 묶음 + 호환성/자원 명세",
+          "title": "HISS · 실제 제어 범위",
+          "work": "cert-manager는 반복 제어 통과. Ingress·metrics는 권한 오류, CNI·DNS·Storage·Snapshot 검증 4건은 기록 갱신 실패로 중단됐다.",
+          "evidence": "실패를 Failed로 수렴하고 재시도·설치·삭제·중복 요청을 대상별 검증; 외부 소유 자원 보존",
           "status": "planned",
-          "observation": "미착수 · 완료 증거 없음",
+          "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M03-01"
         },
         {
-          "title": "기존 cluster 등록",
-          "work": "docker-desktop의 대상/범위/신원을 명시하고 이미 존재하는 자원을 관측 대상으로 연결한다.",
-          "evidence": "중복 등록/쓰기 부작용 없음; Secret 노출 없는 cluster 식별",
+          "title": "기능이 자기 제어 계약 제공",
+          "work": "각 기능/adapter가 명령 ID·목적·입출력·사용자 권한·부작용·완료·복구·멱등성 규칙과 실행 핸들러를 제공한다.",
+          "evidence": "기능 패키지와 제어 계약의 버전·소유자 일치; 외부 제품은 OpenSphere adapter가 계약 제공",
           "status": "planned",
-          "observation": "미착수 · 완료 증거 없음",
+          "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M03-02"
         },
         {
-          "title": "상태 · 근거 · freshness",
-          "work": "노드, workload, event, network/DNS, storage 상태를 출처·관측 시각과 함께 제공한다.",
-          "evidence": "UI와 API 실측 일치; 단절·권한 부족·stale을 정상으로 표시하지 않음",
+          "title": "OS Shell · 검증과 등록",
+          "work": "기능 활성화 시 계약의 신뢰·호환성·명령 충돌·실행 준비를 검사해 등록한다. 사용자 권한·MFA·기록은 공통 적용한다.",
+          "evidence": "신뢰된 계약만 등록; 기능이 자기 권한을 임의 부여하지 않음; 실행은 기존 owner로 전달",
           "status": "planned",
-          "observation": "미착수 · 완료 증거 없음",
+          "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M03-03"
         },
         {
-          "title": "Storage · Ceph 구분",
-          "work": "현재 StorageClass/PVC를 우선 진단한다. Ceph는 설치되어 있거나 실제 요구가 있을 때만 연결한다.",
-          "evidence": "Ceph 없음은 해당 없음; 기존 standard SC로 충족하면 새 storage 설치 0",
+          "title": "CLI · 22 · 화면이 같은 계약 사용",
+          "work": "CLI는 명령 목록·도움말·입력을, 22는 도구 설명·입력 형식을 받아 사용한다. 관리 화면도 같은 OS Shell 계약을 호출한다.",
+          "evidence": "공통 계약 지원 기능 추가 시 Console·CLI·22의 기능명별 코드 수정이나 재빌드 없이 제어",
           "status": "planned",
-          "observation": "미착수 · 완료 증거 없음",
+          "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M03-04"
         },
         {
-          "title": "제한된 승인 작업",
-          "work": "실제 필요한 action 하나의 Owner·권한·계획·승인·idempotency·postcondition을 연결한다.",
-          "evidence": "JNY-01 정상/실패 receipt; Foundation 필요 시 M04의 최소 capability 연결",
+          "title": "갱신 · 회수 · 사용자 권한",
+          "work": "기능 갱신·제거 시 명령과 도구 노출도 갱신한다. 22는 로그인 사용자 권한으로 실행하고 이전 작업·감사 기록은 보존한다.",
+          "evidence": "권한 회수·stale 계약·owner 장애를 정상으로 숨기지 않음; MFA는 HTTPS localhost·edge에서만 예외",
           "status": "planned",
-          "observation": "미착수 · 완료 증거 없음",
+          "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M03-05"
         },
         {
-          "title": "Console에서 설치·관측·회수",
-          "work": "서명된 배포물과 호환성을 확인해 Console을 통해 설치하고 장애·upgrade·비활성화를 검증한다.",
-          "evidence": "해당 module inventory·감사·rollback; 기존 cluster/Console 데이터 보존",
+          "title": "Ceph · 기반 증거 · 다음 단계",
+          "work": "Storage/CSI와 실제 데이터 경로를 확인하고 필요한 Ceph 연결을 관리한다. Crossplane core는 선택 adapter가 요구할 때만 선행 준비한다.",
+          "evidence": "기반 증거 이후 L4 배포 기반 준비로 이동. Argo CD·Crossplane adapter 전체를 HISS에 포함하지 않음",
           "status": "planned",
-          "observation": "미착수 · 완료 증거 없음",
+          "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M03-06"
         }
       ]
@@ -348,15 +359,15 @@
     {
       "id": "M04",
       "repo": "OpenSphere-Foundation",
-      "name": "필요한 기반 서비스만 선언하고 제공",
+      "name": "L4 배포 기반을 소비해 필요한 서비스 자원을 제공",
       "phase": "04 · 조건부 기반",
       "icon": "systems.svg",
       "status": "conditional",
       "state": "필요 capability부터 상세 설계",
       "required": "제품의 자원 요구가 있을 때",
-      "entry": "G02 + 요구 capability·운영 Owner·provider 선택. M03의 읽기 진단과 독립적으로 계약을 설계할 수 있다.",
+      "entry": "진입: 필요한 HISS 증거 + L4 Platform Support 배포 계약 + 소비자 요구. Argo CD는 Git 선언을 동기화하고 Crossplane은 선택 adapter일 때 자원을 조정한다.",
       "exit": "G04: 선택한 capability 하나의 plan→승인→Claim→Binding→소비자 연결과 실패/삭제/복원 정책을 검증한다. 모든 provider 설치를 완료 조건으로 삼지 않는다.",
-      "current": "공통 C4/Owner 개념은 있으나 모듈 상세 설계·구현 폴더는 비어 있습니다. 첫 provider와 저장소·메시·HA 필요성은 요구 근거로 결정해야 합니다.",
+      "current": "Foundation은 L5의 Claim·Binding과 서비스 자원 책임입니다. Argo CD·Crossplane adapter는 L4이며 Foundation 자체나 별도 네 번째 Service Stack이 아닙니다. 이번 페이지 갱신은 이들의 실제 설치·정상 동작을 선언하지 않습니다.",
       "scope": "C_FAPI / C_FCTL · 하나의 OpenSphere-Foundation repository",
       "sources": [
         "S8",
@@ -372,11 +383,11 @@
           "id": "M04-01"
         },
         {
-          "title": "Owner · 계약 · 배포 설계",
-          "work": "capability/catalog/plan/apply/status와 Claim/Binding, 최소 RBAC·실행 책임을 구체화한다.",
-          "evidence": "하나의 상태 권위; 필요 없는 중간 service/controller 추가 0",
+          "title": "선행 L4 · Argo CD + Crossplane",
+          "work": "Argo CD는 Gitea의 승인된 선언을 배포·동기화한다. Crossplane은 선택한 provider/adapter의 자원 프로비저닝을 담당한다. Foundation은 이를 소비한다.",
+          "evidence": "Git 선언 → 동기화 → 실제 자원·Binding → 상태·실패·rollback 검증; 같은 자원의 lifecycle owner는 하나",
           "status": "planned",
-          "observation": "미착수 · 완료 증거 없음",
+          "observation": "계획 / 아래 통과 조건을 실제 실행으로 검증해야 함",
           "id": "M04-02"
         },
         {
@@ -632,21 +643,26 @@
     ],
     [
       "D-MILESTONE-03",
-      "진행 순서 제안",
-      "Console 기반 운영을 확인하면 Cluster Manager read-only slice를 병행 착수한다. 승인 쓰기 slice와 전체 설치 완료는 필요한 Console Owner 경로와 G02 결과에 연계한다."
+      "현재 구현 및 보완",
+      "기존 Cluster Manager와 공통 HISS 실행 경로는 배포됐다. 자동 제어 계약 확장과 전체 기능 수용을 보강한다."
     ],
     [
       "D-MILESTONE-04",
       "의존성 기반 제안",
       "Foundation은 첫 자원 요구에 맞춰 최소 도입; 후속 제품은 선택. Workspace는 standalone 제품의 강제 선행 조건이 아니다."
+    ],
+    [
+      "D-MILESTONE-05",
+      "2026-09-06 Accepted 요구 / 구현 미완료",
+      "기능이 제어 계약 제공 → 설치·활성화 시 OS Shell 검증·등록 → 권한별 CLI·22·화면 발견 → 기존 기능 owner 실행 → 갱신·제거 시 노출 회수와 기록 보존"
     ]
   ],
   "openQuestions": [
-    [
-      "Q01",
-      "M03 read-only 착수 시",
-      "read-only 진단의 첫 API·화면·권한·freshness·배포 artifact와 수용 fixture를 확정한다. 첫 제한 쓰기 action의 Owner·rollback은 write slice 전에 닫는다."
-    ],
+    {
+      "id": "Q01",
+      "when": "자동 확장 구현",
+      "question": "공통 실행 기반과 owner capability 조회는 있으나 Shell·22의 HISS 명령/대상은 중앙 코드에 고정됨. CLI는 범용 조회·실행 기반 보유."
+    },
     [
       "Q02",
       "M04 진입 전",
@@ -709,21 +725,21 @@
     },
     {
       "id": "S6",
-      "title": "Cluster Manager 경계",
-      "path": "../04-DOMAIN/CLUSTER-MANAGER/DOMAIN-CLUSTER-MANAGER-BOUNDARY-OVERVIEW.md",
-      "note": "Observed legacy / Target Proposed. 구체 배포물 미확정."
+      "title": "HISS 전체 22 실무 시험",
+      "path": "OpenSphere-Platform/DESIGN/20-MODULE/OpenSphere-Cluster-Manager/CLUSTER-MANAGER-HISS-ALL-ITEMS-R2D2-TEST-2026-09-06.md",
+      "note": "로컬 설계 근거 경로. 제품 공개 URL 또는 현재 설치 완료 증거가 아님."
     },
     {
       "id": "S7",
-      "title": "첫 종단 운영 여정 JNY-01",
-      "path": "../01-PRODUCT/PRODUCT-PLATFORM-CORE-JOURNEY.md",
-      "note": "읽기 진단·승인 작업·receipt 및 실패 흐름의 Proposed 기준."
+      "title": "OS Shell 공통 제어 구조",
+      "path": "OpenSphere-Platform/DESIGN/20-MODULE/OpenSphere-Console/02-ARCHITECTURE/CONSOLE-ARCHITECTURE-OS-SHELL-COMMON-CONTROL.md",
+      "note": "로컬 설계 근거 경로. 제품 공개 URL 또는 현재 설치 완료 증거가 아님."
     },
     {
       "id": "S8",
-      "title": "첫 릴리스 범위",
-      "path": "../01-PRODUCT/PRODUCT-PLATFORM-RELEASE-SCOPE.md",
-      "note": "Proposed 범위. 사용자 네이티브 완료 요구를 축소하는 근거로 사용하지 않음."
+      "title": "CONSTITUTION-0004 · L4 및 설립 순서",
+      "path": "DOCS/10-ARCHIVE/OpenSphere-Platform-release-r2d2-20260822/_DOCS_/01-CONSTITUTION/CONSTITUTION-0004-PLATFORM-BOOTSTRAP-SUPPORT-FOUNDATION-LIFECYCLE.md",
+      "note": "로컬 설계 근거 경로. 제품 공개 URL 또는 현재 설치 완료 증거가 아님."
     },
     {
       "id": "S9",
@@ -773,5 +789,24 @@
       "path": "../09-GOVERNANCE/GOVERNANCE-PLATFORM-IMPLEMENTATION-REPOSITORY-INVENTORY.json",
       "note": "repository 경계만 사용. 2026-09-01의 구현 상태는 최신 현황으로 주장하지 않음."
     }
-  ]
+  ],
+  "controlExpansion": {
+    "status": "PartiallyImplemented",
+    "flow": [
+      "기능이 제어 계약 제공",
+      "설치·활성화 시 OS Shell 검증·등록",
+      "권한별 CLI·22·화면 발견",
+      "기존 기능 owner 실행",
+      "갱신·제거 시 노출 회수와 기록 보존"
+    ],
+    "gap": "공통 실행 기반과 owner capability 조회는 있으나 Shell·22의 HISS 명령/대상은 중앙 코드에 고정됨. CLI는 범용 조회·실행 기반 보유."
+  },
+  "platformSupport": {
+    "layer": "SRL-L4",
+    "position": "HISS Preflight 이후, Foundation Established 이전",
+    "argoCd": "승인된 Gitea 선언의 배포·동기화",
+    "crossplane": "선택 adapter의 프로비저닝; core 준비만 조건부 HISS 선행 요소",
+    "ownership": "Foundation은 L5 consumer. 같은 자원의 owner는 하나. 별도 repo 또는 네 번째 stack을 뜻하지 않음.",
+    "acceptance": "이번 작업에서 실제 설치·수용 검증하지 않음"
+  }
 }
