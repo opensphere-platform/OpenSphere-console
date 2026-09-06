@@ -452,7 +452,12 @@ export function verifyConsoleApiDeployment({ documents, nginxSource, targetRoute
   ], ports: [{ protocol: 'TCP', port: 8080 }] };
   assert(internalRules.filter(rule => JSON.stringify(rule) === JSON.stringify(ownerStatusRule)).length === 1,
     'C_API owner status requires exactly Registry and C_EXT in the same namespace on TCP/8080');
-  assert(internalRules.length === 6 && internalRules.every(rule =>
+  const shellCommandRule = { to: [
+    { podSelector: { matchLabels: { app: 'opensphere-shell-api' } } },
+  ], ports: [{ protocol: 'TCP', port: 8080 }] };
+  assert(internalRules.filter(rule => JSON.stringify(rule) === JSON.stringify(shellCommandRule)).length === 1,
+    'C_API OS Shell command egress requires exactly the same-namespace Shell API on TCP/8080');
+  assert(internalRules.length === 7 && internalRules.every(rule =>
     Array.isArray(rule.to) && (rule.to.length === 1 || JSON.stringify(rule) === JSON.stringify(ownerStatusRule)) && rule.to.every(peer =>
       peer.ipBlock === undefined && peer.podSelector && Object.keys(peer.podSelector).length > 0)
     && Array.isArray(rule.ports) && rule.ports.length > 0
