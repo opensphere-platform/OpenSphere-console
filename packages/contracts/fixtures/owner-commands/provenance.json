@@ -1,0 +1,22 @@
+{
+  "schema": "opensphere.contract-fixtures/v1",
+  "state": "unpublished-working-source",
+  "capturedAt": "2026-09-06T16:25:21.783Z",
+  "owners": [
+    {
+      "owner": "cluster-manager",
+      "repository": "OpenSphere-shell-clusterManager",
+      "baseRevision": "affb16f7113d441fae4152f329dd2233c7f3b940",
+      "sourceRevision": "7b67e8d51c2afaa1669d84c8efd25ded5c5b77c2",
+      "contractPath": "contracts/owner-commands.json",
+      "sha256": "f41c15185fcc79f0236cf45df1b539f5a01230adecd1650a3083ddc35ba4df4d"
+    },
+    {
+      "owner": "platform-support",
+      "repository": "OpenSphere-Platform-Support",
+      "baseRevision": "a804c03b1ac547126fdd5a6f8308169cb628d845",
+      "contractPath": "contracts/owner-commands.json",
+      "sha256": "e009a383f955223f417a5264b62f9c68fd77fe10b4e981d744b83131145cfb36"
+    }
+  ]
+}

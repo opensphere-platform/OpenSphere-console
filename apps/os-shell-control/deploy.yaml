@@ -554,6 +554,12 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: opensphere-registry } }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/managed-by: opensphere-extension-controller, opensphere.io/command-provider: 'true' } }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
         - podSelector: { matchLabels: { opensphere.io/extension-id: cluster-manager } }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:

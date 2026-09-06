@@ -221,10 +221,10 @@ func TestRequireOKUsesJSONErrorMessage(t *testing.T) {
 	}
 }
 
-func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T) {
+func TestExtensionsInstallDoesNotRetryAnUncertainShellOutcome(t *testing.T) {
 	requests := 0
 	installKey := ""
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := installationShellTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/admin/extensions/catalog" {
 			fmt.Fprintf(w, `{"schemaVersion":"1.0","freshness":"fresh","data":{"revision":"sha256:%s","items":[{"descriptorId":"extension.template"}]}}`, strings.Repeat("a", 64))
@@ -268,11 +268,11 @@ func TestExtensionsInstallRetriesOnlyRegistryCredentialPropagation(t *testing.T)
 	cfg := defaults()
 	cfg.testBearer, cfg.ConsoleURL = "test-token", server.URL
 	var out bytes.Buffer
-	if err := extensions(cfg, []string{"install", "opensphere-shell-template:edge", "--reason", "approved extension install"}, &out); err != nil {
-		t.Fatal(err)
+	if err := extensions(cfg, []string{"install", "opensphere-shell-template:edge", "--reason", "approved extension install"}, &out); err == nil {
+		t.Fatal("uncertain outcome must be reported")
 	}
-	if requests != 3 || len(sleeps) != 2 || sleeps[0] != time.Second || sleeps[1] != time.Second {
-		t.Fatalf("expected bounded Retry-After retry, requests=%d sleeps=%v", requests, sleeps)
+	if requests != 1 || len(sleeps) != 0 {
+		t.Fatalf("unexpected resubmission after uncertain OS Shell outcome, requests=%d sleeps=%v", requests, sleeps)
 	}
 }
 

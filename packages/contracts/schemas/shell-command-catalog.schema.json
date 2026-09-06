@@ -5,7 +5,8 @@
   "required": [
     "schema",
     "controlPlane",
-    "commands"
+    "commands",
+    "observedAt"
   ],
   "properties": {
     "schema": {
@@ -24,28 +25,20 @@
           "owner",
           "mutation",
           "arguments",
-          "allowed"
+          "allowed",
+          "description",
+          "argumentSchema"
         ],
         "properties": {
           "id": {
-            "enum": [
-              "hiss.status",
-              "hiss.inspect",
-              "hiss.plan",
-              "hiss.install",
-              "hiss.uninstall",
-              "hiss.upgrade",
-              "hiss.recover",
-              "hiss.rollback",
-              "hiss.validate",
-              "hiss.profiles.set",
-              "hiss.observability.config",
-              "hiss.observability.plan",
-              "hiss.observability.configure"
-            ]
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
           },
           "owner": {
-            "const": "cluster-manager"
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
           },
           "mutation": {
             "type": "boolean"
@@ -58,9 +51,57 @@
           },
           "allowed": {
             "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "argumentSchema": {
+            "type": "object",
+            "required": [
+              "type",
+              "properties",
+              "required",
+              "additionalProperties"
+            ],
+            "properties": {
+              "type": {
+                "const": "object"
+              },
+              "additionalProperties": {
+                "const": false
+              },
+              "properties": {
+                "type": "object",
+                "maxProperties": 32
+              },
+              "required": {
+                "type": "array",
+                "maxItems": 32,
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "contractSha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "statusCommand": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
           }
         }
-      }
+      },
+      "maxItems": 260
+    },
+    "observedAt": {
+      "type": "string",
+      "format": "date-time"
     }
   }
 }

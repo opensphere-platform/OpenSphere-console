@@ -20,28 +20,18 @@
       "const": "OS-Shell"
     },
     "command": {
-      "enum": [
-        "hiss.status",
-        "hiss.inspect",
-        "hiss.plan",
-        "hiss.install",
-        "hiss.uninstall",
-        "hiss.upgrade",
-        "hiss.recover",
-        "hiss.rollback",
-        "hiss.validate",
-        "hiss.profiles.set",
-        "hiss.observability.config",
-        "hiss.observability.plan",
-        "hiss.observability.configure"
-      ]
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"
     },
     "requestId": {
       "type": "string",
       "format": "uuid"
     },
     "owner": {
-      "const": "cluster-manager"
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
     },
     "operationId": {
       "type": [

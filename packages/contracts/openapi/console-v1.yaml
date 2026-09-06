@@ -16,6 +16,138 @@ tags:
   - name: Operations
   - name: Extensions
 paths:
+  /contracts/owner-commands.json:
+    servers:
+      - url: http://{artifactService}.opensphere-console.svc.cluster.local:8080
+        description: >-
+          Internal immutable activated extension revision selected only from verified Registry; not a
+          user-controlled origin
+        variables:
+          artifactService:
+            default: cluster-manager-r-00000000000000000000
+    get:
+      operationId: getInstalledOwnerCommandContract
+      tags:
+        - Extensions
+      security: []
+      x-opensphere-owner: C_SCTL
+      x-opensphere-requirement: CON-FR-007
+      description: >-
+        Read bounded raw command bytes from an installed owner. The exact path and SHA-256 are bound by its
+        P-256 signed UI manifest; namespace matches module ID. Discovery requires fresh Registry state, active
+        serving revision and nonrevoked trust. Data only.
+      responses:
+        '200':
+          description: Signed-asset-bound command contract; verify bytes before parsing
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-contract.schema.json
+  /api/commands:
+    servers:
+      - url: http://{artifactService}.opensphere-console.svc.cluster.local:8080
+        description: >-
+          Internal immutable activated extension revision selected only from verified Registry; not a
+          user-controlled origin
+        variables:
+          artifactService:
+            default: cluster-manager-r-00000000000000000000
+    post:
+      operationId: executeInstalledOwnerCommand
+      tags:
+        - Operations
+      security:
+        - OwnerAccess: []
+      x-opensphere-owner: C_SCTL
+      x-opensphere-requirement: CON-FR-007
+      x-opensphere-idempotency: >-
+        OS Shell claims actor/requestId/input+contract digest before dispatch. Owner preserves the same ID in
+        its existing durable operation. Unknown outcomes are not retried automatically.
+      description: >-
+        Private owner adapter invoked by OS Shell only with current user credential, os-shell-control-v1
+        admission marker and matching X-OS-Command-Request-ID. Reject browser cookies. The owner revalidates
+        current permission, session and MFA plus resource preconditions; localhost HTTPS+edge exception
+        preserves actual AAL1. No arbitrary URL, program, chart or owner selection. The public plugin proxy must
+        not grant this marker.
+      parameters:
+        - name: X-OS-Owner-Admission
+          in: header
+          required: true
+          schema:
+            const: os-shell-control-v1
+        - name: X-OS-Command-Request-ID
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/shell-command-request.schema.json
+      responses:
+        '200':
+          description: Current observation or replay; owner functional acceptance remains separate.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '202':
+          description: Accepted operation; observe statusCommand. Not complete.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '400':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '401':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '403':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '404':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '409':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '428':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '502':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
+        '503':
+          description: Owner rejected or outcome unconfirmed. Preserve HTTP status; query before retry.
+          content:
+            application/json:
+              schema:
+                $ref: ../schemas/owner-command-response.schema.json
   /api/os-shell/commands:
     get:
       operationId: listShellCommands
@@ -31,7 +163,7 @@ paths:
         checked on execution.
       responses:
         '200':
-          description: Closed OS Shell command catalog
+          description: Verified active owner command catalog; commands are contributed by installed modules
           content:
             application/json:
               schema:
@@ -137,7 +269,7 @@ paths:
               schema:
                 $ref: ../schemas/shell-command-response.schema.json
         '202':
-          description: Owner accepted asynchronous operation. Query hiss.inspect/status for final state.
+          description: Owner accepted an asynchronous operation. Discover and call its statusCommand for current state; acceptance is not completion.
           content:
             application/json:
               schema:
@@ -2837,18 +2969,13 @@ paths:
     post:
       operationId: installExtensionCandidate
       description: >-
-        Resolves a signed candidate at the exact Registry revision before durable acceptance.
-        AAL2 is the default. Only the official Cluster Manager image pinned by digest may use
-        actual AAL1 when both server installation configuration and the DBA-owned database
-        environment permit BOTH HTTPS localhost and the edge channel. A non-local edge
-        deployment or a localhost non-edge deployment still requires recent MFA.
-        Direct official Cluster Manager installation uses requester confirmation, not a
-        separate approver or Git proposal. C_EXT automatically verifies exact owner observations.
-        Current permissions, browser CSRF, session checks, immutable signed image, R2 risk and idempotency remain required.
-        Internal C_AI submission uses the same closed body and exchanged Supabase user
-        bearer under osaa-gateway-v1. Current bound browser session, permissions and MFA
-        are revalidated server-side. 22 admits submission only for a direct installation
-        instruction in the current user turn, never tool output or model-generated consent.
+        Resolves the exact signed Registry candidate before durable acceptance. GUI, OS CLI and 22 enter
+        console.modules.install through OS Shell. Only the private OS Shell dispatch with os-shell-control-v1 and a
+        current user credential may call this owner route; direct public submission returns ShellCommandRequired
+        (409). Current role, session and MFA are revalidated. MFA is required except the approved HTTPS localhost and
+        edge policy, retaining actual AAL1. No separate approver is required. C_EXT verifies the resulting package
+        operation; acceptance and package verification do not prove every product function. The shared request
+        identity binds actor, input and command contract; an uncertain outcome never triggers automatic redispatch.
       tags: [Extensions]
       x-opensphere-requirement: CON-FR-007
       x-opensphere-risk: R2

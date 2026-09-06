@@ -1,0 +1,108 @@
+{
+  "schema": "opensphere.owner-commands/v2",
+  "owner": "platform-support",
+  "version": "2.0.0",
+  "tier": "SRL-L4",
+  "commands": [
+    {
+      "id": "platform-support.argocd.inspect",
+      "description": "Argo CD API, workloads, applications, projects and events; missing is not ready",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "id": "platform-support.argocd.refresh",
+      "description": "Request a hard refresh of one existing Application without changing its desired spec",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "format": "dns-name",
+            "maxLength": 253
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "name",
+          "reason"
+        ]
+      },
+      "statusCommand": "platform-support.argocd.inspect"
+    },
+    {
+      "id": "platform-support.argocd.sync",
+      "description": "Sync one existing Application to its resolved immutable revision, prune=false and CreateNamespace=false",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "format": "dns-name",
+            "maxLength": 253
+          },
+          "revision": {
+            "type": "string",
+            "format": "git-revision",
+            "maxLength": 40
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "name",
+          "revision",
+          "reason"
+        ]
+      },
+      "statusCommand": "platform-support.argocd.inspect"
+    },
+    {
+      "id": "platform-support.crossplane.inspect",
+      "description": "Observe the existing Cluster Manager owned core and optional provider adapter; never install core implicitly",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "id": "platform-support.crossplane.configure",
+      "description": "Ensure the legacy cluster-scoped default Helm ProviderConfig with InjectedIdentity; reject conflicting specs and never replace credentials",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "statusCommand": "platform-support.crossplane.inspect"
+    }
+  ]
+}

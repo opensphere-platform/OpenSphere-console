@@ -238,19 +238,27 @@ test('NetworkPolicy peers are exact and runtime egress uses post-DNAT target por
   });
   assert.equal(find('NetworkPolicy', 'opensphere-shell-console-api-egress', 'opensphere-console'), undefined);
   const apiEgress = find('NetworkPolicy', 'opensphere-shell-api-egress', 'opensphere-console');
-  assert.deepEqual(apiEgress.spec.egress[1], {
-    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
+  assert.deepEqual(apiEgress.spec.egress[0], {
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-registry' } } }],
     ports: [{ protocol: 'TCP', port: 8080 }],
   });
-  assert.deepEqual(apiEgress.spec.egress[2], {
-    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
-    ports: [{ protocol: 'TCP', port: 8444 }],
+  assert.deepEqual(apiEgress.spec.egress[1], {
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/managed-by': 'opensphere-extension-controller', 'opensphere.io/command-provider': 'true' } } }],
+    ports: [{ protocol: 'TCP', port: 8080 }],
   });
   assert.deepEqual(apiEgress.spec.egress[3], {
-    to: [{ podSelector: { matchExpressions: [{ key: 'app', operator: 'In', values: ['opensphere-shell-gateway', 'opensphere-shell-reconciler'] }] } }],
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
     ports: [{ protocol: 'TCP', port: 8080 }],
   });
   assert.deepEqual(apiEgress.spec.egress[4], {
+    to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
+    ports: [{ protocol: 'TCP', port: 8444 }],
+  });
+  assert.deepEqual(apiEgress.spec.egress[5], {
+    to: [{ podSelector: { matchExpressions: [{ key: 'app', operator: 'In', values: ['opensphere-shell-gateway', 'opensphere-shell-reconciler'] }] } }],
+    ports: [{ protocol: 'TCP', port: 8080 }],
+  });
+  assert.deepEqual(apiEgress.spec.egress[6], {
     to: [{ podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opensphere-console-api' } } }],
     ports: [{ protocol: 'TCP', port: 8445 }],
   });

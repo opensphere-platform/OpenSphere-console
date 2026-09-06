@@ -721,6 +721,14 @@ export async function verifyContracts(repoRoot = process.cwd(), { requireRelease
       } else if (['createCliDeviceEnrollment', 'pollCliDeviceEnrollment', 'createCliDeviceChallenge', 'createCliDeviceSession'].includes(operation.operationId)) {
         assert(Array.isArray(operation.security) && operation.security.length === 0,
           operation.operationId + ' must be explicitly unauthenticated and prove its own bounded secret');
+      } else if (operation.operationId === 'executeInstalledOwnerCommand') {
+        assert(path === '/api/commands' && method === 'post', 'installed owner command path changed');
+        assert(JSON.stringify(operation.security) === JSON.stringify([{OwnerAccess: []}]), 'owner command requires the current delegated user credential');
+        assert(openapi.paths[path].servers?.[0]?.url === 'http://{artifactService}.opensphere-console.svc.cluster.local:8080', 'owner command must use the verified revision service');
+        assert(parameters.some(p => p.name === 'X-OS-Owner-Admission' && p.required && p.schema?.const === 'os-shell-control-v1'), 'owner command lost Shell admission');
+        assert(parameters.some(p => p.name === 'X-OS-Command-Request-ID' && p.required && p.schema?.format === 'uuid'), 'owner command lost request identity binding');
+        assert(operation.requestBody?.content?.['application/json']?.schema?.$ref === '../schemas/shell-command-request.schema.json', 'owner command requires the common bounded envelope');
+        assert(operation.responses?.['202']?.content?.['application/json']?.schema?.$ref === '../schemas/owner-command-response.schema.json', 'owner acceptance is separate from completion');
       } else if (['inspectHissLifecycle','installHissModule','uninstallHissModule'].includes(operation.operationId)) {
         const route = {inspectHissLifecycle:'inspect',installHissModule:'install',uninstallHissModule:'uninstall'}[operation.operationId];
         assert(path === `/api/hiss/${route}` && method === 'post', 'HISS owner route changed');

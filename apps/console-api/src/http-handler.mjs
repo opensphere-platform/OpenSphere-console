@@ -713,6 +713,9 @@ export function createConsoleApiHandler({ resolveSession, operationService, regi
       }
       if (url.pathname === '/api/admin/extensions/install' && request.method === 'POST') {
         const session = await resolveSession(request, { requireCsrf: true, correlationId });
+        if (url.search || request.headers.cookie || request.headers['x-os-owner-admission'] !== 'os-shell-control-v1') {
+          throw Object.assign(new Error('Use console.modules.install through OS Shell'), { code: 'ShellCommandRequired', status: 409 });
+        }
         const result = await registryOperations.installCandidate({
           session,
           body: await jsonBody(request),

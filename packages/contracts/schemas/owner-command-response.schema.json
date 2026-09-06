@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Closed transport receipt, bound to the current owner/command/request. The data object preserves the owner's existing domain observation or operation receipt and is not executable. OS Shell bounds total response bytes to 4 MiB. HTTP 2xx is not product acceptance.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "owner", "command", "requestId", "observedAt", "data"],
+      "properties": {
+        "schema": {"const": "opensphere.owner-command-result/v1"},
+        "owner": {"type": "string", "maxLength": 63, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "command": {"type": "string", "maxLength": 128, "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)+$"},
+        "requestId": {"type": "string", "format": "uuid"},
+        "observedAt": {"type": "string", "format": "date-time"},
+        "data": {"type": "object"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "maxLength": 128},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1000}
+      }
+    }
+  ]
+}

@@ -188,16 +188,22 @@ export class PluginControlClient {
     }).then(async (r) => { if (!r.ok) throw new Error(`revoke image HTTP ${r.status}: ${JSON.stringify(await r.json())}`); return r.json(); });
   }
   install(descriptorId: string, catalogRevision: string, reason: string): Promise<OperationReceipt> {
-    return this.http.request('/api/admin/extensions/install', {
+    const requestId = crypto.randomUUID();
+    const command = 'console.modules.install';
+    return this.http.request('/api/os-shell/commands', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ descriptorId: descriptorId.trim(), catalogRevision: catalogRevision.trim(), reason: reason.trim() }),
+      body: JSON.stringify({command, requestId, arguments: { descriptorId: descriptorId.trim(), catalogRevision: catalogRevision.trim(), reason: reason.trim() }}),
     }).then(async (r) => {
       if (!r.ok) {
         const body = await r.json().catch(() => ({})) as { message?: unknown; error?: unknown };
         throw new Error(`install HTTP ${r.status}: ${String(body.message || body.error || 'request failed')}`);
       }
-      return r.json() as Promise<OperationReceipt>;
+      const receipt = await r.json();
+      if (receipt.schema !== 'opensphere.shell-command/v1' || receipt.controlPlane !== 'OS-Shell' || receipt.command !== command || receipt.requestId !== requestId) {
+        throw new Error('OS Shell 설치 응답이 요청과 일치하지 않습니다.');
+      }
+      return receipt.data as OperationReceipt;
     });
   }
   /** binding 소프트 토글(spec.enabled). disable=콘솔 노출만 제거(선언·서빙 유지). */

@@ -38,7 +38,7 @@ export interface ManifestAsset {
   id: string;
   /** manifest URL 기준 상대 경로. */
   path: string;
-  type: 'module' | 'style';
+  type: 'module' | 'style' | 'data';
   /** 원본 바이트의 lowercase SHA-256 hex. */
   sha256: string;
 }

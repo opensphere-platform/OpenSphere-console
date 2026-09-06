@@ -1,12 +1,11 @@
 package main
 
-// CON-FR-007/020 · C_API/C_EXT · CON-RT-13: native CLI uses the GUI contract.
+// CON-FR-007/020 · C_SCTL -> C_API/C_EXT · CON-RT-13: native CLI uses OS Shell.
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -77,7 +76,7 @@ func extensionCatalogAction(cfg Config, args []string, out io.Writer) error {
 		return usageError("올바른 모듈 ID가 필요합니다 (예: cluster-manager)")
 	}
 
-	raw, err := jsonBytesCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/admin/extensions/catalog"), nil)
+	raw, err := ownerCommandData(cfg, "console.modules.catalog", map[string]any{}, "")
 	if err != nil {
 		return err
 	}
@@ -104,12 +103,8 @@ func extensionCatalogAction(cfg Config, args []string, out io.Writer) error {
 		return fmt.Errorf("공식 설치 목록에서 %s를 유일하게 찾지 못했습니다", descriptorID)
 	}
 	payload := map[string]string{"descriptorId": descriptorID, "catalogRevision": catalog.Data.Revision}
-	encoded, _ := json.Marshal(payload)
-	inspection, status, err := extensionRequestWithPropagationRetry(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/admin/extensions/inspect"), encoded, "application/json")
+	inspection, err := ownerCommandData(cfg, "console.modules.inspect", payload, "")
 	if err != nil {
-		return err
-	}
-	if err = requireOK(inspection, status); err != nil {
 		return err
 	}
 	var inspected struct {
@@ -139,12 +134,8 @@ func extensionCatalogAction(cfg Config, args []string, out io.Writer) error {
 		return renderOutput(cfg, out, inspection)
 	}
 	payload["reason"] = reason
-	encoded, _ = json.Marshal(payload)
-	receipt, status, err := extensionRequestWithPropagationRetry(cfg, http.MethodPost, join(cfg.ConsoleURL, "/api/admin/extensions/install"), encoded, "application/json")
+	receipt, err := ownerCommandData(cfg, "console.modules.install", payload, parseLongFlags(args[2:])["request-id"])
 	if err != nil {
-		return err
-	}
-	if err = requireOK(receipt, status); err != nil {
 		return err
 	}
 	accepted, err := readInstallationReceipt(receipt)
@@ -163,7 +154,7 @@ func extensionOperation(cfg Config, args []string, out io.Writer) error {
 	}
 	deadline := time.Now().Add(parseTimeout(parseLongFlags(args[2:])["timeout"]))
 	for {
-		raw, err := jsonBytesCall(cfg, http.MethodGet, join(cfg.ConsoleURL, "/api/platform/operations/"+args[1]), nil)
+		raw, err := ownerCommandData(cfg, "console.modules.operation", map[string]string{"operationId": args[1]}, "")
 		if err != nil {
 			return err
 		}

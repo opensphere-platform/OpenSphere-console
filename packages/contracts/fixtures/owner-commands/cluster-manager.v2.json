@@ -1,0 +1,1031 @@
+{
+  "schema": "opensphere.owner-commands/v2",
+  "owner": "cluster-manager",
+  "version": "2.0.0",
+  "tier": "SRL-L3",
+  "commands": [
+    {
+      "id": "cluster-manager.hiss.status",
+      "description": "Inspect HISS prerequisites and selected profiles. Crossplane belongs to L4 and is excluded.",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "id": "cluster-manager.hiss.inspect",
+      "description": "Inspect one HISS module and its latest durable operation; queued is not complete.",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          },
+          "chartVersion": {
+            "type": "string",
+            "maxLength": 32,
+            "format": "semver"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "id": "cluster-manager.hiss.plan",
+      "description": "Review one HISS chart and current prerequisites without changing resources.",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          },
+          "chartVersion": {
+            "type": "string",
+            "maxLength": 32,
+            "format": "semver"
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1
+              },
+              "prometheus": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "remoteWrite": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "url": {
+                        "type": "string",
+                        "maxLength": 2048
+                      },
+                      "secretName": {
+                        "type": "string",
+                        "maxLength": 253
+                      },
+                      "secretKey": {
+                        "type": "string",
+                        "maxLength": 253
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "alertmanager": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "grafana": {
+                "type": "object",
+                "properties": {
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "exposureMode": {
+                    "type": "string",
+                    "maxLength": 253,
+                    "enum": [
+                      "ClusterInternal",
+                      "PrivateIngress",
+                      "PublicIngress"
+                    ]
+                  },
+                  "hostname": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressNamespace": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tlsSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "oidcSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "allowedCidrs": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "telemetry": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "lokiStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tempoStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "id": "cluster-manager.hiss.install",
+      "description": "Execute install for one HISS module after a fresh owner review; preserve data and report operation status.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          },
+          "chartVersion": {
+            "type": "string",
+            "maxLength": 32,
+            "format": "semver"
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1
+              },
+              "prometheus": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "remoteWrite": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "url": {
+                        "type": "string",
+                        "maxLength": 2048
+                      },
+                      "secretName": {
+                        "type": "string",
+                        "maxLength": 253
+                      },
+                      "secretKey": {
+                        "type": "string",
+                        "maxLength": 253
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "alertmanager": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "grafana": {
+                "type": "object",
+                "properties": {
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "exposureMode": {
+                    "type": "string",
+                    "maxLength": 253,
+                    "enum": [
+                      "ClusterInternal",
+                      "PrivateIngress",
+                      "PublicIngress"
+                    ]
+                  },
+                  "hostname": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressNamespace": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tlsSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "oidcSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "allowedCidrs": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "telemetry": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "lokiStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tempoStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ]
+      },
+      "statusCommand": "cluster-manager.hiss.inspect"
+    },
+    {
+      "id": "cluster-manager.hiss.upgrade",
+      "description": "Execute upgrade for one HISS module after a fresh owner review; preserve data and report operation status.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          },
+          "chartVersion": {
+            "type": "string",
+            "maxLength": 32,
+            "format": "semver"
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ]
+      },
+      "statusCommand": "cluster-manager.hiss.inspect"
+    },
+    {
+      "id": "cluster-manager.hiss.recover",
+      "description": "Execute recover for one HISS module after a fresh owner review; preserve data and report operation status.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          },
+          "chartVersion": {
+            "type": "string",
+            "maxLength": 32,
+            "format": "semver"
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ]
+      },
+      "statusCommand": "cluster-manager.hiss.inspect"
+    },
+    {
+      "id": "cluster-manager.hiss.uninstall",
+      "description": "Remove one explicitly named HISS release; preserve the declared retained resources and verify the result.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          },
+          "confirm": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "confirm"
+        ]
+      },
+      "statusCommand": "cluster-manager.hiss.inspect"
+    },
+    {
+      "id": "cluster-manager.hiss.rollback",
+      "description": "Rollback one HISS release to an existing earlier Helm revision; requires exact id:revision confirmation.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "ingress-nginx",
+              "cert-manager",
+              "metrics-server",
+              "kube-prometheus-stack"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "confirm": {
+            "type": "string",
+            "maxLength": 96
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "revision",
+          "confirm"
+        ]
+      },
+      "statusCommand": "cluster-manager.hiss.inspect"
+    },
+    {
+      "id": "cluster-manager.hiss.validate",
+      "description": "Run the existing functional canary for a supported HISS prerequisite.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "cluster-network",
+              "cluster-dns",
+              "kube-prometheus-stack",
+              "storage",
+              "csi-snapshot"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ]
+      },
+      "statusCommand": "cluster-manager.hiss.status"
+    },
+    {
+      "id": "cluster-manager.hiss.profiles.set",
+      "description": "Select an optional HISS profile without implicitly installing modules or removing data.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "Observability",
+              "Data Protection"
+            ]
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          }
+        },
+        "required": [
+          "profile",
+          "selected",
+          "reason"
+        ]
+      },
+      "statusCommand": "cluster-manager.hiss.status"
+    },
+    {
+      "id": "cluster-manager.hiss.observability.config",
+      "description": "Read current shared observability configuration and ownership.",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "id": "cluster-manager.hiss.stack.plan",
+      "description": "Plan the HISS prerequisite set, selected profiles, ordered next action and resume from existing operations. Crossplane is excluded. Execute only the user-requested next action with the current item contract, then reobserve; queued is not completion.",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "properties": {
+          "profiles": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "maxLength": 64,
+              "enum": [
+                "Observability",
+                "Data Protection"
+              ]
+            }
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cluster-manager.hiss.observability.plan",
+      "description": "Review shared observability retention, storage and exposure; report prerequisites and data risks.",
+      "mutation": false,
+      "arguments": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "kube-prometheus-stack"
+            ]
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1
+              },
+              "prometheus": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "remoteWrite": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "url": {
+                        "type": "string",
+                        "maxLength": 2048
+                      },
+                      "secretName": {
+                        "type": "string",
+                        "maxLength": 253
+                      },
+                      "secretKey": {
+                        "type": "string",
+                        "maxLength": 253
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "alertmanager": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "grafana": {
+                "type": "object",
+                "properties": {
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "exposureMode": {
+                    "type": "string",
+                    "maxLength": 253,
+                    "enum": [
+                      "ClusterInternal",
+                      "PrivateIngress",
+                      "PublicIngress"
+                    ]
+                  },
+                  "hostname": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressNamespace": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tlsSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "oidcSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "allowedCidrs": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "telemetry": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "lokiStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tempoStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "config"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cluster-manager.hiss.observability.configure",
+      "description": "Apply reviewed observability configuration with explicit public/data-reset confirmations when required. Secret references only.",
+      "mutation": true,
+      "arguments": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "enum": [
+              "kube-prometheus-stack"
+            ]
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1
+              },
+              "prometheus": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "remoteWrite": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "url": {
+                        "type": "string",
+                        "maxLength": 2048
+                      },
+                      "secretName": {
+                        "type": "string",
+                        "maxLength": 253
+                      },
+                      "secretKey": {
+                        "type": "string",
+                        "maxLength": 253
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "alertmanager": {
+                "type": "object",
+                "properties": {
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "grafana": {
+                "type": "object",
+                "properties": {
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "exposureMode": {
+                    "type": "string",
+                    "maxLength": 253,
+                    "enum": [
+                      "ClusterInternal",
+                      "PrivateIngress",
+                      "PublicIngress"
+                    ]
+                  },
+                  "hostname": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "ingressNamespace": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tlsSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "oidcSecretName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "allowedCidrs": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              },
+              "telemetry": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "retention": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "storageClassName": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "lokiStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  "tempoStorageSize": {
+                    "type": "string",
+                    "maxLength": 253
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 8
+          },
+          "resetData": {
+            "type": "boolean"
+          },
+          "resetConfirmation": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "publicConfirmation": {
+            "type": "string",
+            "maxLength": 253
+          }
+        },
+        "required": [
+          "id",
+          "config",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "statusCommand": "cluster-manager.hiss.status"
+    }
+  ]
+}

@@ -2046,9 +2046,10 @@ test('internal Owner bearer resolves only through Supabase and an active bound b
   })));
   for (const [method,url] of [['POST','/api/admin/extensions/inspect'], ['POST','/api/admin/extensions/install'], ['GET','/api/platform/operations/11111111-1111-4111-8111-111111111111']]) {
     const before = observed.length;
-    const installedActor = await broker.resolveSession({method,url,headers:{authorization:'Bearer '+accessToken,'x-os-owner-admission':'osaa-gateway-v1'}},{requireCsrf:method==='POST'});
+    const installedActor = await broker.resolveSession({method,url,headers:{authorization:'Bearer '+accessToken,'x-os-owner-admission':'os-shell-control-v1'}},{requireCsrf:method==='POST'});
     assert.equal(installedActor.subjectId,subjectId);
     assert.equal(observed.length,before+1,'each call must revalidate current DB authority');
+    await assert.rejects(broker.resolveSession({method,url,headers:{authorization:'Bearer '+accessToken,'x-os-owner-admission':'osaa-gateway-v1'}}),{code:'AuthenticationRequired'});
     await assert.rejects(broker.resolveSession({method,url,headers:{authorization:'Bearer '+accessToken,'x-os-owner-admission':'notification-dispatcher-v1'}}),{code:'AuthenticationRequired'});
   }
   for (const path of ['/api/admin/extensions/remove','/api/platform/operations','/api/identity/users']) {

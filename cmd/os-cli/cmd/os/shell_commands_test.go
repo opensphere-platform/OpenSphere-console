@@ -20,7 +20,7 @@ func TestShellCommandUsesCommonEndpointAndPreservesRequestID(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["command"] != "hiss.install" || body["requestId"] != "11111111-1111-4111-8111-111111111111" {
+		if body["command"] != "cluster-manager.hiss.install" || body["requestId"] != "11111111-1111-4111-8111-111111111111" {
 			t.Fatalf("bad request %#v", body)
 		}
 		if body["arguments"].(map[string]any)["id"] != "cert-manager" {
@@ -34,7 +34,7 @@ func TestShellCommandUsesCommonEndpointAndPreservesRequestID(t *testing.T) {
 	cfg.testBearer = "test-only"
 	cfg.ConsoleURL = server.URL
 	var out bytes.Buffer
-	err := shellCommands(cfg, []string{"execute", "hiss.install", "--id", "cert-manager", "--reason", "approved lifecycle test", "--request-id", "11111111-1111-4111-8111-111111111111"}, strings.NewReader(""), &out)
+	err := shellCommands(cfg, []string{"execute", "cluster-manager.hiss.install", "--id", "cert-manager", "--reason", "approved lifecycle test", "--request-id", "11111111-1111-4111-8111-111111111111"}, strings.NewReader(""), &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestShellCommandFailureIsNotRetriedAndPrintsRecoveryID(t *testing.T) {
 	cfg := defaults()
 	cfg.testBearer = "test-only"
 	cfg.ConsoleURL = server.URL
-	err := shellCommands(cfg, []string{"execute", "hiss.install", "--id", "cert-manager", "--reason", "approved lifecycle test", "--request-id", "11111111-1111-4111-8111-111111111111"}, strings.NewReader(""), &bytes.Buffer{})
+	err := shellCommands(cfg, []string{"execute", "cluster-manager.hiss.install", "--id", "cert-manager", "--reason", "approved lifecycle test", "--request-id", "11111111-1111-4111-8111-111111111111"}, strings.NewReader(""), &bytes.Buffer{})
 	if err == nil || calls != 1 || !strings.Contains(err.Error(), "11111111-1111-4111-8111-111111111111") {
 		t.Fatalf("unsafe failure: %v; calls=%d", err, calls)
 	}
@@ -81,7 +81,7 @@ func TestShellCommandDefaultRequestIDCanExecuteAndIsUnique(t *testing.T) {
 	cfg.testBearer = "test-only"
 	cfg.ConsoleURL = server.URL
 	for i := 0; i < 2; i++ {
-		if err := shellCommands(cfg, []string{"execute", "hiss.inspect", "--id", "cert-manager"}, strings.NewReader(""), &bytes.Buffer{}); err != nil {
+		if err := shellCommands(cfg, []string{"execute", "cluster-manager.hiss.inspect", "--id", "cert-manager"}, strings.NewReader(""), &bytes.Buffer{}); err != nil {
 			t.Fatal(err)
 		}
 	}

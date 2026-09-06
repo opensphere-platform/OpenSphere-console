@@ -222,6 +222,7 @@ export function buildExtensionWorkloadPlan(pkg, { namespace = 'opensphere-consol
   const labels = {
     'app.kubernetes.io/name': contract.name,
     'app.kubernetes.io/managed-by': MANAGED_BY,
+    ...(pkg.spec.contributions?.cli?.enabled === true ? { 'opensphere.io/command-provider': 'true' } : {}),
     [EXTENSION_LABEL]: contract.name,
     [REVISION_LABEL]: revision,
   };
@@ -575,9 +576,13 @@ export async function verifyExtensionRelease({
   const ids = new Set();
   let assetBytesUsed = 0;
   for (const asset of manifestAssets) {
+    const commandData = asset?.id === 'owner-commands' && asset.type === 'data'
+      && asset.path === '/contracts/owner-commands.json'
+      && manifest.contributions?.cli?.enabled === true && manifest.contributions.cli.namespace === contract.name
+      && manifest.contributions.cli.manifestPath === asset.path;
     if (!/^[a-z][a-z0-9-]{0,63}$/u.test(String(asset?.id || '')) || ids.has(asset.id)
-        || !['module', 'style'].includes(asset.type) || !HEX_DIGEST.test(String(asset.sha256 || ''))
-        || !/^\/app\/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(String(asset.path || ''))
+        || (!['module', 'style'].includes(asset.type) && !commandData) || !HEX_DIGEST.test(String(asset.sha256 || ''))
+        || (!/^\/app\/[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(String(asset.path || '')) && !commandData)
         || String(asset.path).includes('..')) {
       throw fault('Signed auxiliary asset contract is invalid', 'AssetContractInvalid');
     }

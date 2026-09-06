@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +12,7 @@ import (
 func TestExtensionOperationWatchesActualOwnerReceipt(t *testing.T) {
 	id := "11111111-1111-4111-8111-111111111111"
 	count := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := installationShellTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != http.MethodGet || r.URL.Path != "/api/platform/operations/"+id {
 			t.Errorf("unexpected old or mutating route: %s %s", r.Method, r.URL.Path)
@@ -48,7 +47,7 @@ func TestExtensionOperationRejectsUnknownStateOrDifferentJob(t *testing.T) {
 		`{"schemaVersion":"1.0","operationId":"22222222-2222-4222-8222-222222222222","actionId":"console.extension.install","state":"Verified"}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := installationShellTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprint(w, body)
 			}))
@@ -65,7 +64,7 @@ func TestExtensionOperationRejectsUnknownStateOrDifferentJob(t *testing.T) {
 
 func TestExtensionInstallWillNotSilentlySwitchRequestedChannel(t *testing.T) {
 	installs := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := installationShellTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/admin/extensions/catalog":

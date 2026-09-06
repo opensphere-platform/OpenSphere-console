@@ -9,13 +9,13 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 82,
+    operations: 84,
     actionPolicies: 6,
-    schemas: 86,
+    schemas: 88,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
     consoleApiDatabaseFunctions: 60,
-    browserApiPatterns: 122,
+    browserApiPatterns: 120,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
     authenticatedBrowserCutoverReady: true,
@@ -80,7 +80,11 @@ test('Console Web extension actions use the target authority contracts', async (
   assert(clientSource.includes('JSON.stringify({ username, credential, reason })'));
   assert(clientSource.includes("'X-OpenSphere-Confirmation': confirmation"));
   assert(clientSource.includes('reason, confirmation }'));
-  assert(clientSource.includes('JSON.stringify({ descriptorId: descriptorId.trim(), catalogRevision: catalogRevision.trim(), reason: reason.trim() })'));
+  assert(clientSource.includes("const command = 'console.modules.install'"));
+  assert(clientSource.includes("this.http.request('/api/os-shell/commands'"));
+  assert(clientSource.includes('arguments: { descriptorId: descriptorId.trim(), catalogRevision: catalogRevision.trim(), reason: reason.trim() }'));
+  assert(clientSource.includes('receipt.requestId !== requestId'));
+  assert(!clientSource.includes("this.http.request('/api/admin/extensions/install'"));
   assert(!clientSource.includes('/api/admin/extensions/registry-credentials'));
   assert(clientSource.includes('/api/admin/extensions/registry-connections/opensphere-ghcr/verify'));
   assert(clientSource.includes('...(replacementImage ? { replacementImage } : {})'));

@@ -9,8 +9,9 @@ const root = resolve(import.meta.dirname, '..');
 
 test('fresh migration manifest binds the exact source revision and ordered SQL inventory', () => {
   const manifest = verifyMigrationManifest({ root });
-  assert.equal(manifest.migrationCount, 39);
-  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260905/0039');
+  assert.equal(manifest.migrationCount, 44);
+  assert.equal(manifest.latestGlobalId, 'opensphere-console/20260907/0044');
+  assert.equal(manifest.migrations[43].sourceRevision, '4fa23b5edf7bfc4c759b998d79136484db8655ca');
   assert.equal(manifest.migrations[38].sourceRevision, 'd7fc701d500393116dae4c847515e8583b5fa7b7');
   assert.equal(manifest.migrations[37].sourceRevision, '9f8d9c4838fbdb4807b4d5f41a5cb7d55d49c7c6');
   assert.equal(manifest.migrations[0].sourceRevision, '8e4da5924ec54f09ad137ee67a8bf093342cbf0e');

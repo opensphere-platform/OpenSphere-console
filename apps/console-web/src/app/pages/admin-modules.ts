@@ -141,10 +141,8 @@ export class AdminModules implements OnInit, OnDestroy {
     // Open the shared panel before fetching. Closing invalidates late inspection responses.
     this.installKey = crypto.randomUUID(); this.submittedBody = '';
     try {
-      const result = await this.json<{data: {candidate: Candidate}}>('/api/admin/extensions/inspect', {
-        method: 'POST', headers: {'content-type': 'application/json'},
-        body: JSON.stringify({descriptorId: `extension.${id}`, catalogRevision: this.snapshot()!.revision}),
-      });
+      const result = await this.shellCommand<{data: {candidate: Candidate}}>('console.modules.inspect',
+        {descriptorId: `extension.${id}`, catalogRevision: this.snapshot()!.revision});
       if (this.stopped || epoch !== this.inspectionEpoch || !this.reviewOpen()) return;
       const candidate = result.data?.candidate;
       if (candidate?.descriptorId !== `extension.${id}` || candidate.catalogRevision !== this.snapshot()?.revision
@@ -159,6 +157,15 @@ export class AdminModules implements OnInit, OnDestroy {
     this.reviewOpen.set(false);
     if (!this.submittedBody) { this.candidate.set(null); this.busy.set(false); if (this.retrySource()) this.receipt.set(this.retrySource()); }
   }
+  private async shellCommand<T>(command: string, args: Record<string, unknown>, requestId: string = crypto.randomUUID()): Promise<T> {
+    const receipt = await this.json<{schema: string; controlPlane: string; command: string; requestId: string; data: T}>('/api/os-shell/commands', {
+      method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({command, arguments: args, requestId}),
+    });
+    if (receipt.schema !== 'opensphere.shell-command/v1' || receipt.controlPlane !== 'OS-Shell' || receipt.command !== command || receipt.requestId !== requestId) {
+      throw new Error('OS Shell 설치 명령의 응답을 확인하지 못했습니다.');
+    }
+    return receipt.data;
+  }
   async install() {
     const candidate = this.candidate();
     if (!candidate || this.busy() || !this.fresh() || !this.runtimeFresh()) return;
@@ -166,9 +173,7 @@ export class AdminModules implements OnInit, OnDestroy {
     this.busy.set(true); this.error.set('');
     this.submittedBody ||= JSON.stringify({descriptorId: candidate.descriptorId, catalogRevision: candidate.catalogRevision, reason: this.reason().trim()});
     try {
-      const receipt = await this.json<Receipt>('/api/admin/extensions/install', {
-        method: 'POST', headers: {'content-type':'application/json','x-os-idempotency-key': this.installKey}, body: this.submittedBody,
-      });
+      const receipt = await this.shellCommand<Receipt>('console.modules.install', JSON.parse(this.submittedBody), this.installKey);
       if (!validInstallReceipt(receipt) || receipt.targetRef !== candidate.image) throw new Error('설치 작업 응답을 확인하지 못했습니다. 같은 요청으로 다시 확인하세요.');
       this.receipt.set(receipt); this.retrySource.set(null); this.candidate.set(null);
       await this.router.navigate([], {relativeTo: this.route, queryParams: {operation: receipt.operationId, retryOf: this.previousOperation() || null}, queryParamsHandling: 'merge'});

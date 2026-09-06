@@ -18,6 +18,8 @@
     "CON-FR-020"
   ],
   "operations": [
+    "getInstalledOwnerCommandContract",
+    "executeInstalledOwnerCommand",
     "inspectHissLifecycle",
     "installHissModule",
     "uninstallHissModule",
@@ -195,7 +197,9 @@
     "shell-command-request.schema.json",
     "shell-command-response.schema.json",
     "shell-command-catalog.schema.json",
-    "shell-command-error.schema.json"
+    "shell-command-error.schema.json",
+    "owner-command-contract.schema.json",
+    "owner-command-response.schema.json"
   ],
   "releaseProfiles": {
     "bootstrap-core": {

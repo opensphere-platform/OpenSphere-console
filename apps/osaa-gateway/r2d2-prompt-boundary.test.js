@@ -185,8 +185,8 @@ test('built-in knowledge defines PFSS without inventing a fourth Service Stack',
 test('live tool loop has hard round, call, token, and evidence budgets', () => {
   const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   const dockerfile = fs.readFileSync(path.join(__dirname, 'Dockerfile'), 'utf8');
-  assert.match(server, /AGENT_MAX_TOOL_ROUNDS = 4/);
-  assert.match(server, /AGENT_MAX_TOOL_CALLS = 12/);
+  assert.match(server, /AGENT_MAX_TOOL_ROUNDS = 8/);
+  assert.match(server, /AGENT_MAX_TOOL_CALLS = 24/);
   assert.match(server, /AGENT_MAX_TOTAL_TOKENS = 40000/);
   assert.match(server, /AGENT_TOOL_RESULT_MAX_CHARS = 8000/);
   assert.match(server, /allowLexicalFallback: doc\.allowLexicalFallback === true/);

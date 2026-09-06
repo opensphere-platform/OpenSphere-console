@@ -14,6 +14,7 @@ const { createOsShellConsoleOwnerAdmission } = require('./authority/console-owne
 const { verifyOsShellContextJws } = require('./authority/os-shell-context');
 const { loadConfig } = require('./config');
 const { createCommandService } = require('./commands');
+const { createRegistryCommandProviders } = require('./command-providers');
 const { createCommandLedger } = require('./command-ledger');
 const { createKubernetesClient, validatedRuntimeIdentity } = require('./kubernetes');
 const { buildRuntimePod, shellPodName, USER_NAMESPACE_POLICY } = require('./runtime-template');
@@ -186,7 +187,7 @@ function createControl({ config = loadConfig(), database, kubernetes,
   const kube = kubernetes || (config.enabled && config.mode === 'reconciler' ? createKubernetesClient() : null);
   const active = new Map();
   const commands = config.targetOwnerAdmission ? createCommandService({identityUrl:config.consoleOwnerAuthorityURL,
-    clusterManagerUrl:config.clusterManagerURL,ledger:pool?createCommandLedger((sql,values)=>pool.query(sql,values)):null}) : null;
+    clusterManagerUrl:config.clusterManagerURL,loadProviders:config.commandRegistryURL?createRegistryCommandProviders({registryUrl:config.commandRegistryURL}):undefined,ledger:pool?createCommandLedger((sql,values)=>pool.query(sql,values)):null}) : null;
   let lastReconcileSuccess = 0;
 
   async function componentReadiness() {

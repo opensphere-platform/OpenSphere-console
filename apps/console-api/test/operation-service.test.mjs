@@ -889,7 +889,7 @@ test('HTTP Extension install returns only a Planned exact-revision operation', a
       'content-type': 'application/json',
       'x-os-idempotency-key': 'http-extension-install-0001',
       'x-os-correlation-id': 'http-extension-install-correlation-0001',
-      'x-os-csrf-token': 'validated-by-session-resolver',
+      'x-os-owner-admission': 'os-shell-control-v1',
     },
     body: JSON.stringify({
       descriptorId: 'extension.workspace',
