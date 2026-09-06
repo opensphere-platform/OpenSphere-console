@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import yaml from 'js-yaml';
+import installationProfile from '../apps/extension-controller/src/installation-profile.json' with { type: 'json' };
 import { verifyBrowserApiCutover } from './browser-api-cutover.mjs';
 import { verifyLegacyApiDisposition } from './legacy-api-disposition.mjs';
 
@@ -578,8 +579,37 @@ export function verifyExtensionControllerDeployment({ documents }) {
     && moduleBinding.subjects?.length === 1 && moduleBinding.subjects[0]?.kind === 'ServiceAccount'
     && moduleBinding.subjects[0]?.name === 'opensphere-cluster-manager'
     && moduleBinding.subjects[0]?.namespace === 'opensphere-console', 'Cluster Manager binding escaped its approved identity');
-  assert(documents.filter(document => document?.kind === 'ClusterRole').length === 2
-    && documents.filter(document => document?.kind === 'ClusterRoleBinding').length === 2,
+  const inventoryName = installationProfile.name;
+  const inventoryAccount = one('ServiceAccount', inventoryName);
+  const inventoryRole = one('ClusterRole', inventoryName);
+  const inventoryBinding = one('ClusterRoleBinding', inventoryName);
+  assert(inventoryAccount.metadata.namespace === 'opensphere-console' && inventoryAccount.automountServiceAccountToken === false,
+    'C_EXT installation profile requires the approved static inventory account');
+  assert(!inventoryRole.aggregationRule
+    && JSON.stringify(normalizeRules(inventoryRole.rules)) === JSON.stringify(normalizeRules(installationProfile.rules)),
+    'C_EXT installation profile escaped its approved inventory rules');
+  for (const rule of inventoryRole.rules) {
+    assert(!rule.resources?.includes('secrets') && (rule.verbs.every(verb => ['get','list','watch'].includes(verb))
+      || JSON.stringify(normalizeRules([rule])) === JSON.stringify(normalizeRules([
+        {apiGroups:['authorization.k8s.io'],resources:['selfsubjectaccessreviews'],verbs:['create']},
+      ]))), 'C_EXT installation inventory must not grant Secret access or resource mutation');
+  }
+  const profileReaderName = 'opensphere-extension-installation-profile-reader';
+  const profileReader = one('ClusterRole', profileReaderName);
+  assert(!profileReader.aggregationRule && JSON.stringify(normalizeRules(profileReader.rules)) === JSON.stringify(normalizeRules([
+    {apiGroups:['rbac.authorization.k8s.io'],resources:['clusterroles','clusterrolebindings'],resourceNames:[inventoryName],verbs:['get']},
+  ])), 'C_EXT installation profile reader must get only its two named RBAC prerequisites');
+  for (const [binding, roleName, accountName] of [
+    [inventoryBinding, inventoryName, inventoryName],
+    [one('ClusterRoleBinding', profileReaderName), profileReaderName, 'opensphere-extension-controller'],
+  ]) {
+    assert(binding.roleRef?.apiGroup === 'rbac.authorization.k8s.io' && binding.roleRef?.kind === 'ClusterRole'
+      && binding.roleRef?.name === roleName && binding.subjects?.length === 1
+      && binding.subjects[0]?.kind === 'ServiceAccount' && binding.subjects[0]?.name === accountName
+      && binding.subjects[0]?.namespace === 'opensphere-console', 'C_EXT installation profile binding escaped its approved identity');
+  }
+  assert(documents.filter(document => document?.kind === 'ClusterRole').length === 4
+    && documents.filter(document => document?.kind === 'ClusterRoleBinding').length === 4,
   'C_EXT deployment contains an unreviewed cluster authority');
 
   const pod = deployment.spec?.template?.spec;

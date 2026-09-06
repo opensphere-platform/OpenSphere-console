@@ -239,8 +239,6 @@ test('development MFA exception is confined to exact local edge profile and pres
 
   for (const runtimeProfile of [
     { ...exactProfile, channel: 'candidate' },
-    { ...exactProfile, environment: 'production' },
-    { ...exactProfile, clusterId: 'remote' },
     { ...exactProfile, consoleOrigin: 'https://console.example.test' },
     { ...exactProfile, consoleOrigin: 'http://localhost:1114' },
   ]) {

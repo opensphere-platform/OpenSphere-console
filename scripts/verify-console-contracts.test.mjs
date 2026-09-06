@@ -9,12 +9,12 @@ test('foundational Console contracts are internally complete and self-contained'
   assert.deepEqual(result, {
     status: 'passed',
     contractStatus: 'foundational-slice',
-    operations: 74,
+    operations: 77,
     actionPolicies: 6,
-    schemas: 78,
+    schemas: 79,
     components: 10,
     releaseBoundaryStatus: 'target-migration',
-    consoleApiDatabaseFunctions: 59,
+    consoleApiDatabaseFunctions: 60,
     browserApiPatterns: 121,
     browserApiFamilies: 15,
     targetBrowserSessionReady: true,
@@ -204,6 +204,25 @@ test('Cluster Manager read admission rejects broader verbs, resources and identi
   ]) {
     const changed=structuredClone(documents); mutate(changed);
     assert.throws(()=>verifyExtensionControllerDeployment({documents:changed}),/Cluster Manager/);
+  }
+});
+
+test('approved original inventory profile rejects broader rights, identities and unreviewed roles', async () => {
+  const documents = yaml.loadAll(await readFile(new URL('../apps/extension-controller/deploy.yaml', import.meta.url), 'utf8')).filter(Boolean);
+  const named = (docs, kind, name) => docs.find(d => d.kind === kind && d.metadata?.name === name);
+  for (const mutate of [
+    docs => named(docs, 'ClusterRole', 'opensphere-cluster-manager-runtime').rules[0].resources.push('secrets'),
+    docs => named(docs, 'ClusterRole', 'opensphere-cluster-manager-runtime').rules[0].verbs.push('patch'),
+    docs => { named(docs, 'ClusterRole', 'opensphere-cluster-manager-runtime').aggregationRule = { clusterRoleSelectors: [] }; },
+    docs => named(docs, 'ClusterRole', 'opensphere-extension-installation-profile-reader').rules[0].verbs.push('bind'),
+    docs => { delete named(docs, 'ClusterRole', 'opensphere-extension-installation-profile-reader').rules[0].resourceNames; },
+    docs => { named(docs, 'ClusterRoleBinding', 'opensphere-extension-installation-profile-reader').subjects[0].name = 'default'; },
+    docs => { named(docs, 'ClusterRoleBinding', 'opensphere-cluster-manager-runtime').subjects[0].namespace = 'default'; },
+    docs => docs.push({ kind: 'ClusterRole', metadata: { name: 'unexpected-authority' }, rules: [] }),
+  ]) {
+    const changed = structuredClone(documents);
+    mutate(changed);
+    assert.throws(() => verifyExtensionControllerDeployment({ documents: changed }), /installation profile|inventory|unreviewed cluster/);
   }
 });
 

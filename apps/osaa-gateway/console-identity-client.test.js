@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createConsoleIdentityVerifier, targetPathAllowed } = require('./console-identity-client');
+const { createConsoleIdentityVerifier, targetPathAllowed, createCurrentActorResolver, hasCurrentPermission } = require('./console-identity-client');
 
 const SUBJECT = '11111111-1111-4111-8111-111111111111';
 const BROWSER_SESSION = '22222222-2222-4222-8222-222222222222';
@@ -40,6 +40,57 @@ function verifierWith(responseFactory) {
     fetchImpl: responseFactory,
   });
 }
+
+test('each delegated tool resolves current permissions, then refuses revocation without using the prior administrator snapshot', async () => {
+  let status = 200;
+  let envelope = ownerEnvelope();
+  let calls = 0;
+  const verify = verifierWith(async () => {
+    calls++;
+    return new Response(JSON.stringify(status === 200 ? envelope : { error: 'session revoked' }), { status });
+  });
+  const initial = await verify(ownerRequest());
+  const resolve = createCurrentActorResolver(verify);
+  assert.equal(hasCurrentPermission(initial, 'console.his.manage'), true);
+  envelope = ownerEnvelope({ data: { permissions: ['console.role.viewer'], permissionRevision: '8' } });
+  const current = await resolve(initial);
+  assert.equal(current.authzRevision, '8');
+  assert.equal(hasCurrentPermission(current, 'console.his.manage'), false);
+  assert.equal(hasCurrentPermission(current, 'console.ceph.read'), true);
+  assert.equal(hasCurrentPermission(current, 'console.extension.install'), false);
+  assert.equal(hasCurrentPermission(initial, 'console.his.manage'), true, 'Historical evidence is not mutated');
+  status = 401;
+  await assert.rejects(resolve(initial), { code: 401 });
+  status = 503;
+  await assert.rejects(resolve(initial), { code: 503 });
+  assert.equal(calls, 4, 'No subject-only authorization cache');
+});
+
+test('delegation cannot switch browser session or accept a fabricated actor without a credential', async () => {
+  let envelope = ownerEnvelope();
+  const verify = verifierWith(async () => new Response(JSON.stringify(envelope)));
+  const initial = await verify(ownerRequest());
+  const resolve = createCurrentActorResolver(verify);
+  await assert.rejects(resolve({ ...initial, bearerToken: '' }), { code: 401 });
+  envelope = ownerEnvelope({ data: { sessionId: '33333333-3333-4333-8333-333333333333' } });
+  await assert.rejects(resolve(initial), { code: 401 });
+});
+
+test('HISS and Ceph use GUI canonical roles; old group names or AI permission labels cannot grant management', () => {
+  for (const role of ['admin', 'operator', 'viewer']) {
+    const actor = { permissions: [`console.role.${role}`] };
+    for (const domain of ['his', 'ceph']) {
+      assert.equal(hasCurrentPermission(actor, `console.${domain}.read`), true);
+      assert.equal(hasCurrentPermission(actor, `console.${domain}.manage`), role === 'admin');
+    }
+  }
+  for (const actor of [{ groups: ['console-admins'] }, { permissions: ['console.his.manage', 'console.ceph.manage'] }, {}]) {
+    assert.equal(hasCurrentPermission(actor, 'console.his.manage'), false);
+    assert.equal(hasCurrentPermission(actor, 'console.ceph.manage'), false);
+  }
+  assert.equal(hasCurrentPermission({ permissions: ['console.role.viewer'] }, 'osaa.unassigned.permission'), false);
+  assert.equal(hasCurrentPermission({ permissions: ['osaa.chat.use'] }, 'osaa.chat.use'), true);
+});
 
 test('target Owner identity revalidates current authority and keeps auth and browser session coordinates distinct', async () => {
   const calls = [];

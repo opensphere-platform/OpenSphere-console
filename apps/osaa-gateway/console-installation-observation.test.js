@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { consoleInstallationObservation, requiresConsoleInstallationSummary, renderConsoleInstallationObservation } = require('./console-installation-observation');
+const { consoleInstallationObservation, requiresConsoleInstallationSummary, renderConsoleInstallationObservation, installationMutationReadiness } = require('./console-installation-observation');
 const { sanitizeKubernetesObject } = require('./kubernetes-resource-catalog');
 
 const node = (ready) => sanitizeKubernetesObject('node', { metadata: { name: 'private-node', labels: { private: 'DO_NOT_SEND' } }, status: { conditions: [{ type: 'Ready', status: ready ? 'True' : 'False', message: 'DO_NOT_SEND' }] } });
@@ -29,6 +29,30 @@ test('bootstrap view uses actual sanitized resource shapes and sends only approv
   assert.doesNotMatch(JSON.stringify(result), /DO_NOT_SEND|private-node|TOKEN|containers|labels/);
   assert.match(renderConsoleInstallationObservation(result), /1\/2 Ready/);
   assert.match(renderConsoleInstallationObservation(result), /전체 기능·설치 재현 완료/);
+});
+
+test('module owner admission observes current C_EXT evidence without depending on already installed HISS', async () => {
+  const absent = await read();
+  assert.equal(installationMutationReadiness(absent, true).reason, 'cluster_manager_not_installed');
+  const observation = { ...absent, clusterManager: { state: 'Ready' } };
+  const admission = installationMutationReadiness(observation, true);
+  assert.equal(admission.ready, true);
+  assert.equal(admission.ownerChecksRequired, true);
+  assert.notEqual(admission.hisPreflightReady, true, 'Module installation is not HISS or Ceph acceptance');
+  assert.equal(installationMutationReadiness(observation, false).ready, false);
+  assert.equal(installationMutationReadiness({ ...observation, clusterManager: { state: 'RegisteredNotReady' } }, true).reason, 'cluster_manager_not_ready');
+  assert.equal(installationMutationReadiness({}, true).reason, 'installation_authority_unavailable');
+});
+
+test('Gateway lifecycle uses current registration observation and no retired DUPA readiness call', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const begin = source.indexOf('async function osaaMutationLifecycle(');
+  const end = source.indexOf('\nasync function requireOsaaMutationLifecycle', begin);
+  assert.ok(begin > 0 && end > begin);
+  const lifecycle = source.slice(begin, end);
+  assert.match(lifecycle, /consoleInstallationObservation/);
+  assert.match(lifecycle, /installationMutationReadiness/);
+  assert.doesNotMatch(lifecycle, /DUPA|\/platform-readiness\/lifecycle|lifecycleGateCache/);
 });
 test('incomplete lists, wrong owner shapes and API errors cannot assert absence or readiness', async () => {
   const result = await read({

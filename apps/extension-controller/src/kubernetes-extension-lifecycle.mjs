@@ -5,6 +5,7 @@ import {
   planInactiveExtensionRevisionCleanup,
   verifyExtensionRelease,
 } from './extension-release.mjs';
+import { verifyInstallationProfile } from './installation-profile.mjs';
 
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const RESOURCE_VERSION = /^[0-9A-Za-z._:-]{1,128}$/u;
@@ -412,14 +413,15 @@ export function createKubernetesExtensionLifecycle({
     const current = exactRegistration(registration, namespace);
     const reason = String(error?.code || 'AuthorityUnavailable');
     const terminal = TERMINAL_VERIFICATION.has(reason);
-    const permissions = reason === 'UnsupportedPermissionProfile' ? 'Failed' : 'Pending';
+    const permissions = reason === 'UnsupportedPermissionProfile' || reason === 'InstallationProfileMismatch' ? 'Failed' : 'Pending';
+    const releaseVerification = reason.startsWith('InstallationProfile') ? 'Pending' : 'Failed';
     await patchStatus(registration, {
       observedGeneration: current.generation,
       phase: terminal ? 'Failed' : 'DependencyPending',
       retryable: !terminal,
       reason: reason.slice(0, 128),
       workload: { phase: 'NotReady' },
-      verification: { manifest: 'Failed', signature: 'Failed', entryDigest: 'Failed', permissions },
+      verification: { manifest: releaseVerification, signature: releaseVerification, entryDigest: releaseVerification, permissions },
       serving: { phase: 'Unavailable' },
       revalidation: { phase: 'Failed' },
     });
@@ -479,6 +481,10 @@ export function createKubernetesExtensionLifecycle({
       }
 
       try {
+        // Do not create Pods, or report Approved, on the strength of a signed
+        // profile name alone. Setup must have materialized its exact inventory
+        // contract. Uninstall remains available without these prerequisites.
+        await verifyInstallationProfile(plan, request);
         for (const item of plan.resources) await upsert(item, plan);
         let deployment;
         for (const item of plan.resources) {

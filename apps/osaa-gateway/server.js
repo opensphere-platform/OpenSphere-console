@@ -62,7 +62,7 @@ const {
   untrustedToolEvidenceContent,
 } = require('./r2d2-prompt-boundary');
 const { SOURCE_TOOL_NAMES, groundCanonicalSourceAnswer } = require('./r2d2-source-grounding');
-const { requiresConsoleInstallationSummary, consoleInstallationObservation } = require('./console-installation-observation');
+const { requiresConsoleInstallationSummary, consoleInstallationObservation, installationMutationReadiness } = require('./console-installation-observation');
 const { installationIntent, createModuleInstallationClient, renderInstallationResult, installationFailure, MODULE_INSTALLATION_TOOL_NAMES } = require('./module-installation-client');
 const {
   OS_SHELL_DEPLOYMENTS,
@@ -78,8 +78,8 @@ const {
   PgNotificationSink,
 } = require('./r2d2-incident-relay');
 const { projectAuthorityAdapters } = require('./r2d2-source-adapters');
-const { createConsoleIdentityVerifier } = require('./console-identity-client');
-const { createCAiOwnerApi, developmentUserMfaDisabled } = require('./c-ai-owner-api');
+const { createConsoleIdentityVerifier, createCurrentActorResolver, hasCurrentPermission } = require('./console-identity-client');
+const { createCAiOwnerApi, developmentUserMfaDisabled, assertUserMutationAssurance } = require('./c-ai-owner-api');
 const {
   RUNTIME_RESOURCE_KINDS,
   WATCH_RESOURCE_KINDS,
@@ -295,6 +295,7 @@ const verifyAuthed = createConsoleIdentityVerifier({
   baseUrl: CONSOLE_SESSION_AUTHORITY_URL,
   targetOwnerAdmission: CONSOLE_TARGET_OWNER_ADMISSION,
 });
+const currentDelegatedActor = createCurrentActorResolver(verifyAuthed);
 
 async function verifyAdmin(req) {
   const actor = await verifyAuthed(req);
@@ -978,10 +979,11 @@ async function agentEvidenceDashboard(days = 30, limit = 25) {
 }
 
 async function setEvidenceRetentionPolicy(actor, rawBody) {
+  actor = await currentDelegatedActor(actor);
   const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {};
   requireClosedOwnerInputs(body, ['stream', 'retentionDays', 'disposition', 'legalHold', 'confirm', 'reason']);
   assertPermission(actor, 'osaa.evidence.manage');
-  if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'evidence retention update requires MFA assurance aal2' };
+  assertUserMutationAssurance(actor, 'evidence retention update', C_AI_RUNTIME_PROFILE);
   const stream = String(body.stream || '').trim();
   const retentionDays = Number(body.retentionDays);
   const disposition = String(body.disposition || '').trim().toLowerCase();
@@ -2202,7 +2204,7 @@ async function reconcileBundledManualKnowledge(actor = null) {
 }
 
 function hasPermission(actor, permission) {
-  return Boolean(actor?.groups?.includes(CONSOLE_ADMIN_GROUP) || actor?.permissions?.includes(permission));
+  return hasCurrentPermission(actor, permission);
 }
 
 function assertPermission(actor, permission) {
@@ -5418,7 +5420,6 @@ function filterToolManifestForActor(manifest, actor) {
   };
 }
 
-const lifecycleGateCache = new Map();
 const observabilityCapabilityCache = new Map();
 const hisOwnerCapabilityCache = new Map();
 const cephOwnerCapabilityCache = new Map();
@@ -5501,33 +5502,11 @@ async function osaaRecoveryOwnerCapabilities(actor) {
 }
 
 async function osaaMutationLifecycle(actor) {
-  if (!OSAA_ACTION_SUBMISSION_ENABLED) return { ready: false, reason: 'console_backend_action_submission_disabled' };
-  const subject = String(actor?.subject || 'unknown');
-  const cached = lifecycleGateCache.get(subject);
-  if (cached && Date.now() - cached.checkedAt < 15000) return cached.value;
-  let value;
-  try {
-    const response = await fetch(`${DUPA_CONTROL_URL}/api/admin/platform-readiness/lifecycle`, {
-      headers: { authorization: `Bearer ${actor?.bearerToken || ''}`, accept: 'application/json' }, signal: boundedSignal(5000),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) value = { ready: false, reason: body.error || `lifecycle_gate_http_${response.status}` };
-    else {
-      value = {
-        ready: body.ready === true,
-        reason: body.reason || null,
-        clusterManagerActivated: body.clusterManagerActivated === true,
-        hisPreflightReady: body.hisPreflightReady === true,
-        observedAt: body.observedAt || null,
-      };
-    }
-  } catch (error) {
-    const failure = ['TimeoutError', 'AbortError'].includes(String(error?.name || '')) ? 'timeout' : 'network';
-    console.warn(`[osaa-lifecycle] authority unavailable category=${failure} endpoint=dupa-lifecycle`);
-    value = { ready: false, reason: 'lifecycle_authority_unavailable', failure };
-  }
-  lifecycleGateCache.set(subject, { checkedAt: Date.now(), value });
-  return value;
+  if (!OSAA_ACTION_SUBMISSION_ENABLED) return installationMutationReadiness(null, false);
+  const observation = await consoleInstallationObservation({
+    listResources: query => listKubernetesResources(query, actor),
+  });
+  return installationMutationReadiness(observation, true);
 }
 
 async function requireOsaaMutationLifecycle(actor, options = {}) {
@@ -5546,7 +5525,7 @@ async function requireOsaaMutationLifecycle(actor, options = {}) {
   }
   if (options.allowHisRecovery === true && lifecycle.clusterManagerActivated) return { ...lifecycle, recoveryGate: 'cluster-manager-activated' };
   if (options.allowCephRecovery === true && lifecycle.clusterManagerActivated) return { ...lifecycle, recoveryGate: 'cluster-manager-activated' };
-  if (!lifecycle.ready) throw { code: lifecycle.reason === 'lifecycle_authority_unavailable' ? 503 : 409, msg: `OSAA mutation gate closed: ${lifecycle.reason}` };
+  if (!lifecycle.ready) throw { code: lifecycle.reason === 'installation_authority_unavailable' ? 503 : 409, msg: `OSAA mutation gate closed: ${lifecycle.reason}` };
   return lifecycle;
 }
 
@@ -5565,10 +5544,10 @@ async function gatedToolManifestForActor(actor) {
     ...manifest,
     mutationEnabled: false,
     mutationGateReason: lifecycle.reason,
-    tools: (manifest.tools || []).filter((tool) => tool.readOnly === true || tool.id === 'osaa.knowledge.ingest-manual'
+    tools: (manifest.tools || []).filter((tool) => tool.readOnly === true || (OSAA_ACTION_SUBMISSION_ENABLED && (tool.id === 'osaa.knowledge.ingest-manual'
       || consoleRecoveryTools.has(tool.id) || evidenceControlTools.has(tool.id)
       || extensionSecurityTools.has(tool.id) || notificationControlTools.has(tool.id)
-      || (lifecycle.clusterManagerActivated && (hisRecoveryTools.has(tool.id) || cephRecoveryTools.has(tool.id)))),
+      || (lifecycle.clusterManagerActivated && (hisRecoveryTools.has(tool.id) || cephRecoveryTools.has(tool.id)))))),
   };
   const capabilityGated = {
     ...lifecycleGated,
@@ -5834,6 +5813,7 @@ function bindingSummary(binding, result) {
 }
 
 async function executeActionBinding(body = {}, actor = null, context = {}) {
+  actor = await currentDelegatedActor(actor);
   const started = Date.now();
   const binding = await getActionBinding(body.bindingId || body.id);
   // Mutation gate takes priority over every other check (confirmation phrase, admin membership):
@@ -5854,7 +5834,7 @@ async function executeActionBinding(body = {}, actor = null, context = {}) {
   if (mutationRequired) {
     if (binding.toolId === 'osaa.knowledge.ingest-manual') {
       assertPermission(actor, 'osaa.knowledge.manage');
-      if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'manual knowledge ingestion requires MFA assurance aal2' };
+      assertUserMutationAssurance(actor, 'manual knowledge ingestion', C_AI_RUNTIME_PROFILE);
       result = await upsertManualSeedManifest(inputs.manifest || inputs, actor);
       const target = String(inputs.manifest?.source?.id || 'opensphere/manuals').slice(0, 200);
       await recordToolRun(actor, {
@@ -7373,9 +7353,10 @@ function requireOwnerActionId(value, allowed = null) {
 }
 
 async function executeOwnerControlAction(toolId, inputs, actor, context = {}) {
+  actor = await currentDelegatedActor(actor);
   if (!OSAA_OWNER_ACTION_TOOL_IDS.has(toolId)) throw { code: 403, msg: 'tool is not an approved owner control-plane action' };
   assertPermission(actor, TOOL_PERMISSION[toolId] || 'osaa.action.execute.high');
-  if (actor?.assurance !== 'aal2') throw { code: 403, msg: 'owner control-plane action requires MFA assurance aal2' };
+  assertUserMutationAssurance(actor, 'owner control-plane action', C_AI_RUNTIME_PROFILE);
   const reason = requireMutationReason(inputs.reason);
   let owner;
   let target;
@@ -8230,6 +8211,8 @@ async function foundationPostgresPlanRead(inputs, actor) {
 }
 
 async function executeAgentTool(name, args, actor, context = {}) {
+  assertTurnLeaseActive();
+  actor = await currentDelegatedActor(actor);
   assertTurnLeaseActive();
   const input = args && typeof args === 'object' ? args : {};
   let result;

@@ -12,14 +12,18 @@
     ],
     "ceph": [
       "status-read",
-      "connection-plan",
-      "connect",
+      "plan-from-import",
+      "connect-from-import",
       "disconnect"
     ]
   },
   "security": {
-    "mutationPermission": "console.his.manage",
+    "identityAuthority": "Console API Identity / Session Broker",
+    "readPermissionsAnyOf": ["console.role.admin", "console.role.operator", "console.role.viewer"],
+    "mutationPermission": "console.role.admin",
     "assurance": "aal2",
+    "assuranceException": "HTTPS loopback Console on edge; actual AAL1 retained",
+    "delegation": "Current logged-in user; owner revalidates permission and session on every request",
     "secretInputPolicy": "StagedSecretRefOnly",
     "unknownProperties": "reject"
   }

@@ -32,11 +32,12 @@ test('Gateway and Cluster Manager both enforce closed SecretRef-only HISS input'
   assert.equal(ownerContract.security.unknownProperties, 'reject');
 });
 
-test('HISS mutation is independently permissioned, AAL2-bound, and explicitly confirms exposure and reset', () => {
+test('HISS mutation shares user authority and MFA policy and explicitly confirms exposure and reset', () => {
   assert.match(source, /'osaa\.his\.observability\.configure': 'console\.his\.manage'/);
   assert.match(source, /configure HISS observability public=\$\{config\.grafana\.exposureMode === 'PublicIngress'\} data-reset=\$\{Boolean\(resetData\)\}/);
-  assert.match(source, /owner control-plane action requires MFA assurance aal2/);
-  assert.equal(ownerContract.security.mutationPermission, 'console.his.manage');
+  assert.match(source, /assertUserMutationAssurance\(actor, 'owner control-plane action', C_AI_RUNTIME_PROFILE\)/);
+  assert.equal(ownerContract.security.mutationPermission, 'console.role.admin');
+  assert.deepEqual(ownerContract.security.readPermissionsAnyOf, ['console.role.admin', 'console.role.operator', 'console.role.viewer']);
   assert.equal(ownerContract.security.assurance, 'aal2');
 });
 
@@ -49,7 +50,7 @@ test('Ceph tools negotiate a signed owner capability and accept only staged Secr
   assert.match(source, /\/api\/ceph\/osaa\/connect/);
   assert.doesNotMatch(source, /fixedOwnerPost\(CLUSTER_MANAGER_URL, '\/api\/ceph\/connect'/);
   assert.equal(ownerContract.security.secretInputPolicy, 'StagedSecretRefOnly');
-  assert.ok(ownerContract.capabilities.ceph.includes('connect'));
+  assert.ok(ownerContract.capabilities.ceph.includes('connect-from-import'));
 });
 
 test('Ceph connect and disconnect are AAL2 owner actions, not arbitrary infrastructure payloads', () => {

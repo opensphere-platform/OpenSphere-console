@@ -77,18 +77,21 @@ function developmentUserMfaDisabled(profile) {
   let origin;
   try { origin = new URL(String(profile.consoleOrigin || '')); } catch { return false; }
   return profile.channel === 'edge'
-    && profile.environment === 'development'
-    && profile.clusterId === 'local'
     && origin.protocol === 'https:'
-    && ['localhost', '127.0.0.1', '::1'].includes(origin.hostname);
+    && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)
+    && !origin.username && !origin.password && origin.pathname === '/' && !origin.search && !origin.hash;
+}
+
+function assertUserMutationAssurance(actor, purpose, runtimeProfile) {
+  if (actor?.assurance === 'aal2') return;
+  if (actor?.assurance === 'aal1' && developmentUserMfaDisabled(runtimeProfile)) return;
+  fail(403, `AAL2 ${purpose} required`);
 }
 
 function requireAal2Actor(actor, purpose, runtimeProfile) {
   const subject = String(actor?.subject || actor?.sub || '');
   const sessionId = String(actor?.browserSessionId || '');
-  if (!developmentUserMfaDisabled(runtimeProfile) && actor?.assurance !== 'aal2') {
-    fail(403, `AAL2 ${purpose} required`);
-  }
+  assertUserMutationAssurance(actor, purpose, runtimeProfile);
   if (!UUID.test(subject) || !UUID.test(sessionId)) fail(401, `stable actor and browser session are required for ${purpose}`);
   return { subject, sessionId, authzRevision: String(actor?.authzRevision || actor?.credentialRevision || '0') };
 }
@@ -1076,4 +1079,5 @@ module.exports = {
   probeProviderCredential,
   digest,
   developmentUserMfaDisabled,
+  assertUserMutationAssurance,
 };

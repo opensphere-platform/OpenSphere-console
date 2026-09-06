@@ -182,4 +182,36 @@ function createConsoleIdentityVerifier({
   };
 }
 
-module.exports = { createConsoleIdentityVerifier, targetPathAllowed };
+// Re-resolve a delegated user before each tool/action. A conversation's initial
+// projection is evidence of who started it, not continuing execution authority.
+function createCurrentActorResolver(verifyActor) {
+  return async function currentActor(previous) {
+    if (!UUID.test(String(previous?.subject || ''))
+        || !UUID.test(String(previous?.browserSessionId || '')) || !previous?.bearerToken) {
+      fail(401, 'current user and browser session are required for delegated execution');
+    }
+    const current = await verifyActor({
+      method: 'GET', url: '/api/osaa/tools/manifest',
+      headers: { authorization: `Bearer ${previous.bearerToken}`, 'x-os-owner-admission': 'osaa-gateway-v1' },
+    });
+    if (current.subject !== previous.subject || current.browserSessionId !== previous.browserSessionId
+        || current.authSessionRef !== previous.authSessionRef) {
+      fail(401, 'delegated execution must remain bound to its original user and session');
+    }
+    return current;
+  };
+}
+
+function hasCurrentPermission(actor, permission) {
+  const permissions = Array.isArray(actor?.permissions) ? actor.permissions : [];
+  const admin = permissions.includes('console.role.admin');
+  // These owner domains use the same canonical Console roles in their GUI.
+  // Historical tool permission names are labels, not separately granted AI roles.
+  if (['console.his.read', 'console.ceph.read'].includes(permission)) {
+    return admin || permissions.includes('console.role.operator') || permissions.includes('console.role.viewer');
+  }
+  if (['console.his.manage', 'console.ceph.manage'].includes(permission)) return admin;
+  return admin || permissions.includes(permission);
+}
+
+module.exports = { createConsoleIdentityVerifier, targetPathAllowed, createCurrentActorResolver, hasCurrentPermission };

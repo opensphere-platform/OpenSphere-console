@@ -68,4 +68,21 @@ function renderConsoleInstallationObservation(value) {
   ].join('\n');
 }
 
-module.exports = { requiresConsoleInstallationSummary, consoleInstallationObservation, renderConsoleInstallationObservation };
+function installationMutationReadiness(observation, enabled) {
+  if (!enabled) return { ready: false, reason: 'action_submission_disabled', clusterManagerActivated: false };
+  const state = observation?.schema === 'osaa.console-installation-observation/v1'
+    ? observation.clusterManager?.state : 'Unknown';
+  const ready = state === 'Ready';
+  return {
+    ready, clusterManagerActivated: ready,
+    reason: ready ? null : state === 'NotRegistered' ? 'cluster_manager_not_installed'
+      : state === 'RegisteredNotReady' ? 'cluster_manager_not_ready' : 'installation_authority_unavailable',
+    observedAt: observation?.observedAt || null,
+    source: 'C_EXT registration, signature and current workload verification',
+    // Module activation permits contacting its owners, not asserting that HISS
+    // or Ceph has already been configured. Each owner still checks its operation.
+    ownerChecksRequired: true,
+  };
+}
+
+module.exports = { requiresConsoleInstallationSummary, consoleInstallationObservation, renderConsoleInstallationObservation, installationMutationReadiness };
